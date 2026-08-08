@@ -13,14 +13,23 @@ qt_add_qml_module(Craftward
     QML_FILES
         Main.qml
         MainWindow.qml
+        SettingsWindow.qml
 )
 
 target_link_libraries(Craftward
     PRIVATE
         CraftwardComponentsplugin
+        CraftwardFeaturesLegalplugin
         CraftwardPagesplugin
         Qt6::Quick
         Qt6::QuickControls2
+)
+
+target_compile_definitions(Craftward
+    PRIVATE
+        CRAFTWARD_BUILD_NUMBER="${CRAFTWARD_BUILD_NUMBER}"
+        CRAFTWARD_COMMIT_HASH="${CRAFTWARD_COMMIT_HASH}"
+        CRAFTWARD_VERSION="${PROJECT_VERSION}"
 )
 
 set_target_properties(Craftward PROPERTIES

@@ -2,7 +2,9 @@ qt_add_qml_module(CraftwardPages
     STATIC
     URI Craftward.Pages
     QML_FILES
+        AboutPage.qml
         ScaffoldPage.qml
+        SettingsGeneralPage.qml
 )
 
 target_link_libraries(CraftwardPages

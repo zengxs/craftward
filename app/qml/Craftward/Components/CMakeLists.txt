@@ -2,6 +2,8 @@ qt_add_qml_module(CraftwardComponents
     STATIC
     URI Craftward.Components
     QML_FILES
+        IconButton.qml
+        ModalDialog.qml
         PrimaryButton.qml
         WindowMoveHandler.qml
 )

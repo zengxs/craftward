@@ -10,7 +10,7 @@ Page {
         anchors.fill: parent
 
         WindowMoveHandler {
-            targetWindow: root.Window.window
+            targetWindow: root.ApplicationWindow.window
         }
     }
 
@@ -45,37 +45,12 @@ Page {
         }
     }
 
-    Dialog {
+    ModalDialog {
         id: readyDialog
 
         anchors.centerIn: Overlay.overlay
         width: Math.min(380, root.width - 48)
-        padding: 24
-        modal: true
-        focus: true
         title: qsTr("Scaffold ready")
-        closePolicy: Popup.CloseOnEscape
-        header: null
-        footer: null
-
-        background: Item {
-            Rectangle {
-                x: 0
-                y: 3
-                width: parent.width
-                height: parent.height
-                radius: 14
-                color: readyDialog.palette.shadow
-                opacity: 0.18
-            }
-
-            Rectangle {
-                anchors.fill: parent
-                radius: 14
-                color: readyDialog.palette.window
-                border.color: readyDialog.palette.mid
-            }
-        }
 
         contentItem: ColumnLayout {
             spacing: 12
@@ -110,10 +85,6 @@ Page {
                     onClicked: readyDialog.accept()
                 }
             }
-        }
-
-        Overlay.modal: Rectangle {
-            color: Qt.rgba(0, 0, 0, 0.18)
         }
     }
 }

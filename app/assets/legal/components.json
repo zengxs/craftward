@@ -1,0 +1,16 @@
+{
+  "components": [
+    {
+      "component": "Qt",
+      "spdxIdentifier": "GPL-3.0-only",
+      "legalText": "qrc:///legal/Qt.txt",
+      "website": "https://www.qt.io/"
+    },
+    {
+      "component": "Phosphor Icons",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/PhosphorIcons.txt",
+      "website": "https://phosphoricons.com/"
+    }
+  ]
+}
