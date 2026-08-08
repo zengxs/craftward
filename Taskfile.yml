@@ -1,0 +1,15 @@
+version: "3"
+
+dotenv: [.env]
+
+includes:
+  app:
+    taskfile: ./app/tasks.yml
+    dir: ./app
+
+tasks:
+  default:
+    silent: true
+    desc: List all available tasks
+    cmds:
+      - task --list-all --sort none

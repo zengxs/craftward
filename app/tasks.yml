@@ -1,0 +1,115 @@
+version: "3"
+
+vars:
+  APP_NAME: Craftward
+  SIGN_IDENTITY: '{{default "-" .SIGN_IDENTITY}}'
+
+tasks:
+  clean:
+    desc: Remove all application build artifacts
+    cmds:
+      - rm -rf build
+
+  format:
+    desc: Format application files
+    requires:
+      vars: [QT6_ROOT]
+    preconditions:
+      - sh: command -v clang-format
+        msg: clang-format is not available in PATH
+      - sh: test -x "$QT6_ROOT/bin/qmlformat"
+        msg: qmlformat was not found under QT6_ROOT
+    cmds:
+      - >-
+        git ls-files -z
+        --cached
+        --others
+        --exclude-standard
+        --
+        "*.c" "*.cc" "*.cpp" "*.cxx"
+        "*.h" "*.hh" "*.hpp" "*.hxx"
+        | xargs -0 clang-format -i
+      - >-
+        git ls-files -z
+        --cached
+        --others
+        --exclude-standard
+        --
+        ":(glob)qml/**/*.qml"
+        | xargs -0 "$QT6_ROOT/bin/qmlformat" -i
+
+  configure:
+    desc: Configure the application build
+    vars:
+      BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
+      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+    requires:
+      vars: [QT6_ROOT]
+    env:
+      CRAFTWARD_SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    cmds:
+      - >-
+        cmake -S .
+        -B "{{.BUILD_DIR}}"
+        -G Ninja
+        -DCMAKE_BUILD_TYPE="{{.BUILD_TYPE}}"
+        -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+        -DQt6_ROOT="$QT6_ROOT"
+        -DCRAFTWARD_SIGN_IDENTITY="$CRAFTWARD_SIGN_IDENTITY"
+
+  build:
+    desc: Build the application
+    vars:
+      BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
+      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+    deps:
+      - task: configure
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+          SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    cmds:
+      - cmake --build "{{.BUILD_DIR}}" --parallel
+
+  run:
+    desc: Run the application
+    vars:
+      BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
+      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+    deps:
+      - task: build
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+          SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/{{.APP_NAME}}
+
+  deploy:
+    desc: Deploy the application
+    vars:
+      BUILD_TYPE: '{{default "Release" .BUILD_TYPE}}'
+      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      DEPLOY_DIR: "build/deploy/{{.BUILD_TYPE}}"
+      APP_BUNDLE: "{{.DEPLOY_DIR}}/{{.APP_NAME}}.app"
+    deps:
+      - task: build
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+          SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    env:
+      CRAFTWARD_SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    preconditions:
+      - sh: command -v codesign
+        msg: codesign is not available in PATH
+      - sh: command -v hdiutil
+        msg: hdiutil is not available in PATH
+    cmds:
+      - cmake -E remove_directory "{{.DEPLOY_DIR}}"
+      - >-
+        cmake --install "{{.BUILD_DIR}}"
+        --prefix "{{.DEPLOY_DIR}}"
+        --config "{{.BUILD_TYPE}}"
+      - >-
+        bash macos/finalize-deployment.sh
+        "{{.APP_BUNDLE}}"
+        "{{.DEPLOY_DIR}}"
+        macos/Entitlements.plist

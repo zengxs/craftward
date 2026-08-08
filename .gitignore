@@ -233,5 +233,9 @@ compile_commands.json
 
 ### Project specific ###
 /.tmp/
+
+*.log
+
 .env
 .env.*
+!.env.example
