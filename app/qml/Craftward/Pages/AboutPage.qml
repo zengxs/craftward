@@ -50,8 +50,8 @@ Page {
                 id: applicationIcon
 
                 Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: visible ? 96 : 0
-                Layout.preferredHeight: visible ? 96 : 0
+                Layout.preferredWidth: visible ? 128 : 0
+                Layout.preferredHeight: visible ? 128 : 0
                 source: root.applicationIconSource
                 visible: root.hasApplicationIcon
                 asynchronous: true

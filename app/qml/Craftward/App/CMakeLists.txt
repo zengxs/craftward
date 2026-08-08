@@ -1,12 +1,21 @@
 qt_add_executable(Craftward
+    ../../../src/applicationiconprovider.h
     ../../../src/main.cpp
+    "${CRAFTWARD_APPLICATION_ICON_PROVIDER_SOURCE}"
 )
 
 set_source_files_properties(
     "${CRAFTWARD_ENTITLEMENTS_FILE}"
     PROPERTIES HEADER_FILE_ONLY TRUE
 )
-target_sources(Craftward PRIVATE "${CRAFTWARD_ENTITLEMENTS_FILE}")
+set_source_files_properties(
+    "${CRAFTWARD_APP_ICON_FILE}"
+    PROPERTIES MACOSX_PACKAGE_LOCATION "Resources"
+)
+target_sources(Craftward PRIVATE
+    "${CRAFTWARD_ENTITLEMENTS_FILE}"
+    "${CRAFTWARD_APP_ICON_FILE}"
+)
 
 qt_add_qml_module(Craftward
     URI Craftward.App
@@ -23,6 +32,12 @@ target_link_libraries(Craftward
         CraftwardPagesplugin
         Qt6::Quick
         Qt6::QuickControls2
+        "${CRAFTWARD_APPKIT_FRAMEWORK}"
+)
+
+target_compile_options(Craftward
+    PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
 )
 
 target_compile_definitions(Craftward
@@ -37,6 +52,7 @@ set_target_properties(Craftward PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "Craftward"
     MACOSX_BUNDLE_BUNDLE_VERSION "${CRAFTWARD_BUILD_NUMBER}"
     MACOSX_BUNDLE_GUI_IDENTIFIER "${CRAFTWARD_BUNDLE_IDENTIFIER}"
+    MACOSX_BUNDLE_ICON_FILE "Ward.icns"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )

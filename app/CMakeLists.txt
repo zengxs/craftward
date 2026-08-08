@@ -3,10 +3,22 @@ cmake_minimum_required(VERSION 3.22)
 project(Craftward VERSION 0.1.0 LANGUAGES CXX)
 
 if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 20)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+    set(CMAKE_OBJCXX_EXTENSIONS OFF)
+
     set(CRAFTWARD_BUNDLE_IDENTIFIER "app.craftward.macos.Craftward")
     set(CRAFTWARD_ENTITLEMENTS_FILE
         "${CMAKE_CURRENT_SOURCE_DIR}/macos/Entitlements.plist"
     )
+    set(CRAFTWARD_APP_ICON_FILE
+        "${CMAKE_CURRENT_SOURCE_DIR}/macos/Ward.icns"
+    )
+    set(CRAFTWARD_APPLICATION_ICON_PROVIDER_SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/applicationiconprovider.mm"
+    )
+    find_library(CRAFTWARD_APPKIT_FRAMEWORK AppKit REQUIRED)
     set(CRAFTWARD_SIGN_IDENTITY "-" CACHE STRING
         "Code-signing identity used for macOS deployment"
     )

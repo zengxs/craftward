@@ -1,8 +1,11 @@
+#include "applicationiconprovider.h"
+
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QObject>
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
+#include <QUrl>
 #include <QVariantMap>
 #include <QtQml/QQmlExtensionPlugin>
 
@@ -25,7 +28,12 @@ main(int argc, char* argv[])
 
     QQmlApplicationEngine engine;
 
+    auto applicationIconProvider = createApplicationIconProvider();
+    engine.addImageProvider(QStringLiteral("application-icon"), applicationIconProvider.release());
+
     QVariantMap initialProperties;
+    initialProperties.insert(QStringLiteral("applicationIconSource"),
+                             QUrl(QStringLiteral("image://application-icon/app")));
     initialProperties.insert(QStringLiteral("buildNumber"), QStringLiteral(CRAFTWARD_BUILD_NUMBER));
     initialProperties.insert(QStringLiteral("commitHash"), QStringLiteral(CRAFTWARD_COMMIT_HASH));
     engine.setInitialProperties(initialProperties);
