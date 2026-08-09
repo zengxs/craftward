@@ -10,25 +10,15 @@ tasks:
     cmds:
       - rm -rf build
 
-  format:
-    desc: Format application files
+  format:qml:
+    desc: Format QML files
+    internal: true
     requires:
       vars: [QT6_ROOT]
     preconditions:
-      - sh: command -v clang-format
-        msg: clang-format is not available in PATH
       - sh: test -x "$QT6_ROOT/bin/qmlformat"
         msg: qmlformat was not found under QT6_ROOT
     cmds:
-      - >-
-        git ls-files -z
-        --cached
-        --others
-        --exclude-standard
-        --
-        "*.c" "*.cc" "*.cpp" "*.cxx"
-        "*.h" "*.hh" "*.hpp" "*.hxx"
-        | xargs -0 clang-format -i
       - >-
         git ls-files -z
         --cached

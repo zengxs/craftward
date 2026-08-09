@@ -13,3 +13,27 @@ tasks:
     desc: List all available tasks
     cmds:
       - task --list-all --sort none
+
+  format:
+    desc: Format source code
+    cmds:
+      - task: format:clang
+      - task: app:format:qml
+
+  format:clang:
+    desc: Format source code with clang-format
+    internal: true
+    preconditions:
+      - sh: command -v clang-format
+        msg: clang-format is not available in PATH
+    cmds:
+      - >-
+        git ls-files -z
+        --cached
+        --others
+        --exclude-standard
+        --
+        "*.c" "*.cc" "*.cpp" "*.cxx"
+        "*.h" "*.hh" "*.hpp" "*.hxx"
+        "*.m" "*.mm"
+        | xargs -0 clang-format -i

@@ -1,11 +1,16 @@
----
-Language: Cpp
-Standard: c++20
 BasedOnStyle: Mozilla
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
 ColumnLimit: 120
+---
+Language: Cpp
+Standard: c++20
+DerivePointerAlignment: false
+PointerAlignment: Left
+---
+Language: ObjC
+Standard: c++20
 DerivePointerAlignment: false
 PointerAlignment: Left
 ...

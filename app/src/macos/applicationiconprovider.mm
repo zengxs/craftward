@@ -19,14 +19,12 @@ loadApplicationIcon()
             return {};
 
         NSRect proposedRect = NSMakeRect(0.0, 0.0, applicationIconDimension, applicationIconDimension);
-        CGImageRef iconImage =
-          [applicationIcon CGImageForProposedRect:&proposedRect context:nil hints:nil];
+        CGImageRef iconImage = [applicationIcon CGImageForProposedRect:&proposedRect context:nil hints:nil];
         if (iconImage == nullptr)
             return {};
 
         NSBitmapImageRep* representation = [[NSBitmapImageRep alloc] initWithCGImage:iconImage];
-        NSData* pngData =
-          [representation representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        NSData* pngData = [representation representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
         if (pngData == nil)
             return {};
 
@@ -37,7 +35,7 @@ loadApplicationIcon()
 
 class MacApplicationIconProvider final : public QQuickImageProvider
 {
-public:
+  public:
     MacApplicationIconProvider()
       : QQuickImageProvider(QQuickImageProvider::Image)
       , image_(loadApplicationIcon())
@@ -58,7 +56,7 @@ public:
         return image_.scaled(requestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
 
-private:
+  private:
     QImage image_;
 };
 
