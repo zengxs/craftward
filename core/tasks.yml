@@ -1,0 +1,61 @@
+version: "3"
+
+tasks:
+  build:
+    label: "core:build:{{.BUILD_TYPE}}"
+    desc: Build the Ward Core Universal2 static library
+    platforms: [darwin]
+    vars:
+      BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
+      CARGO_PROFILE: '{{if eq .BUILD_TYPE "Debug"}}dev{{else}}release{{end}}'
+      CARGO_OUTPUT_DIR: '{{if eq .BUILD_TYPE "Debug"}}debug{{else}}release{{end}}'
+      DIST_DIR: "dist/{{.BUILD_TYPE}}"
+      LIBRARY: "{{.DIST_DIR}}/libward_core.a"
+    preconditions:
+      - sh: test "{{.BUILD_TYPE}}" = "Debug" || test "{{.BUILD_TYPE}}" = "Release"
+        msg: BUILD_TYPE must be Debug or Release
+      - sh: command -v cargo
+        msg: cargo is not available in PATH
+      - sh: command -v cmake
+        msg: cmake is not available in PATH
+      - sh: command -v lipo
+        msg: lipo is not available in PATH
+    sources:
+      - Cargo.lock
+      - Cargo.toml
+      - tasks.yml
+      - "ward-*/Cargo.toml"
+      - "ward-*/**/*.rs"
+      - "ward-*/**/*.c"
+      - "ward-*/**/*.cc"
+      - "ward-*/**/*.cpp"
+      - "ward-*/**/*.h"
+      - "ward-*/**/*.m"
+      - "ward-*/**/*.mm"
+      - "ward-*/build.rs"
+    generates:
+      - "{{.LIBRARY}}"
+    cmds:
+      - >-
+        cargo build
+        --package ward-core
+        --profile "{{.CARGO_PROFILE}}"
+        --target aarch64-apple-darwin
+      - >-
+        cargo build
+        --package ward-core
+        --profile "{{.CARGO_PROFILE}}"
+        --target x86_64-apple-darwin
+      - cmake -E make_directory "{{.DIST_DIR}}"
+      - >-
+        lipo -create
+        "target/aarch64-apple-darwin/{{.CARGO_OUTPUT_DIR}}/libward_core.a"
+        "target/x86_64-apple-darwin/{{.CARGO_OUTPUT_DIR}}/libward_core.a"
+        -output "{{.LIBRARY}}"
+      - lipo "{{.LIBRARY}}" -verify_arch arm64 x86_64
+
+  format:cargo:
+    desc: Format Cargo files
+    internal: true
+    cmds:
+      - cargo fmt

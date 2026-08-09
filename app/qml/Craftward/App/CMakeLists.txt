@@ -1,4 +1,5 @@
 qt_add_executable(Craftward
+    ../../../src/Ward/CoreFFI.h
     ../../../src/applicationiconprovider.h
     ../../../src/main.cpp
     "${CRAFTWARD_APPLICATION_ICON_PROVIDER_SOURCE}"
@@ -32,6 +33,7 @@ target_link_libraries(Craftward
         CraftwardPagesplugin
         Qt6::Quick
         Qt6::QuickControls2
+        Ward::Core
         "${CRAFTWARD_APPKIT_FRAMEWORK}"
 )
 

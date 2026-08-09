@@ -233,6 +233,8 @@ compile_commands.json
 
 ### Project specific ###
 /.tmp/
+/.task/
+dist/
 
 *.log
 

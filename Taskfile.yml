@@ -3,6 +3,10 @@ version: "3"
 dotenv: [.env]
 
 includes:
+  core:
+    taskfile: ./core/tasks.yml
+    dir: ./core
+
   app:
     taskfile: ./app/tasks.yml
     dir: ./app
@@ -18,6 +22,7 @@ tasks:
     desc: Format source code
     cmds:
       - task: format:clang
+      - task: core:format:cargo
       - task: app:format:qml
 
   format:clang:

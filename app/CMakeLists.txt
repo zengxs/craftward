@@ -39,6 +39,12 @@ qt_standard_project_setup(REQUIRES 6.11)
 
 set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
 
+add_library(Ward::Core STATIC IMPORTED GLOBAL)
+set_target_properties(Ward::Core PROPERTIES
+    IMPORTED_LOCATION
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core/dist/${CMAKE_BUILD_TYPE}/libward_core.a"
+)
+
 set(CRAFTWARD_BUILD_NUMBER "1" CACHE STRING "Build number for the Craftward application")
 set(CRAFTWARD_COMMIT_HASH "" CACHE STRING "Source commit for the Craftward application")
 

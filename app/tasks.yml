@@ -29,6 +29,7 @@ tasks:
         | xargs -0 "$QT6_ROOT/bin/qmlformat" -i
 
   configure:
+    label: "app:configure:{{.BUILD_TYPE}}"
     desc: Configure the application build
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
@@ -48,11 +49,15 @@ tasks:
         -DCRAFTWARD_SIGN_IDENTITY="$CRAFTWARD_SIGN_IDENTITY"
 
   build:
+    label: "app:build:{{.BUILD_TYPE}}"
     desc: Build the application
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
       BUILD_DIR: "build/{{.BUILD_TYPE}}"
     deps:
+      - task: :core:build
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
       - task: configure
         vars:
           BUILD_TYPE: "{{.BUILD_TYPE}}"
@@ -61,6 +66,7 @@ tasks:
       - cmake --build "{{.BUILD_DIR}}" --parallel
 
   run:
+    label: "app:run:{{.BUILD_TYPE}}"
     desc: Run the application
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
@@ -74,6 +80,7 @@ tasks:
       - ./{{.BUILD_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/{{.APP_NAME}}
 
   deploy:
+    label: "app:deploy:{{.BUILD_TYPE}}"
     desc: Deploy the application
     vars:
       BUILD_TYPE: '{{default "Release" .BUILD_TYPE}}'
