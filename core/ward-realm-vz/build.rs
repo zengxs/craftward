@@ -4,15 +4,30 @@
 use std::env;
 
 fn main() -> anyhow::Result<()> {
-    println!("cargo:rerun-if-changed=bridge/vz_bridge.h");
-    println!("cargo:rerun-if-changed=bridge/vz_bridge.mm");
+    const BRIDGE_FILES: &[&str] = &[
+        "bridge/errors.h",
+        "bridge/macos_bundle.h",
+        "bridge/macos_bundle.mm",
+        "bridge/macos_installer.h",
+        "bridge/macos_installer.mm",
+        "bridge/vz.h",
+        "bridge/vz.mm",
+    ];
+    for file in BRIDGE_FILES {
+        println!("cargo:rerun-if-changed={file}");
+    }
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return Ok(());
     }
 
     cc::Build::new()
-        .file("bridge/vz_bridge.mm")
+        .cpp(true)
+        .files([
+            "bridge/macos_bundle.mm",
+            "bridge/macos_installer.mm",
+            "bridge/vz.mm",
+        ])
         .flag("-fobjc-arc")
         .flag("-std=c++20")
         .compile("realm_vz_bridge");

@@ -27,6 +27,12 @@ pub(super) type WardVzPrepareMacOsBundleCompletion = unsafe extern "C" fn(
     error: *const WardVzError,
 );
 
+pub(super) type WardVzMacOsInstallationProgress =
+    unsafe extern "C" fn(context: *mut c_void, fraction_completed: f64);
+
+pub(super) type WardVzInstallMacOsBundleCompletion =
+    unsafe extern "C" fn(context: *mut c_void, error: *const WardVzError);
+
 unsafe extern "C" {
     pub(super) fn ward_vz_is_supported() -> bool;
 
@@ -35,6 +41,14 @@ unsafe extern "C" {
         destination_path: *const c_char,
         disk_size: u64,
         completion: WardVzPrepareMacOsBundleCompletion,
+        context: *mut c_void,
+    );
+
+    pub(super) fn ward_vz_install_macos_bundle(
+        restore_image_path: *const c_char,
+        bundle_path: *const c_char,
+        progress: WardVzMacOsInstallationProgress,
+        completion: WardVzInstallMacOsBundleCompletion,
         context: *mut c_void,
     );
 }

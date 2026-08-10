@@ -35,10 +35,20 @@ extern "C"
                                                        const WardVzMacOSBundleInfo* bundle_info,
                                                        const WardVzError* error);
 
+    typedef void (*WardVzMacOSInstallationProgress)(void* context, double fraction_completed);
+
+    typedef void (*WardVzInstallMacOSBundleCompletion)(void* context, const WardVzError* error);
+
     void ward_vz_prepare_macos_bundle(const char* restore_image_path,
                                       const char* destination_path,
                                       uint64_t disk_size,
                                       WardVzPrepareMacOSBundleCompletion completion,
+                                      void* context);
+
+    void ward_vz_install_macos_bundle(const char* restore_image_path,
+                                      const char* bundle_path,
+                                      WardVzMacOSInstallationProgress progress,
+                                      WardVzInstallMacOSBundleCompletion completion,
                                       void* context);
 
 #ifdef __cplusplus
