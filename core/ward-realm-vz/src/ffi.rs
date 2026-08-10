@@ -33,6 +33,47 @@ pub(super) type WardVzMacOsInstallationProgress =
 pub(super) type WardVzInstallMacOsBundleCompletion =
     unsafe extern "C" fn(context: *mut c_void, error: *const WardVzError);
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(super) struct WardVzMacOsVirtualMachineStatus {
+    pub(super) state: i32,
+    pub(super) can_start: bool,
+    pub(super) can_pause: bool,
+    pub(super) can_resume: bool,
+    pub(super) can_request_stop: bool,
+    pub(super) can_force_stop: bool,
+}
+
+#[repr(C)]
+pub(super) struct WardVzMacOsVirtualMachine {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub(super) struct WardVzMacOsVirtualMachineDisplay {
+    _private: [u8; 0],
+}
+
+pub(super) type WardVzMacOsVirtualMachineEvent = unsafe extern "C" fn(
+    context: *mut c_void,
+    status: *const WardVzMacOsVirtualMachineStatus,
+    error: *const WardVzError,
+);
+
+pub(super) type WardVzCreateMacOsVirtualMachineCompletion = unsafe extern "C" fn(
+    context: *mut c_void,
+    virtual_machine: *mut WardVzMacOsVirtualMachine,
+    status: *const WardVzMacOsVirtualMachineStatus,
+    error: *const WardVzError,
+);
+
+pub(super) type WardVzCreateMacOsVirtualMachineDisplayCompletion = unsafe extern "C" fn(
+    context: *mut c_void,
+    display: *mut WardVzMacOsVirtualMachineDisplay,
+    native_view: *mut c_void,
+    error: *const WardVzError,
+);
+
 unsafe extern "C" {
     pub(super) fn ward_vz_is_supported() -> bool;
 
@@ -50,5 +91,47 @@ unsafe extern "C" {
         progress: WardVzMacOsInstallationProgress,
         completion: WardVzInstallMacOsBundleCompletion,
         context: *mut c_void,
+    );
+
+    pub(super) fn ward_vz_create_macos_virtual_machine(
+        bundle_path: *const c_char,
+        event: WardVzMacOsVirtualMachineEvent,
+        event_context: *mut c_void,
+        completion: WardVzCreateMacOsVirtualMachineCompletion,
+        completion_context: *mut c_void,
+    );
+
+    pub(super) fn ward_vz_destroy_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_start_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_pause_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_resume_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_request_stop_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_force_stop_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_create_macos_virtual_machine_display(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+        completion: WardVzCreateMacOsVirtualMachineDisplayCompletion,
+        context: *mut c_void,
+    );
+
+    pub(super) fn ward_vz_destroy_macos_virtual_machine_display(
+        display: *mut WardVzMacOsVirtualMachineDisplay,
     );
 }

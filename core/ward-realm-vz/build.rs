@@ -10,6 +10,8 @@ fn main() -> anyhow::Result<()> {
         "bridge/macos_bundle.mm",
         "bridge/macos_installer.h",
         "bridge/macos_installer.mm",
+        "bridge/macos_vm.h",
+        "bridge/macos_vm.mm",
         "bridge/vz.h",
         "bridge/vz.mm",
     ];
@@ -26,6 +28,7 @@ fn main() -> anyhow::Result<()> {
         .files([
             "bridge/macos_bundle.mm",
             "bridge/macos_installer.mm",
+            "bridge/macos_vm.mm",
             "bridge/vz.mm",
         ])
         .flag("-fobjc-arc")

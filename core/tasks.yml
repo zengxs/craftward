@@ -11,6 +11,8 @@ tasks:
       CARGO_OUTPUT_DIR: '{{if eq .BUILD_TYPE "Debug"}}debug{{else}}release{{end}}'
       DIST_DIR: "dist/{{.BUILD_TYPE}}"
       LIBRARY: "{{.DIST_DIR}}/libward_core.a"
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "{{.MACOS_DEPLOYMENT_TARGET}}"
     preconditions:
       - sh: test "{{.BUILD_TYPE}}" = "Debug" || test "{{.BUILD_TYPE}}" = "Release"
         msg: BUILD_TYPE must be Debug or Release

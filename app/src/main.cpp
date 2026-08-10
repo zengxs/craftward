@@ -1,4 +1,8 @@
+// Copyright (C) 2026 Xiangsong Zeng
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "applicationiconprovider.h"
+#include "ward/realm/realmcontroller.h"
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -12,6 +16,7 @@
 Q_IMPORT_QML_PLUGIN(Craftward_ComponentsPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_Features_LegalPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_PagesPlugin)
+Q_IMPORT_QML_PLUGIN(Craftward_RealmPlugin)
 
 int
 main(int argc, char* argv[])
@@ -26,6 +31,7 @@ main(int argc, char* argv[])
     // Use native text rendering for better font quality, especially for CJK fonts.
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
+    RealmController realmController;
     QQmlApplicationEngine engine;
 
     auto applicationIconProvider = createApplicationIconProvider();
@@ -36,6 +42,8 @@ main(int argc, char* argv[])
                              QUrl(QStringLiteral("image://application-icon/app")));
     initialProperties.insert(QStringLiteral("buildNumber"), QStringLiteral(CRAFTWARD_BUILD_NUMBER));
     initialProperties.insert(QStringLiteral("commitHash"), QStringLiteral(CRAFTWARD_COMMIT_HASH));
+    initialProperties.insert(QStringLiteral("realmController"),
+                             QVariant::fromValue(static_cast<QObject*>(&realmController)));
     engine.setInitialProperties(initialProperties);
 
     QObject::connect(

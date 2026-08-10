@@ -20,6 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (nullable instancetype)openPreparedBundleAtURL:(NSURL*)URL error:(NSError**)error;
 
++ (nullable instancetype)openInstalledBundleAtURL:(NSURL*)URL error:(NSError**)error;
+
 - (nullable VZVirtualMachineConfiguration*)createVirtualMachineConfigurationWithError:(NSError**)error;
 
 - (BOOL)transitionToInstallingWithError:(NSError**)error;

@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.22)
 
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
+
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING
+    "Minimum supported macOS version"
+)
+
 project(Craftward VERSION 0.1.0 LANGUAGES CXX)
 
 if(APPLE)
@@ -19,6 +27,8 @@ if(APPLE)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/applicationiconprovider.mm"
     )
     find_library(CRAFTWARD_APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(CRAFTWARD_VIRTUALIZATION_FRAMEWORK Virtualization REQUIRED)
+    find_program(CRAFTWARD_CODESIGN_EXECUTABLE codesign REQUIRED)
     set(CRAFTWARD_SIGN_IDENTITY "-" CACHE STRING
         "Code-signing identity used for macOS deployment"
     )
@@ -33,7 +43,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.11 REQUIRED COMPONENTS Qml Quick QuickControls2)
+find_package(Qt6 6.11 REQUIRED COMPONENTS Qml Quick QuickControls2 QuickDialogs2)
 
 qt_standard_project_setup(REQUIRES 6.11)
 
@@ -65,6 +75,7 @@ if(CRAFTWARD_COMMIT_HASH STREQUAL "")
     endif()
 endif()
 
+add_subdirectory(src/ward)
 add_subdirectory(qml/Craftward/Components)
 add_subdirectory(qml/Craftward/Features/Legal)
 add_subdirectory(qml/Craftward/Pages)

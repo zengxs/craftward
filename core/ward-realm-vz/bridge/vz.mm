@@ -6,6 +6,7 @@
 #include "errors.h"
 #include "macos_bundle.h"
 #include "macos_installer.h"
+#include "macos_vm.h"
 
 #include <climits>
 
@@ -15,6 +16,55 @@
 namespace {
 
 NSString* const WardVzErrorDomain = @"app.craftward.ward-realm-vz";
+
+template<typename Callback>
+void
+WardVzWithBridgeError(NSError* error, Callback callback)
+{
+    NSString* domain = error.domain != nil ? error.domain : WardVzErrorDomain;
+    NSString* message = error.localizedDescription != nil ? error.localizedDescription
+                                                          : @"The native bridge failed without an error message.";
+    WardVzError bridgeError = {
+        .domain = domain.UTF8String,
+        .code = static_cast<int64_t>(error.code),
+        .message = message.UTF8String,
+    };
+    callback(&bridgeError);
+}
+
+void
+WardVzCompleteMacOSVirtualMachineCreation(WardVzCreateMacOSVirtualMachineCompletion completion,
+                                          void* context,
+                                          WardVzMacOSVirtualMachineHandle* virtualMachine,
+                                          const WardVzMacOSVirtualMachineStatus* status,
+                                          NSError* error)
+{
+    if (error == nil) {
+        completion(context, virtualMachine, status, nullptr);
+        return;
+    }
+
+    WardVzWithBridgeError(error, [completion, context](const WardVzError* bridgeError) {
+        completion(context, nullptr, nullptr, bridgeError);
+    });
+}
+
+void
+WardVzCompleteMacOSVirtualMachineDisplayCreation(WardVzCreateMacOSVirtualMachineDisplayCompletion completion,
+                                                 void* context,
+                                                 WardVzMacOSVirtualMachineDisplayHandle* display,
+                                                 void* nativeView,
+                                                 NSError* error)
+{
+    if (error == nil) {
+        completion(context, display, nativeView, nullptr);
+        return;
+    }
+
+    WardVzWithBridgeError(error, [completion, context](const WardVzError* bridgeError) {
+        completion(context, nullptr, nullptr, bridgeError);
+    });
+}
 
 } // namespace
 
@@ -29,15 +79,8 @@ WardVzMakeError(WardVzErrorCode code, NSString* message)
 void
 WardVzCompleteBundlePreparationWithError(WardVzPrepareMacOSBundleCompletion completion, void* context, NSError* error)
 {
-    NSString* domain = error.domain != nil ? error.domain : WardVzErrorDomain;
-    NSString* message = error.localizedDescription != nil ? error.localizedDescription
-                                                          : @"The native bridge failed without an error message.";
-    WardVzError bridgeError = {
-        .domain = domain.UTF8String,
-        .code = static_cast<int64_t>(error.code),
-        .message = message.UTF8String,
-    };
-    completion(context, nullptr, &bridgeError);
+    WardVzWithBridgeError(
+      error, [completion, context](const WardVzError* bridgeError) { completion(context, nullptr, bridgeError); });
 }
 
 void
@@ -48,15 +91,8 @@ WardVzCompleteMacOSInstallation(WardVzInstallMacOSBundleCompletion completion, v
         return;
     }
 
-    NSString* domain = error.domain != nil ? error.domain : WardVzErrorDomain;
-    NSString* message = error.localizedDescription != nil ? error.localizedDescription
-                                                          : @"The native bridge failed without an error message.";
-    WardVzError bridgeError = {
-        .domain = domain.UTF8String,
-        .code = static_cast<int64_t>(error.code),
-        .message = message.UTF8String,
-    };
-    completion(context, &bridgeError);
+    WardVzWithBridgeError(error,
+                          [completion, context](const WardVzError* bridgeError) { completion(context, bridgeError); });
 }
 
 bool
@@ -187,4 +223,226 @@ ward_vz_install_macos_bundle(const char* restoreImagePath,
           WardVzMakeError(WardVzErrorCode::UnsupportedHost,
                           @"This host cannot install a Virtualization.framework macOS guest."));
     }
+}
+
+void
+ward_vz_create_macos_virtual_machine(const char* bundlePath,
+                                     WardVzMacOSVirtualMachineEvent event,
+                                     void* eventContext,
+                                     WardVzCreateMacOSVirtualMachineCompletion completion,
+                                     void* completionContext)
+{
+    if (completion == nullptr) {
+        return;
+    }
+
+    @autoreleasepool {
+#if defined(__arm64__)
+        if (@available(macOS 12.0, *)) {
+            if (!VZVirtualMachine.isSupported) {
+                WardVzCompleteMacOSVirtualMachineCreation(
+                  completion,
+                  completionContext,
+                  nullptr,
+                  nullptr,
+                  WardVzMakeError(WardVzErrorCode::UnsupportedHost,
+                                  @"Virtualization.framework is unavailable on this host."));
+                return;
+            }
+            if (bundlePath == nullptr || event == nullptr) {
+                WardVzCompleteMacOSVirtualMachineCreation(
+                  completion,
+                  completionContext,
+                  nullptr,
+                  nullptr,
+                  WardVzMakeError(WardVzErrorCode::InvalidArgument,
+                                  @"The virtual machine creation arguments are invalid."));
+                return;
+            }
+
+            NSURL* bundleURL = [NSURL fileURLWithFileSystemRepresentation:bundlePath isDirectory:YES relativeToURL:nil];
+            if (bundleURL == nil) {
+                WardVzCompleteMacOSVirtualMachineCreation(
+                  completion,
+                  completionContext,
+                  nullptr,
+                  nullptr,
+                  WardVzMakeError(WardVzErrorCode::InvalidArgument, @"The realm bundle path is invalid."));
+                return;
+            }
+
+            @try {
+                NSError* error = nil;
+                WardVzMacOSVirtualMachine* virtualMachine =
+                  [WardVzMacOSVirtualMachine openInstalledBundleAtURL:bundleURL
+                                                                event:event
+                                                              context:eventContext
+                                                                error:&error];
+                if (virtualMachine == nil) {
+                    WardVzCompleteMacOSVirtualMachineCreation(completion, completionContext, nullptr, nullptr, error);
+                    return;
+                }
+
+                WardVzMacOSVirtualMachineStatus status = virtualMachine.status;
+                WardVzMacOSVirtualMachineHandle* handle =
+                  (__bridge_retained WardVzMacOSVirtualMachineHandle*)virtualMachine;
+                WardVzCompleteMacOSVirtualMachineCreation(completion, completionContext, handle, &status, nil);
+            } @catch (NSException* exception) {
+                NSString* message = exception.reason != nil ? exception.reason : exception.name;
+                WardVzCompleteMacOSVirtualMachineCreation(completion,
+                                                          completionContext,
+                                                          nullptr,
+                                                          nullptr,
+                                                          WardVzMakeError(WardVzErrorCode::BridgeException, message));
+            }
+            return;
+        }
+#else
+        (void)bundlePath;
+        (void)event;
+        (void)eventContext;
+#endif
+        WardVzCompleteMacOSVirtualMachineCreation(
+          completion,
+          completionContext,
+          nullptr,
+          nullptr,
+          WardVzMakeError(WardVzErrorCode::UnsupportedHost,
+                          @"This host cannot run a Virtualization.framework macOS guest."));
+    }
+}
+
+void
+ward_vz_destroy_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    if (virtualMachine != nullptr) {
+        @autoreleasepool {
+            WardVzMacOSVirtualMachine* machine = (__bridge_transfer WardVzMacOSVirtualMachine*)virtualMachine;
+            [machine invalidate];
+        }
+    }
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
+ward_vz_start_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    [(__bridge WardVzMacOSVirtualMachine*)virtualMachine start];
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
+ward_vz_pause_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    [(__bridge WardVzMacOSVirtualMachine*)virtualMachine pause];
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
+ward_vz_resume_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    [(__bridge WardVzMacOSVirtualMachine*)virtualMachine resume];
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
+ward_vz_request_stop_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    [(__bridge WardVzMacOSVirtualMachine*)virtualMachine requestStop];
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
+ward_vz_force_stop_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    [(__bridge WardVzMacOSVirtualMachine*)virtualMachine forceStop];
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
+ward_vz_create_macos_virtual_machine_display(WardVzMacOSVirtualMachineHandle* virtualMachine,
+                                             WardVzCreateMacOSVirtualMachineDisplayCompletion completion,
+                                             void* context)
+{
+    if (completion == nullptr) {
+        return;
+    }
+
+    @autoreleasepool {
+#if defined(__arm64__)
+        if (@available(macOS 12.0, *)) {
+            if (virtualMachine == nullptr) {
+                WardVzCompleteMacOSVirtualMachineDisplayCreation(
+                  completion,
+                  context,
+                  nullptr,
+                  nullptr,
+                  WardVzMakeError(WardVzErrorCode::InvalidArgument, @"The virtual machine handle is missing."));
+                return;
+            }
+
+            @try {
+                NSError* error = nil;
+                VZVirtualMachineView* view =
+                  [(__bridge WardVzMacOSVirtualMachine*)virtualMachine makeDisplayViewWithError:&error];
+                if (view == nil) {
+                    WardVzCompleteMacOSVirtualMachineDisplayCreation(completion, context, nullptr, nullptr, error);
+                    return;
+                }
+
+                WardVzMacOSVirtualMachineDisplayHandle* handle =
+                  (__bridge_retained WardVzMacOSVirtualMachineDisplayHandle*)view;
+                WardVzCompleteMacOSVirtualMachineDisplayCreation(
+                  completion, context, handle, (__bridge void*)view, nil);
+            } @catch (NSException* exception) {
+                NSString* message = exception.reason != nil ? exception.reason : exception.name;
+                WardVzCompleteMacOSVirtualMachineDisplayCreation(
+                  completion, context, nullptr, nullptr, WardVzMakeError(WardVzErrorCode::BridgeException, message));
+            }
+            return;
+        }
+#else
+        (void)virtualMachine;
+#endif
+        WardVzCompleteMacOSVirtualMachineDisplayCreation(
+          completion,
+          context,
+          nullptr,
+          nullptr,
+          WardVzMakeError(WardVzErrorCode::UnsupportedHost,
+                          @"This host cannot display a Virtualization.framework macOS guest."));
+    }
+}
+
+void
+ward_vz_destroy_macos_virtual_machine_display(WardVzMacOSVirtualMachineDisplayHandle* display)
+{
+#if defined(__arm64__)
+    if (display != nullptr) {
+        @autoreleasepool {
+            VZVirtualMachineView* view = (__bridge_transfer VZVirtualMachineView*)display;
+            view.virtualMachine = nil;
+        }
+    }
+#else
+    (void)display;
+#endif
 }

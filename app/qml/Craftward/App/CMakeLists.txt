@@ -1,5 +1,4 @@
 qt_add_executable(Craftward
-    ../../../src/Ward/CoreFFI.h
     ../../../src/applicationiconprovider.h
     ../../../src/main.cpp
     "${CRAFTWARD_APPLICATION_ICON_PROVIDER_SOURCE}"
@@ -23,6 +22,7 @@ qt_add_qml_module(Craftward
     QML_FILES
         Main.qml
         MainWindow.qml
+        RealmDisplayWindow.qml
         SettingsWindow.qml
 )
 
@@ -31,9 +31,10 @@ target_link_libraries(Craftward
         CraftwardComponentsplugin
         CraftwardFeaturesLegalplugin
         CraftwardPagesplugin
+        CraftwardRealmplugin
         Qt6::Quick
         Qt6::QuickControls2
-        Ward::Core
+        Qt6::QuickDialogs2
         "${CRAFTWARD_APPKIT_FRAMEWORK}"
 )
 
@@ -57,6 +58,28 @@ set_target_properties(Craftward PROPERTIES
     MACOSX_BUNDLE_ICON_FILE "Ward.icns"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+set(craftward_local_sign_options
+    --force
+    --sign "${CRAFTWARD_SIGN_IDENTITY}"
+    --entitlements "${CRAFTWARD_ENTITLEMENTS_FILE}"
+    --timestamp=none
+)
+if(NOT CRAFTWARD_SIGN_IDENTITY STREQUAL "-")
+    list(APPEND craftward_local_sign_options --options runtime)
+endif()
+
+add_custom_target(CraftwardLocalSign ALL
+    COMMAND
+        "${CRAFTWARD_CODESIGN_EXECUTABLE}"
+        ${craftward_local_sign_options}
+        "$<TARGET_BUNDLE_DIR:Craftward>"
+    DEPENDS
+        Craftward
+        "${CRAFTWARD_ENTITLEMENTS_FILE}"
+    COMMENT "Signing Craftward for local execution"
+    VERBATIM
 )
 
 install(TARGETS Craftward

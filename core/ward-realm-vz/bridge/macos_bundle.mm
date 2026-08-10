@@ -228,7 +228,10 @@ WardVzPrepareBundleFiles(NSURL* destinationURL,
 }
 
 NSMutableDictionary*
-WardVzLoadBundleManifest(NSURL* bundleURL, NSError** outputError)
+WardVzLoadBundleManifest(NSURL* bundleURL,
+                         NSString* expectedState,
+                         NSString* invalidStateDescription,
+                         NSError** outputError)
 {
     NSURL* manifestURL = [bundleURL URLByAppendingPathComponent:WardVzManifestFileName isDirectory:NO];
     NSData* data = [NSData dataWithContentsOfURL:manifestURL options:0 error:outputError];
@@ -263,10 +266,13 @@ WardVzLoadBundleManifest(NSURL* bundleURL, NSError** outputError)
     }
 
     id state = manifest[@"state"];
-    if (state != nil && (![state isKindOfClass:NSString.class] || ![state isEqualToString:WardVzPreparedState])) {
+    BOOL allowsLegacyPreparedState = state == nil && [expectedState isEqualToString:WardVzPreparedState];
+    if (!allowsLegacyPreparedState &&
+        (![state isKindOfClass:NSString.class] || ![state isEqualToString:expectedState])) {
         if (outputError != nullptr) {
-            NSString* message =
-              [NSString stringWithFormat:@"The bundle cannot be installed from its current state (%@).", state];
+            NSString* message = [NSString stringWithFormat:@"The bundle cannot be %@ from its current state (%@).",
+                                                           invalidStateDescription,
+                                                           state != nil ? state : @"missing"];
             *outputError = WardVzMakeError(WardVzErrorCode::InvalidBundleState, message);
         }
         return nil;
@@ -502,7 +508,16 @@ WardVzCreateMacOSVirtualMachineConfiguration(NSURL* bundleURL, NSMutableDictiona
 
 + (instancetype)openPreparedBundleAtURL:(NSURL*)URL error:(NSError**)error
 {
-    NSMutableDictionary* manifest = WardVzLoadBundleManifest(URL, error);
+    NSMutableDictionary* manifest = WardVzLoadBundleManifest(URL, WardVzPreparedState, @"installed", error);
+    if (manifest == nil) {
+        return nil;
+    }
+    return [[self alloc] initWithURL:URL manifest:manifest];
+}
+
++ (instancetype)openInstalledBundleAtURL:(NSURL*)URL error:(NSError**)error
+{
+    NSMutableDictionary* manifest = WardVzLoadBundleManifest(URL, WardVzInstalledState, @"started", error);
     if (manifest == nil) {
         return nil;
     }
