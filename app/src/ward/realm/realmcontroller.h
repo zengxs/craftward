@@ -35,6 +35,9 @@ class RealmController : public QObject
     Q_PROPERTY(bool canResume READ canResume NOTIFY statusChanged)
     Q_PROPERTY(bool canRequestStop READ canRequestStop NOTIFY statusChanged)
     Q_PROPERTY(bool canForceStop READ canForceStop NOTIFY statusChanged)
+    Q_PROPERTY(bool canSuspend READ canSuspend NOTIFY statusChanged)
+    Q_PROPERTY(bool canRestore READ canRestore NOTIFY statusChanged)
+    Q_PROPERTY(bool canDiscardSavedState READ canDiscardSavedState NOTIFY statusChanged)
     Q_PROPERTY(bool requiresStopBeforeExit READ requiresStopBeforeExit NOTIFY statusChanged)
 
   public:
@@ -51,6 +54,7 @@ class RealmController : public QObject
         Stopping,
         Saving,
         Restoring,
+        Suspended,
     };
     Q_ENUM(State)
 
@@ -74,6 +78,9 @@ class RealmController : public QObject
     [[nodiscard]] bool canResume() const;
     [[nodiscard]] bool canRequestStop() const;
     [[nodiscard]] bool canForceStop() const;
+    [[nodiscard]] bool canSuspend() const;
+    [[nodiscard]] bool canRestore() const;
+    [[nodiscard]] bool canDiscardSavedState() const;
     [[nodiscard]] bool requiresStopBeforeExit() const;
 
     Q_INVOKABLE void start();
@@ -81,6 +88,9 @@ class RealmController : public QObject
     Q_INVOKABLE void resume();
     Q_INVOKABLE void requestStop();
     Q_INVOKABLE void forceStop();
+    Q_INVOKABLE void suspend();
+    Q_INVOKABLE void restore();
+    Q_INVOKABLE void discardSavedState();
     Q_INVOKABLE bool attachDisplay();
     Q_INVOKABLE void detachDisplay();
     Q_INVOKABLE void clearError();
@@ -113,4 +123,7 @@ class RealmController : public QObject
     bool backendCanResume_ = false;
     bool backendCanRequestStop_ = false;
     bool backendCanForceStop_ = false;
+    bool backendCanSuspend_ = false;
+    bool backendCanRestore_ = false;
+    bool backendCanDiscardSavedState_ = false;
 };

@@ -64,6 +64,8 @@ RealmController::setBundleUrl(const QUrl& bundleUrl)
     setErrorMessage({});
     emit bundleChanged();
     emit statusChanged();
+    if (!bundleUrl_.isEmpty())
+        (void)ensureRealm();
 }
 
 QString
@@ -112,6 +114,8 @@ RealmController::stateText() const
             return tr("Saving…");
         case Restoring:
             return tr("Restoring…");
+        case Suspended:
+            return tr("Suspended");
     }
     return tr("Unknown");
 }
@@ -138,7 +142,8 @@ RealmController::busy() const
 bool
 RealmController::canSelectBundle() const
 {
-    return !commandPending_ && (realm_ == nullptr || state_ == Stopped || (state_ == Error && !backendCanForceStop_));
+    return !commandPending_ && (realm_ == nullptr || state_ == Stopped || state_ == Suspended ||
+                                (state_ == Error && !backendCanForceStop_));
 }
 
 bool
@@ -174,6 +179,24 @@ RealmController::canForceStop() const
 }
 
 bool
+RealmController::canSuspend() const
+{
+    return !commandPending_ && realm_ != nullptr && backendCanSuspend_;
+}
+
+bool
+RealmController::canRestore() const
+{
+    return !commandPending_ && realm_ != nullptr && backendCanRestore_;
+}
+
+bool
+RealmController::canDiscardSavedState() const
+{
+    return !commandPending_ && realm_ != nullptr && backendCanDiscardSavedState_;
+}
+
+bool
 RealmController::requiresStopBeforeExit() const
 {
     return realm_ != nullptr && (busy() || backendCanForceStop_ || state_ == Running || state_ == Paused);
@@ -182,7 +205,7 @@ RealmController::requiresStopBeforeExit() const
 void
 RealmController::start()
 {
-    if (!canStart() || !ensureRealm())
+    if (!ensureRealm() || !canStart())
         return;
     beginCommand();
     ward_core_realm_start(realm_);
@@ -222,6 +245,33 @@ RealmController::forceStop()
         return;
     beginCommand();
     ward_core_realm_force_stop(realm_);
+}
+
+void
+RealmController::suspend()
+{
+    if (!canSuspend())
+        return;
+    beginCommand();
+    ward_core_realm_suspend(realm_);
+}
+
+void
+RealmController::restore()
+{
+    if (!ensureRealm() || !canRestore())
+        return;
+    beginCommand();
+    ward_core_realm_restore(realm_);
+}
+
+void
+RealmController::discardSavedState()
+{
+    if (!canDiscardSavedState())
+        return;
+    beginCommand();
+    ward_core_realm_discard_saved_state(realm_);
 }
 
 bool
@@ -322,8 +372,10 @@ RealmController::ensureRealm()
     WardError* error = nullptr;
     const QByteArray bundlePath = bundleUrl_.toLocalFile().toUtf8();
     realm_ = ward_core_realm_open(bundlePath.constData(), handleRealmEvent, callbackContext_.get(), &error);
-    if (realm_ != nullptr)
+    if (realm_ != nullptr) {
+        emit statusChanged();
         return true;
+    }
 
     QString message = tr("The realm bundle could not be opened.");
     if (error != nullptr) {
@@ -352,6 +404,9 @@ RealmController::destroyRealm()
     backendCanResume_ = false;
     backendCanRequestStop_ = false;
     backendCanForceStop_ = false;
+    backendCanSuspend_ = false;
+    backendCanRestore_ = false;
+    backendCanDiscardSavedState_ = false;
 }
 
 void
@@ -399,6 +454,9 @@ RealmController::applyStatus(std::uint64_t generation, WardRealmStatus status, c
         case WardRealmStateRestoring:
             state_ = Restoring;
             break;
+        case WardRealmStateSuspended:
+            state_ = Suspended;
+            break;
         default:
             state_ = Error;
             break;
@@ -410,6 +468,9 @@ RealmController::applyStatus(std::uint64_t generation, WardRealmStatus status, c
     backendCanResume_ = status.can_resume;
     backendCanRequestStop_ = status.can_request_stop;
     backendCanForceStop_ = status.can_force_stop;
+    backendCanSuspend_ = status.can_suspend;
+    backendCanRestore_ = status.can_restore;
+    backendCanDiscardSavedState_ = status.can_discard_saved_state;
     if (!errorMessage.isEmpty())
         setErrorMessage(errorMessage);
     emit statusChanged();

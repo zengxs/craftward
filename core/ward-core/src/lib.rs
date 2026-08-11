@@ -19,6 +19,7 @@ const WARD_REALM_STATE_RESUMING: i32 = 6;
 const WARD_REALM_STATE_STOPPING: i32 = 7;
 const WARD_REALM_STATE_SAVING: i32 = 8;
 const WARD_REALM_STATE_RESTORING: i32 = 9;
+const WARD_REALM_STATE_SUSPENDED: i32 = 10;
 
 /// A lifecycle snapshot passed through Ward Core's private C interface.
 #[repr(C)]
@@ -29,6 +30,9 @@ pub struct WardRealmStatus {
     can_resume: bool,
     can_request_stop: bool,
     can_force_stop: bool,
+    can_suspend: bool,
+    can_restore: bool,
+    can_discard_saved_state: bool,
 }
 
 /// An opaque realm handle passed through Ward Core's private C interface.
@@ -90,6 +94,7 @@ fn ward_realm_status(status: MacOsVirtualMachineStatus) -> WardRealmStatus {
         MacOsVirtualMachineState::Stopping => WARD_REALM_STATE_STOPPING,
         MacOsVirtualMachineState::Saving => WARD_REALM_STATE_SAVING,
         MacOsVirtualMachineState::Restoring => WARD_REALM_STATE_RESTORING,
+        MacOsVirtualMachineState::Suspended => WARD_REALM_STATE_SUSPENDED,
         _ => WARD_REALM_STATE_ERROR,
     };
 
@@ -100,6 +105,9 @@ fn ward_realm_status(status: MacOsVirtualMachineStatus) -> WardRealmStatus {
         can_resume: status.can_resume,
         can_request_stop: status.can_request_stop,
         can_force_stop: status.can_force_stop,
+        can_suspend: status.can_suspend,
+        can_restore: status.can_restore,
+        can_discard_saved_state: status.can_discard_saved_state,
     }
 }
 
@@ -257,6 +265,48 @@ pub unsafe extern "C" fn ward_core_realm_force_stop(realm: *mut WardRealm) {
     // SAFETY: A non-null pointer names a live handle owned by the caller.
     if let Some(realm) = unsafe { realm.as_ref() } {
         realm.virtual_machine.force_stop();
+    }
+}
+
+/// Saves a realm's runtime state and releases its virtual-machine resources.
+///
+/// # Safety
+///
+/// `realm` must be null or a live handle returned by
+/// [`ward_core_realm_open`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_realm_suspend(realm: *mut WardRealm) {
+    // SAFETY: A non-null pointer names a live handle owned by the caller.
+    if let Some(realm) = unsafe { realm.as_ref() } {
+        realm.virtual_machine.suspend();
+    }
+}
+
+/// Restores and resumes a realm from its saved runtime state.
+///
+/// # Safety
+///
+/// `realm` must be null or a live handle returned by
+/// [`ward_core_realm_open`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_realm_restore(realm: *mut WardRealm) {
+    // SAFETY: A non-null pointer names a live handle owned by the caller.
+    if let Some(realm) = unsafe { realm.as_ref() } {
+        realm.virtual_machine.restore();
+    }
+}
+
+/// Discards a stopped realm's saved runtime state.
+///
+/// # Safety
+///
+/// `realm` must be null or a live handle returned by
+/// [`ward_core_realm_open`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_realm_discard_saved_state(realm: *mut WardRealm) {
+    // SAFETY: A non-null pointer names a live handle owned by the caller.
+    if let Some(realm) = unsafe { realm.as_ref() } {
+        realm.virtual_machine.discard_saved_state();
     }
 }
 

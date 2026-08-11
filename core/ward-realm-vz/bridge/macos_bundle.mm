@@ -21,6 +21,9 @@ NSString* const WardVzAuxiliaryStorageFileName = @"AuxiliaryStorage";
 NSString* const WardVzHardwareModelFileName = @"HardwareModel";
 NSString* const WardVzMachineIdentifierFileName = @"MachineIdentifier";
 NSString* const WardVzManifestFileName = @"Manifest.json";
+NSString* const WardVzMachineStateFileName = @"MachineState.vzvmsave";
+NSString* const WardVzSavingMachineStateFileName = @".MachineState.vzvmsave.saving";
+NSString* const WardVzRestoringMachineStateFileName = @".MachineState.vzvmsave.restoring";
 NSString* const WardVzPreparedState = @"prepared";
 NSString* const WardVzInstallingState = @"installing";
 NSString* const WardVzInstalledState = @"installed";
@@ -502,6 +505,12 @@ WardVzCreateMacOSVirtualMachineConfiguration(NSURL* bundleURL, NSMutableDictiona
 
 - (instancetype)initWithURL:(NSURL*)URL manifest:(NSMutableDictionary*)manifest;
 
+- (NSURL*)machineStateURL;
+
+- (NSURL*)savingMachineStateURL;
+
+- (NSURL*)restoringMachineStateURL;
+
 @end
 
 @implementation WardVzMacOSBundle
@@ -530,6 +539,12 @@ WardVzCreateMacOSVirtualMachineConfiguration(NSURL* bundleURL, NSMutableDictiona
     if (self != nil) {
         _bundleURL = [URL copy];
         _manifest = manifest;
+
+        // Interrupted saves are incomplete, while interrupted restores have
+        // already consumed state that may no longer match the guest disk.
+        NSFileManager* fileManager = [NSFileManager defaultManager];
+        [fileManager removeItemAtURL:self.savingMachineStateURL error:nil];
+        [fileManager removeItemAtURL:self.restoringMachineStateURL error:nil];
     }
     return self;
 }
@@ -537,6 +552,109 @@ WardVzCreateMacOSVirtualMachineConfiguration(NSURL* bundleURL, NSMutableDictiona
 - (VZVirtualMachineConfiguration*)createVirtualMachineConfigurationWithError:(NSError**)error
 {
     return WardVzCreateMacOSVirtualMachineConfiguration(self.bundleURL, self.manifest, error);
+}
+
+- (NSURL*)machineStateURL
+{
+    return [self.bundleURL URLByAppendingPathComponent:WardVzMachineStateFileName isDirectory:NO];
+}
+
+- (NSURL*)savingMachineStateURL
+{
+    return [self.bundleURL URLByAppendingPathComponent:WardVzSavingMachineStateFileName isDirectory:NO];
+}
+
+- (NSURL*)restoringMachineStateURL
+{
+    return [self.bundleURL URLByAppendingPathComponent:WardVzRestoringMachineStateFileName isDirectory:NO];
+}
+
+- (BOOL)hasSavedMachineState
+{
+    return [[NSFileManager defaultManager] fileExistsAtPath:self.machineStateURL.path];
+}
+
+- (NSURL*)beginSavingMachineStateWithError:(NSError**)error
+{
+    NSFileManager* fileManager = [NSFileManager defaultManager];
+    if (self.hasSavedMachineState) {
+        if (error != nullptr) {
+            *error =
+              WardVzMakeError(WardVzErrorCode::InvalidBundleState, @"The realm already has a suspended machine state.");
+        }
+        return nil;
+    }
+
+    NSURL* savingURL = self.savingMachineStateURL;
+    if ([fileManager fileExistsAtPath:savingURL.path] && ![fileManager removeItemAtURL:savingURL error:error]) {
+        return nil;
+    }
+    return savingURL;
+}
+
+- (BOOL)finishSavingMachineStateAtURL:(NSURL*)URL error:(NSError**)error
+{
+    if (![URL isEqual:self.savingMachineStateURL]) {
+        if (error != nullptr) {
+            *error = WardVzMakeError(WardVzErrorCode::InvalidArgument,
+                                     @"The temporary machine state does not belong to this realm bundle.");
+        }
+        return NO;
+    }
+    return [[NSFileManager defaultManager] moveItemAtURL:URL toURL:self.machineStateURL error:error];
+}
+
+- (void)cancelSavingMachineStateAtURL:(NSURL*)URL
+{
+    if ([URL isEqual:self.savingMachineStateURL]) {
+        [[NSFileManager defaultManager] removeItemAtURL:URL error:nil];
+    }
+}
+
+- (NSURL*)consumeSavedMachineStateWithError:(NSError**)error
+{
+    NSFileManager* fileManager = [NSFileManager defaultManager];
+    NSURL* machineStateURL = self.machineStateURL;
+    if (![fileManager fileExistsAtPath:machineStateURL.path]) {
+        if (error != nullptr) {
+            *error = WardVzMakeError(WardVzErrorCode::InvalidBundleState,
+                                     @"The realm has no suspended machine state to restore.");
+        }
+        return nil;
+    }
+
+    NSURL* restoringURL = self.restoringMachineStateURL;
+    if ([fileManager fileExistsAtPath:restoringURL.path] && ![fileManager removeItemAtURL:restoringURL error:error]) {
+        return nil;
+    }
+    // A restore attempt makes the state unsafe to reuse even when VZ reports
+    // an error, so remove it from the set of resumable states first.
+    if (![fileManager moveItemAtURL:machineStateURL toURL:restoringURL error:error]) {
+        return nil;
+    }
+    return restoringURL;
+}
+
+- (BOOL)finishConsumingMachineStateAtURL:(NSURL*)URL error:(NSError**)error
+{
+    if (![URL isEqual:self.restoringMachineStateURL]) {
+        if (error != nullptr) {
+            *error = WardVzMakeError(WardVzErrorCode::InvalidArgument,
+                                     @"The restoring machine state does not belong to this realm bundle.");
+        }
+        return NO;
+    }
+    return [[NSFileManager defaultManager] removeItemAtURL:URL error:error];
+}
+
+- (BOOL)discardSavedMachineStateWithError:(NSError**)error
+{
+    NSFileManager* fileManager = [NSFileManager defaultManager];
+    NSURL* machineStateURL = self.machineStateURL;
+    if (![fileManager fileExistsAtPath:machineStateURL.path]) {
+        return YES;
+    }
+    return [fileManager removeItemAtURL:machineStateURL error:error];
 }
 
 - (BOOL)transitionToInstallingWithError:(NSError**)error

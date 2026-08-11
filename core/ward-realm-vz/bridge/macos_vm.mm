@@ -37,6 +37,7 @@ WardVzMapVirtualMachineState(VZVirtualMachineState state)
         case VZVirtualMachineStateRestoring:
             return WardVzMacOSVirtualMachineStateRestoring;
     }
+    return WardVzMacOSVirtualMachineStateError;
 }
 
 NSError*
@@ -54,27 +55,56 @@ WardVzMakeBridgeExceptionError(NSException* exception)
     return WardVzMakeError(WardVzErrorCode::BridgeException, message);
 }
 
+NSError*
+WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
+{
+    if (@available(macOS 14.0, *)) {
+        NSError* error = nil;
+        if (![configuration validateSaveRestoreSupportWithError:&error] && error == nil) {
+            return WardVzMakeError(WardVzErrorCode::InvalidBundle,
+                                   @"The virtual machine configuration does not support saving and restoring state.");
+        }
+        return error;
+    }
+
+    return WardVzMakeError(WardVzErrorCode::UnsupportedHost,
+                           @"Suspending a Virtualization.framework virtual machine requires macOS 14 or later.");
+}
+
 } // namespace
 
 @interface WardVzMacOSVirtualMachine ()
 
 @property (nonatomic, strong) VZVirtualMachine* virtualMachine;
+@property (nonatomic, strong) WardVzMacOSBundle* bundle;
 @property (nonatomic) dispatch_queue_t queue;
 @property (nonatomic) WardVzMacOSVirtualMachineEvent event;
 @property (nonatomic) void* eventContext;
+@property (nonatomic, strong) NSError* saveRestoreSupportError;
 @property (nonatomic) BOOL stopRequested;
+@property (nonatomic) BOOL suspensionRequested;
+@property (nonatomic) BOOL restorationRequested;
 @property (nonatomic) BOOL invalidated;
+@property (nonatomic, strong) NSHashTable<VZVirtualMachineView*>* displayViews;
 
 - (instancetype)initWithConfiguration:(VZVirtualMachineConfiguration*)configuration
+                               bundle:(WardVzMacOSBundle*)bundle
                                 queue:(dispatch_queue_t)queue
                                 event:(WardVzMacOSVirtualMachineEvent)event
-                              context:(void*)context;
+                              context:(void*)context
+              saveRestoreSupportError:(nullable NSError*)saveRestoreSupportError;
 
 - (WardVzMacOSVirtualMachineStatus)currentStatus;
 - (void)emitStatusWithError:(nullable NSError*)error;
 - (void)performOnQueue:(dispatch_block_t)operation;
 - (void)performOnQueueSynchronously:(dispatch_block_t)operation;
 - (void)requestStopOnQueue;
+- (void)saveAndStopOnQueue;
+- (nullable NSError*)replaceStoppedVirtualMachineOnQueue;
+- (void)retargetDisplayViewsFromVirtualMachine:(VZVirtualMachine*)previousVirtualMachine
+                              toVirtualMachine:(VZVirtualMachine*)replacementVirtualMachine;
+- (void)finishSuspensionWithError:(nullable NSError*)error;
+- (void)resumeRestoredMachineStateOnQueueWithCleanupError:(nullable NSError*)cleanupError;
 
 @end
 
@@ -95,20 +125,32 @@ WardVzMakeBridgeExceptionError(NSException* exception)
         return nil;
     }
 
+    NSError* saveRestoreSupportError = WardVzValidateSaveRestoreSupport(configuration);
+
     dispatch_queue_t queue = dispatch_queue_create("app.craftward.ward-realm-vz.vm", DISPATCH_QUEUE_SERIAL);
-    return [[self alloc] initWithConfiguration:configuration queue:queue event:event context:context];
+    return [[self alloc] initWithConfiguration:configuration
+                                        bundle:bundle
+                                         queue:queue
+                                         event:event
+                                       context:context
+                       saveRestoreSupportError:saveRestoreSupportError];
 }
 
 - (instancetype)initWithConfiguration:(VZVirtualMachineConfiguration*)configuration
+                               bundle:(WardVzMacOSBundle*)bundle
                                 queue:(dispatch_queue_t)queue
                                 event:(WardVzMacOSVirtualMachineEvent)event
                               context:(void*)context
+              saveRestoreSupportError:(NSError*)saveRestoreSupportError
 {
     self = [super init];
     if (self != nil) {
+        _bundle = bundle;
         _queue = queue;
         _event = event;
         _eventContext = context;
+        _saveRestoreSupportError = saveRestoreSupportError;
+        _displayViews = [NSHashTable weakObjectsHashTable];
         dispatch_queue_set_specific(_queue, WardVzMacOSVirtualMachineQueueKey, (__bridge void*)self, nullptr);
         dispatch_sync(_queue, ^{
           self.virtualMachine = [[VZVirtualMachine alloc] initWithConfiguration:configuration queue:self.queue];
@@ -131,18 +173,41 @@ WardVzMakeBridgeExceptionError(NSException* exception)
 {
     VZVirtualMachineState state = self.virtualMachine.state;
     WardVzMacOSVirtualMachineState reportedState = WardVzMapVirtualMachineState(state);
-    if (self.stopRequested && state != VZVirtualMachineStateStopped && state != VZVirtualMachineStateError) {
+    BOOL hasSavedMachineState = self.bundle.hasSavedMachineState;
+    BOOL lifecycleOperationRequested = self.suspensionRequested || self.restorationRequested;
+    if (self.suspensionRequested) {
+        reportedState = WardVzMacOSVirtualMachineStateSaving;
+    } else if (self.restorationRequested) {
+        reportedState = WardVzMacOSVirtualMachineStateRestoring;
+    } else if (hasSavedMachineState && state == VZVirtualMachineStateStopped) {
+        reportedState = WardVzMacOSVirtualMachineStateSuspended;
+    } else if (self.stopRequested && state != VZVirtualMachineStateStopped && state != VZVirtualMachineStateError) {
         reportedState = WardVzMacOSVirtualMachineStateStopping;
     }
 
+    BOOL canSuspend = self.saveRestoreSupportError == nil && !self.invalidated && !self.stopRequested &&
+                      !lifecycleOperationRequested && !hasSavedMachineState &&
+                      (self.virtualMachine.canPause || state == VZVirtualMachineStatePaused);
+    BOOL canRestore = self.saveRestoreSupportError == nil && !self.invalidated && !lifecycleOperationRequested &&
+                      hasSavedMachineState && state == VZVirtualMachineStateStopped;
+    BOOL canDiscardSavedState = !self.invalidated && !lifecycleOperationRequested && hasSavedMachineState &&
+                                (state == VZVirtualMachineStateStopped || state == VZVirtualMachineStateError);
+
     return {
         .state = reportedState,
-        .can_start = !self.invalidated && self.virtualMachine.canStart,
-        .can_pause = !self.invalidated && !self.stopRequested && self.virtualMachine.canPause,
-        .can_resume = !self.invalidated && !self.stopRequested && self.virtualMachine.canResume,
-        .can_request_stop = !self.invalidated && !self.stopRequested &&
+        .can_start =
+          !self.invalidated && !lifecycleOperationRequested && !hasSavedMachineState && self.virtualMachine.canStart,
+        .can_pause = !self.invalidated && !self.stopRequested && !lifecycleOperationRequested &&
+                     !hasSavedMachineState && self.virtualMachine.canPause,
+        .can_resume = !self.invalidated && !self.stopRequested && !lifecycleOperationRequested &&
+                      !hasSavedMachineState && self.virtualMachine.canResume,
+        .can_request_stop = !self.invalidated && !self.stopRequested && !lifecycleOperationRequested &&
+                            !hasSavedMachineState &&
                             (self.virtualMachine.canRequestStop || self.virtualMachine.canResume),
-        .can_force_stop = !self.invalidated && self.virtualMachine.canStop,
+        .can_force_stop = !self.invalidated && !lifecycleOperationRequested && self.virtualMachine.canStop,
+        .can_suspend = canSuspend,
+        .can_restore = canRestore,
+        .can_discard_saved_state = canDiscardSavedState,
     };
 }
 
@@ -187,7 +252,7 @@ WardVzMakeBridgeExceptionError(NSException* exception)
 {
     [self performOnQueue:^{
       @try {
-          if (!self.virtualMachine.canStart) {
+          if (![self currentStatus].can_start) {
               [self emitStatusWithError:WardVzMakeInvalidStateError(@"start")];
               return;
           }
@@ -207,7 +272,7 @@ WardVzMakeBridgeExceptionError(NSException* exception)
 {
     [self performOnQueue:^{
       @try {
-          if (!self.virtualMachine.canPause) {
+          if (![self currentStatus].can_pause) {
               [self emitStatusWithError:WardVzMakeInvalidStateError(@"pause")];
               return;
           }
@@ -226,7 +291,7 @@ WardVzMakeBridgeExceptionError(NSException* exception)
 {
     [self performOnQueue:^{
       @try {
-          if (!self.virtualMachine.canResume) {
+          if (![self currentStatus].can_resume) {
               [self emitStatusWithError:WardVzMakeInvalidStateError(@"resume")];
               return;
           }
@@ -245,6 +310,10 @@ WardVzMakeBridgeExceptionError(NSException* exception)
 {
     [self performOnQueue:^{
       @try {
+          if (![self currentStatus].can_request_stop) {
+              [self emitStatusWithError:WardVzMakeInvalidStateError(@"shut down")];
+              return;
+          }
           if (self.virtualMachine.canRequestStop) {
               [self requestStopOnQueue];
               return;
@@ -289,7 +358,7 @@ WardVzMakeBridgeExceptionError(NSException* exception)
 {
     [self performOnQueue:^{
       @try {
-          if (!self.virtualMachine.canStop) {
+          if (![self currentStatus].can_force_stop) {
               [self emitStatusWithError:WardVzMakeInvalidStateError(@"stop")];
               return;
           }
@@ -299,6 +368,243 @@ WardVzMakeBridgeExceptionError(NSException* exception)
             [self emitStatusWithError:operationError];
           }];
           [self emitStatusWithError:nil];
+      } @catch (NSException* exception) {
+          [self emitStatusWithError:WardVzMakeBridgeExceptionError(exception)];
+      }
+    }];
+}
+
+- (void)suspend
+{
+    [self performOnQueue:^{
+      @try {
+          WardVzMacOSVirtualMachineStatus status = [self currentStatus];
+          if (!status.can_suspend) {
+              NSError* error = self.saveRestoreSupportError != nil ? self.saveRestoreSupportError
+                                                                   : WardVzMakeInvalidStateError(@"suspend");
+              [self emitStatusWithError:error];
+              return;
+          }
+
+          self.suspensionRequested = YES;
+          [self emitStatusWithError:nil];
+          if (self.virtualMachine.state == VZVirtualMachineStatePaused) {
+              [self saveAndStopOnQueue];
+              return;
+          }
+
+          [self.virtualMachine pauseWithCompletionHandler:^(NSError* operationError) {
+            if (operationError != nil) {
+                [self finishSuspensionWithError:operationError];
+                return;
+            }
+            [self saveAndStopOnQueue];
+          }];
+      } @catch (NSException* exception) {
+          [self finishSuspensionWithError:WardVzMakeBridgeExceptionError(exception)];
+      }
+    }];
+}
+
+- (void)saveAndStopOnQueue
+{
+    NSURL* savingURL = nil;
+    @try {
+        NSError* error = nil;
+        savingURL = [self.bundle beginSavingMachineStateWithError:&error];
+        if (savingURL == nil) {
+            [self finishSuspensionWithError:error];
+            return;
+        }
+
+        if (@available(macOS 14.0, *)) {
+            [self.virtualMachine
+              saveMachineStateToURL:savingURL
+                  completionHandler:^(NSError* operationError) {
+                    @try {
+                        if (operationError != nil) {
+                            [self.bundle cancelSavingMachineStateAtURL:savingURL];
+                            [self finishSuspensionWithError:operationError];
+                            return;
+                        }
+
+                        NSError* publishError = nil;
+                        if (![self.bundle finishSavingMachineStateAtURL:savingURL error:&publishError]) {
+                            [self.bundle cancelSavingMachineStateAtURL:savingURL];
+                            [self finishSuspensionWithError:publishError];
+                            return;
+                        }
+                        if (!self.virtualMachine.canStop) {
+                            [self.bundle discardSavedMachineStateWithError:nil];
+                            [self finishSuspensionWithError:WardVzMakeInvalidStateError(@"stop after saving")];
+                            return;
+                        }
+
+                        [self.virtualMachine stopWithCompletionHandler:^(NSError* stopError) {
+                          @try {
+                              if (stopError != nil) {
+                                  [self.bundle discardSavedMachineStateWithError:nil];
+                                  [self finishSuspensionWithError:stopError];
+                                  return;
+                              }
+
+                              [self finishSuspensionWithError:[self replaceStoppedVirtualMachineOnQueue]];
+                          } @catch (NSException* exception) {
+                              [self finishSuspensionWithError:WardVzMakeBridgeExceptionError(exception)];
+                          }
+                        }];
+                    } @catch (NSException* exception) {
+                        [self.bundle cancelSavingMachineStateAtURL:savingURL];
+                        [self.bundle discardSavedMachineStateWithError:nil];
+                        [self finishSuspensionWithError:WardVzMakeBridgeExceptionError(exception)];
+                    }
+                  }];
+            return;
+        }
+
+        [self.bundle cancelSavingMachineStateAtURL:savingURL];
+        [self finishSuspensionWithError:self.saveRestoreSupportError];
+    } @catch (NSException* exception) {
+        if (savingURL != nil) {
+            [self.bundle cancelSavingMachineStateAtURL:savingURL];
+        }
+        [self finishSuspensionWithError:WardVzMakeBridgeExceptionError(exception)];
+    }
+}
+
+- (NSError*)replaceStoppedVirtualMachineOnQueue
+{
+    // Treat a successful suspension as the end of the current
+    // VZVirtualMachine instance.
+    //
+    // A VZVirtualMachineView with automatic display reconfiguration can change
+    // the runtime graphics configuration. Reusing a restored VZVirtualMachine
+    // and saving it again may produce state that a fresh instance created from
+    // the persistent bundle configuration rejects with VZErrorRestore.
+    //
+    // Reconstructing the stopped machine here makes in-process and cross-process
+    // restores follow the same lifecycle. Guest memory and device state remain
+    // in the saved-state file; only the host-side VZ object is replaced.
+    NSError* error = nil;
+    VZVirtualMachineConfiguration* configuration = [self.bundle createVirtualMachineConfigurationWithError:&error];
+    if (configuration == nil) {
+        return error;
+    }
+
+    error = WardVzValidateSaveRestoreSupport(configuration);
+    if (error != nil) {
+        return error;
+    }
+
+    VZVirtualMachine* previousVirtualMachine = self.virtualMachine;
+    VZVirtualMachine* replacementVirtualMachine = [[VZVirtualMachine alloc] initWithConfiguration:configuration
+                                                                                            queue:self.queue];
+    replacementVirtualMachine.delegate = self;
+    previousVirtualMachine.delegate = nil;
+    self.virtualMachine = replacementVirtualMachine;
+    self.saveRestoreSupportError = nil;
+    [self retargetDisplayViewsFromVirtualMachine:previousVirtualMachine toVirtualMachine:replacementVirtualMachine];
+    return nil;
+}
+
+- (void)retargetDisplayViewsFromVirtualMachine:(VZVirtualMachine*)previousVirtualMachine
+                              toVirtualMachine:(VZVirtualMachine*)replacementVirtualMachine
+{
+    // Existing display views may outlive the retired VZVirtualMachine. Retarget
+    // them on the main queue because VZVirtualMachineView is an AppKit view. The
+    // weak table tracks the views without extending their lifetime.
+    dispatch_async(dispatch_get_main_queue(), ^{
+      for (VZVirtualMachineView* view in self.displayViews) {
+          if (view.virtualMachine == previousVirtualMachine) {
+              view.virtualMachine = replacementVirtualMachine;
+          }
+      }
+    });
+}
+
+- (void)finishSuspensionWithError:(NSError*)error
+{
+    self.suspensionRequested = NO;
+    [self emitStatusWithError:error];
+}
+
+- (void)restore
+{
+    [self performOnQueue:^{
+      NSURL* restoringURL = nil;
+      @try {
+          WardVzMacOSVirtualMachineStatus status = [self currentStatus];
+          if (!status.can_restore) {
+              NSError* error = self.saveRestoreSupportError != nil ? self.saveRestoreSupportError
+                                                                   : WardVzMakeInvalidStateError(@"restore");
+              [self emitStatusWithError:error];
+              return;
+          }
+
+          NSError* consumeError = nil;
+          restoringURL = [self.bundle consumeSavedMachineStateWithError:&consumeError];
+          if (restoringURL == nil) {
+              [self emitStatusWithError:consumeError];
+              return;
+          }
+
+          self.restorationRequested = YES;
+          [self emitStatusWithError:nil];
+          if (@available(macOS 14.0, *)) {
+              [self.virtualMachine restoreMachineStateFromURL:restoringURL
+                                            completionHandler:^(NSError* operationError) {
+                                              NSError* cleanupError = nil;
+                                              [self.bundle finishConsumingMachineStateAtURL:restoringURL
+                                                                                      error:&cleanupError];
+                                              if (operationError != nil) {
+                                                  self.restorationRequested = NO;
+                                                  [self emitStatusWithError:operationError];
+                                                  return;
+                                              }
+                                              [self resumeRestoredMachineStateOnQueueWithCleanupError:cleanupError];
+                                            }];
+              return;
+          }
+
+          [self.bundle finishConsumingMachineStateAtURL:restoringURL error:nil];
+          self.restorationRequested = NO;
+          [self emitStatusWithError:self.saveRestoreSupportError];
+      } @catch (NSException* exception) {
+          if (restoringURL != nil) {
+              [self.bundle finishConsumingMachineStateAtURL:restoringURL error:nil];
+          }
+          self.restorationRequested = NO;
+          [self emitStatusWithError:WardVzMakeBridgeExceptionError(exception)];
+      }
+    }];
+}
+
+- (void)resumeRestoredMachineStateOnQueueWithCleanupError:(NSError*)cleanupError
+{
+    if (!self.virtualMachine.canResume) {
+        self.restorationRequested = NO;
+        [self emitStatusWithError:WardVzMakeInvalidStateError(@"resume after restoring")];
+        return;
+    }
+
+    [self.virtualMachine resumeWithCompletionHandler:^(NSError* operationError) {
+      self.restorationRequested = NO;
+      [self emitStatusWithError:operationError != nil ? operationError : cleanupError];
+    }];
+}
+
+- (void)discardSavedState
+{
+    [self performOnQueue:^{
+      @try {
+          if (![self currentStatus].can_discard_saved_state) {
+              [self emitStatusWithError:WardVzMakeInvalidStateError(@"discard its suspended state")];
+              return;
+          }
+
+          NSError* error = nil;
+          [self.bundle discardSavedMachineStateWithError:&error];
+          [self emitStatusWithError:error];
       } @catch (NSException* exception) {
           [self emitStatusWithError:WardVzMakeBridgeExceptionError(exception)];
       }
@@ -335,6 +641,7 @@ WardVzMakeBridgeExceptionError(NSException* exception)
     if (@available(macOS 14.0, *)) {
         view.automaticallyReconfiguresDisplay = YES;
     }
+    [self.displayViews addObject:view];
     return view;
 }
 

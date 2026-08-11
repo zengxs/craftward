@@ -3,7 +3,6 @@
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Craftward.Components
 import Craftward.Pages
 import Craftward.Realm
@@ -113,46 +112,13 @@ ApplicationWindow {
         SettingsWindow {}
     }
 
-    ModalDialog {
+    ConfirmationDialog {
         id: realmRunningDialog
 
-        anchors.centerIn: Overlay.overlay
-        width: Math.min(420, window.width - 48)
         title: qsTr("Shut down the Realm before quitting")
-
-        contentItem: ColumnLayout {
-            spacing: 12
-
-            Label {
-                Layout.fillWidth: true
-                text: realmRunningDialog.title
-                font.pixelSize: 18
-                font.weight: Font.DemiBold
-                wrapMode: Text.WordWrap
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Return to the Realm controls and use Shut Down. If the guest does not respond, use Force Stop from the actions menu.")
-                wrapMode: Text.WordWrap
-            }
-
-            Item {
-                Layout.preferredHeight: 4
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-
-                Item {
-                    Layout.fillWidth: true
-                }
-
-                PrimaryButton {
-                    text: qsTr("Return to Realm")
-                    onClicked: realmRunningDialog.accept()
-                }
-            }
-        }
+        message: qsTr("Return to the Realm controls and use Suspend or Shut Down. If the guest does not respond, use Force Stop from the actions menu.")
+        acceptText: qsTr("Return to Realm")
+        rejectText: ""
+        primaryAction: true
     }
 }

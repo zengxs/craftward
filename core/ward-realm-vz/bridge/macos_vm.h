@@ -29,6 +29,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)resume;
 - (void)requestStop;
 - (void)forceStop;
+- (void)suspend;
+- (void)restore;
+- (void)discardSavedState;
 - (nullable VZVirtualMachineView*)makeDisplayViewWithError:(NSError**)error;
 - (void)invalidate;
 

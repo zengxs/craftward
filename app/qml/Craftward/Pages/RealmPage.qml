@@ -30,53 +30,22 @@ Page {
         onAccepted: root.controller.bundleUrl = selectedFolder
     }
 
-    ModalDialog {
+    ConfirmationDialog {
         id: forceStopDialog
 
-        anchors.centerIn: Overlay.overlay
-        width: Math.min(420, root.width - 48)
         title: qsTr("Force stop this Realm?")
+        message: qsTr("The guest will not have a chance to shut down. Unsaved data may be lost and its disk may be damaged.")
+        acceptText: qsTr("Force Stop")
         onAccepted: root.controller.forceStop()
+    }
 
-        contentItem: ColumnLayout {
-            spacing: 12
+    ConfirmationDialog {
+        id: discardSavedStateDialog
 
-            Label {
-                Layout.fillWidth: true
-                text: forceStopDialog.title
-                font.pixelSize: 18
-                font.weight: Font.DemiBold
-                wrapMode: Text.WordWrap
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("The guest will not have a chance to shut down. Unsaved data may be lost and its disk may be damaged.")
-                wrapMode: Text.WordWrap
-            }
-
-            Item {
-                Layout.preferredHeight: 4
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-
-                Item {
-                    Layout.fillWidth: true
-                }
-
-                Button {
-                    text: qsTr("Cancel")
-                    onClicked: forceStopDialog.reject()
-                }
-
-                Button {
-                    text: qsTr("Force Stop")
-                    onClicked: forceStopDialog.accept()
-                }
-            }
-        }
+        title: qsTr("Discard this Realm's suspended state?")
+        message: qsTr("The next start will boot macOS normally. Work that existed only in the guest's memory will be lost.")
+        acceptText: qsTr("Discard State")
+        onAccepted: root.controller.discardSavedState()
     }
 
     ColumnLayout {
@@ -186,9 +155,14 @@ Page {
                     }
 
                     PrimaryButton {
-                        text: qsTr("Start")
-                        enabled: root.controller.canStart
-                        onClicked: root.controller.start()
+                        text: root.controller.canRestore ? qsTr("Resume") : qsTr("Start")
+                        enabled: root.controller.canStart || root.controller.canRestore
+                        onClicked: {
+                            if (root.controller.canRestore)
+                                root.controller.restore();
+                            else
+                                root.controller.start();
+                        }
                     }
 
                     Button {
@@ -203,6 +177,12 @@ Page {
                     }
 
                     Button {
+                        text: qsTr("Suspend")
+                        enabled: root.controller.canSuspend
+                        onClicked: root.controller.suspend()
+                    }
+
+                    Button {
                         text: qsTr("Shut Down")
                         enabled: root.controller.canRequestStop
                         onClicked: root.controller.requestStop()
@@ -213,7 +193,7 @@ Page {
 
                         icon.source: "qrc:///icons/phosphor/dots-three-circle.svg"
                         toolTipText: qsTr("More Realm actions")
-                        enabled: root.controller.canForceStop
+                        enabled: root.controller.canForceStop || root.controller.canDiscardSavedState
                         onClicked: realmActions.open()
 
                         Menu {
@@ -224,7 +204,15 @@ Page {
                             MenuItem {
                                 text: qsTr("Force Stop…")
                                 enabled: root.controller.canForceStop
+                                visible: enabled
                                 onTriggered: forceStopDialog.open()
+                            }
+
+                            MenuItem {
+                                text: qsTr("Discard Suspended State…")
+                                enabled: root.controller.canDiscardSavedState
+                                visible: enabled
+                                onTriggered: discardSavedStateDialog.open()
                             }
                         }
                     }
@@ -266,7 +254,7 @@ Page {
 
         Label {
             Layout.fillWidth: true
-            text: qsTr("Pausing stops guest execution but keeps its memory allocated. Shut Down releases the virtual machine resources after macOS exits.")
+            text: qsTr("Pause keeps guest memory allocated. Suspend saves a host-bound runtime state and releases the virtual machine resources. Shut Down exits macOS normally.")
             color: root.palette.placeholderText
             wrapMode: Text.WordWrap
         }

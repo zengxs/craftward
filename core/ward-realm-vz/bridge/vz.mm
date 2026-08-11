@@ -378,6 +378,36 @@ ward_vz_force_stop_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtua
 }
 
 void
+ward_vz_suspend_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    [(__bridge WardVzMacOSVirtualMachine*)virtualMachine suspend];
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
+ward_vz_restore_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    [(__bridge WardVzMacOSVirtualMachine*)virtualMachine restore];
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
+ward_vz_discard_macos_virtual_machine_saved_state(WardVzMacOSVirtualMachineHandle* virtualMachine)
+{
+#if defined(__arm64__)
+    [(__bridge WardVzMacOSVirtualMachine*)virtualMachine discardSavedState];
+#else
+    (void)virtualMachine;
+#endif
+}
+
+void
 ward_vz_create_macos_virtual_machine_display(WardVzMacOSVirtualMachineHandle* virtualMachine,
                                              WardVzCreateMacOSVirtualMachineDisplayCompletion completion,
                                              void* context)

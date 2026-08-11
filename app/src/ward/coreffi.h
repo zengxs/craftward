@@ -25,6 +25,7 @@ extern "C"
         WardRealmStateStopping = 7,
         WardRealmStateSaving = 8,
         WardRealmStateRestoring = 9,
+        WardRealmStateSuspended = 10,
     } WardRealmState;
 
     typedef struct WardRealmStatus
@@ -35,6 +36,9 @@ extern "C"
         bool can_resume;
         bool can_request_stop;
         bool can_force_stop;
+        bool can_suspend;
+        bool can_restore;
+        bool can_discard_saved_state;
     } WardRealmStatus;
 
     typedef struct WardRealm WardRealm;
@@ -54,6 +58,9 @@ extern "C"
     void ward_core_realm_resume(WardRealm* realm);
     void ward_core_realm_request_stop(WardRealm* realm);
     void ward_core_realm_force_stop(WardRealm* realm);
+    void ward_core_realm_suspend(WardRealm* realm);
+    void ward_core_realm_restore(WardRealm* realm);
+    void ward_core_realm_discard_saved_state(WardRealm* realm);
 
     void* ward_core_realm_attach_display(WardRealm* realm, WardError** error);
     void ward_core_realm_detach_display(WardRealm* realm);

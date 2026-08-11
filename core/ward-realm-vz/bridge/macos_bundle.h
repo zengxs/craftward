@@ -24,6 +24,20 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (nullable VZVirtualMachineConfiguration*)createVirtualMachineConfigurationWithError:(NSError**)error;
 
+- (BOOL)hasSavedMachineState;
+
+- (nullable NSURL*)beginSavingMachineStateWithError:(NSError**)error;
+
+- (BOOL)finishSavingMachineStateAtURL:(NSURL*)URL error:(NSError**)error;
+
+- (void)cancelSavingMachineStateAtURL:(NSURL*)URL;
+
+- (nullable NSURL*)consumeSavedMachineStateWithError:(NSError**)error;
+
+- (BOOL)finishConsumingMachineStateAtURL:(NSURL*)URL error:(NSError**)error;
+
+- (BOOL)discardSavedMachineStateWithError:(NSError**)error;
+
 - (BOOL)transitionToInstallingWithError:(NSError**)error;
 
 - (BOOL)transitionToInstalledWithError:(NSError**)error;

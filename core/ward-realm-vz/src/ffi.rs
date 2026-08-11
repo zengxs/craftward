@@ -42,6 +42,9 @@ pub(super) struct WardVzMacOsVirtualMachineStatus {
     pub(super) can_resume: bool,
     pub(super) can_request_stop: bool,
     pub(super) can_force_stop: bool,
+    pub(super) can_suspend: bool,
+    pub(super) can_restore: bool,
+    pub(super) can_discard_saved_state: bool,
 }
 
 #[repr(C)]
@@ -122,6 +125,18 @@ unsafe extern "C" {
     );
 
     pub(super) fn ward_vz_force_stop_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_suspend_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_restore_macos_virtual_machine(
+        virtual_machine: *mut WardVzMacOsVirtualMachine,
+    );
+
+    pub(super) fn ward_vz_discard_macos_virtual_machine_saved_state(
         virtual_machine: *mut WardVzMacOsVirtualMachine,
     );
 

@@ -51,6 +51,7 @@ extern "C"
         WardVzMacOSVirtualMachineStateStopping = 7,
         WardVzMacOSVirtualMachineStateSaving = 8,
         WardVzMacOSVirtualMachineStateRestoring = 9,
+        WardVzMacOSVirtualMachineStateSuspended = 10,
     } WardVzMacOSVirtualMachineState;
 
     typedef struct WardVzMacOSVirtualMachineStatus
@@ -61,6 +62,9 @@ extern "C"
         bool can_resume;
         bool can_request_stop;
         bool can_force_stop;
+        bool can_suspend;
+        bool can_restore;
+        bool can_discard_saved_state;
     } WardVzMacOSVirtualMachineStatus;
 
     typedef struct WardVzMacOSVirtualMachineHandle WardVzMacOSVirtualMachineHandle;
@@ -109,6 +113,12 @@ extern "C"
     void ward_vz_request_stop_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtual_machine);
 
     void ward_vz_force_stop_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtual_machine);
+
+    void ward_vz_suspend_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtual_machine);
+
+    void ward_vz_restore_macos_virtual_machine(WardVzMacOSVirtualMachineHandle* virtual_machine);
+
+    void ward_vz_discard_macos_virtual_machine_saved_state(WardVzMacOSVirtualMachineHandle* virtual_machine);
 
     void ward_vz_create_macos_virtual_machine_display(WardVzMacOSVirtualMachineHandle* virtual_machine,
                                                       WardVzCreateMacOSVirtualMachineDisplayCompletion completion,
