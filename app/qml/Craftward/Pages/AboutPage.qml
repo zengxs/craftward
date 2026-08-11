@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Craftward.Components
 
 Page {
     id: root
@@ -139,8 +140,6 @@ Page {
             }
         }
 
-        ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AsNeeded
-        }
+        ScrollBar.vertical: OverlayScrollBar {}
     }
 }

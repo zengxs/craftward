@@ -149,7 +149,7 @@ ModalDialog {
                         }
                     }
 
-                    ScrollBar.vertical: ScrollBar {}
+                    ScrollBar.vertical: OverlayScrollBar {}
                 }
 
                 ColumnLayout {

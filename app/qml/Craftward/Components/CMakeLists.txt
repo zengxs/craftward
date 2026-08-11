@@ -5,6 +5,7 @@ qt_add_qml_module(CraftwardComponents
         ConfirmationDialog.qml
         IconButton.qml
         ModalDialog.qml
+        OverlayScrollBar.qml
         PrimaryButton.qml
         WindowMoveHandler.qml
 )
