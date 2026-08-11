@@ -1,0 +1,4 @@
+[submodule "app/third_party/scintilla"]
+	path = app/third_party/scintilla
+	url = https://github.com/craftward/scintilla.git
+	shallow = true

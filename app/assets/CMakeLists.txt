@@ -10,6 +10,9 @@ set(craftward_phosphor_legal_text
 set(craftward_qt_legal_text
     "${CMAKE_CURRENT_SOURCE_DIR}/legal/Qt.txt"
 )
+set(craftward_scintilla_legal_text
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/scintilla/License.txt"
+)
 set(craftward_gpl_text
     "${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE.md"
 )
@@ -40,6 +43,10 @@ set_source_files_properties(
     PROPERTIES QT_RESOURCE_ALIAS "Qt.txt"
 )
 set_source_files_properties(
+    "${craftward_scintilla_legal_text}"
+    PROPERTIES QT_RESOURCE_ALIAS "Scintilla.txt"
+)
+set_source_files_properties(
     "${craftward_gpl_text}"
     PROPERTIES QT_RESOURCE_ALIAS "GPL-3.0.txt"
 )
@@ -51,6 +58,7 @@ qt_add_resources(Craftward "craftward_legal"
         "${craftward_mit_legal_text}"
         "${craftward_phosphor_legal_text}"
         "${craftward_qt_legal_text}"
+        "${craftward_scintilla_legal_text}"
         "${craftward_gpl_text}"
 )
 

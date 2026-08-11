@@ -14,6 +14,7 @@
 #include <QtQml/QQmlExtensionPlugin>
 
 Q_IMPORT_QML_PLUGIN(Craftward_ComponentsPlugin)
+Q_IMPORT_QML_PLUGIN(Craftward_EditorPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_Features_LegalPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_PagesPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_RealmPlugin)

@@ -29,6 +29,7 @@ qt_add_qml_module(Craftward
 target_link_libraries(Craftward
     PRIVATE
         CraftwardComponentsplugin
+        CraftwardEditorplugin
         CraftwardFeaturesLegalplugin
         CraftwardPagesplugin
         CraftwardRealmplugin

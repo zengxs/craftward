@@ -18,6 +18,7 @@ target_include_directories(CraftwardFeaturesLegal
 target_link_libraries(CraftwardFeaturesLegal
     PRIVATE
         CraftwardComponentsplugin
+        CraftwardEditorplugin
         Qt6::Quick
         Qt6::QuickControls2
 )

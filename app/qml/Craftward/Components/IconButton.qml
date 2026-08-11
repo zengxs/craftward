@@ -41,6 +41,7 @@ ToolButton {
     ToolTip {
         id: helpTag
 
+        popupType: Popup.Window
         parent: control
         x: Math.round((control.width - width) / 2)
         y: control.height + 5
@@ -63,8 +64,6 @@ ToolButton {
         background: Rectangle {
             radius: 5
             color: helpTag.palette.toolTipBase
-            border.width: 1
-            border.color: Qt.rgba(helpTag.palette.toolTipText.r, helpTag.palette.toolTipText.g, helpTag.palette.toolTipText.b, 0.16)
         }
     }
 }

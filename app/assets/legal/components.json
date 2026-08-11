@@ -25,6 +25,12 @@
       "website": "https://www.qt.io/"
     },
     {
+      "component": "Scintilla",
+      "spdxIdentifier": "HPND",
+      "legalText": "qrc:///legal/Scintilla.txt",
+      "website": "https://www.scintilla.org/"
+    },
+    {
       "component": "serde",
       "spdxIdentifier": "MIT",
       "legalText": "qrc:///legal/MIT.txt",
