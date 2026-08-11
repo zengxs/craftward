@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          submodules: 'true'
+          lfs: 'true'
 
       - name: Install build dependencies
         run: brew install aqtinstall cmake ninja go-task
