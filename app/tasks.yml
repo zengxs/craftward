@@ -24,9 +24,12 @@ tasks:
         --cached
         --others
         --exclude-standard
+        --no-recurse-submodules
         --
         ":(glob)qml/**/*.qml"
-        | xargs -0 "$QT6_ROOT/bin/qmlformat" -i
+        | xargs -0 sh -c
+        'formatter=$1; shift; for path do test ! -f "$path" || "$formatter" -i "$path" || exit; done'
+        sh "$QT6_ROOT/bin/qmlformat"
 
   configure:
     label: "app:configure:{{.BUILD_TYPE}}"
