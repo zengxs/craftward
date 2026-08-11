@@ -4,6 +4,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -13,7 +14,13 @@ extern "C"
 
     bool ward_vz_is_supported(void);
 
-    typedef struct WardVzMacOSBundleInfo
+    typedef struct WardVzByteSlice
+    {
+        const uint8_t* data;
+        size_t length;
+    } WardVzByteSlice;
+
+    typedef struct WardVzMacOSPreparationInfo
     {
         const char* build_version;
         uint64_t os_version_major;
@@ -21,8 +28,30 @@ extern "C"
         uint64_t os_version_patch;
         uint64_t minimum_cpu_count;
         uint64_t minimum_memory_size;
-        uint64_t disk_size;
-    } WardVzMacOSBundleInfo;
+        WardVzByteSlice hardware_model;
+        WardVzByteSlice machine_identifier;
+        const char* mac_address;
+    } WardVzMacOSPreparationInfo;
+
+    typedef struct WardVzMacOSDiskConfiguration
+    {
+        const char* path;
+    } WardVzMacOSDiskConfiguration;
+
+    typedef struct WardVzMacOSVirtualMachineConfiguration
+    {
+        uint64_t cpu_count;
+        uint64_t memory_size;
+        const WardVzMacOSDiskConfiguration* disks;
+        size_t disk_count;
+        const char* auxiliary_storage_path;
+        WardVzByteSlice hardware_model;
+        WardVzByteSlice machine_identifier;
+        uint64_t display_width;
+        uint64_t display_height;
+        uint64_t display_pixels_per_inch;
+        const char* mac_address;
+    } WardVzMacOSVirtualMachineConfiguration;
 
     typedef struct WardVzError
     {
@@ -31,13 +60,13 @@ extern "C"
         const char* message;
     } WardVzError;
 
-    typedef void (*WardVzPrepareMacOSBundleCompletion)(void* context,
-                                                       const WardVzMacOSBundleInfo* bundle_info,
-                                                       const WardVzError* error);
+    typedef void (*WardVzPrepareMacOSCompletion)(void* context,
+                                                 const WardVzMacOSPreparationInfo* preparation_info,
+                                                 const WardVzError* error);
 
     typedef void (*WardVzMacOSInstallationProgress)(void* context, double fraction_completed);
 
-    typedef void (*WardVzInstallMacOSBundleCompletion)(void* context, const WardVzError* error);
+    typedef void (*WardVzInstallMacOSCompletion)(void* context, const WardVzError* error);
 
     typedef enum WardVzMacOSVirtualMachineState
     {
@@ -84,19 +113,23 @@ extern "C"
                                                                      void* native_view,
                                                                      const WardVzError* error);
 
-    void ward_vz_prepare_macos_bundle(const char* restore_image_path,
-                                      const char* destination_path,
-                                      uint64_t disk_size,
-                                      WardVzPrepareMacOSBundleCompletion completion,
-                                      void* context);
+    void ward_vz_prepare_macos(const char* restore_image_path,
+                               const char* disk_path,
+                               const char* auxiliary_storage_path,
+                               uint64_t disk_size,
+                               WardVzPrepareMacOSCompletion completion,
+                               void* context);
 
-    void ward_vz_install_macos_bundle(const char* restore_image_path,
-                                      const char* bundle_path,
-                                      WardVzMacOSInstallationProgress progress,
-                                      WardVzInstallMacOSBundleCompletion completion,
-                                      void* context);
+    void ward_vz_install_macos(const char* restore_image_path,
+                               const WardVzMacOSVirtualMachineConfiguration* configuration,
+                               WardVzMacOSInstallationProgress progress,
+                               WardVzInstallMacOSCompletion completion,
+                               void* context);
 
-    void ward_vz_create_macos_virtual_machine(const char* bundle_path,
+    void ward_vz_create_macos_virtual_machine(const WardVzMacOSVirtualMachineConfiguration* configuration,
+                                              const char* machine_state_path,
+                                              const char* saving_machine_state_path,
+                                              const char* restoring_machine_state_path,
                                               WardVzMacOSVirtualMachineEvent event,
                                               void* event_context,
                                               WardVzCreateMacOSVirtualMachineCompletion completion,

@@ -4,8 +4,10 @@
 #include "vz.h"
 
 #include "errors.h"
-#include "macos_bundle.h"
+#include "macos_configuration.h"
 #include "macos_installer.h"
+#include "macos_machine_state.h"
+#include "macos_restore_image.h"
 #include "macos_vm.h"
 
 #include <climits>
@@ -77,14 +79,14 @@ WardVzMakeError(WardVzErrorCode code, NSString* message)
 }
 
 void
-WardVzCompleteBundlePreparationWithError(WardVzPrepareMacOSBundleCompletion completion, void* context, NSError* error)
+WardVzCompleteMacOSPreparationWithError(WardVzPrepareMacOSCompletion completion, void* context, NSError* error)
 {
     WardVzWithBridgeError(
       error, [completion, context](const WardVzError* bridgeError) { completion(context, nullptr, bridgeError); });
 }
 
 void
-WardVzCompleteMacOSInstallation(WardVzInstallMacOSBundleCompletion completion, void* context, NSError* error)
+WardVzCompleteMacOSInstallation(WardVzInstallMacOSCompletion completion, void* context, NSError* error)
 {
     if (error == nil) {
         completion(context, nullptr);
@@ -107,11 +109,12 @@ ward_vz_is_supported(void)
 }
 
 void
-ward_vz_prepare_macos_bundle(const char* restoreImagePath,
-                             const char* destinationPath,
-                             uint64_t diskSize,
-                             WardVzPrepareMacOSBundleCompletion completion,
-                             void* context)
+ward_vz_prepare_macos(const char* restoreImagePath,
+                      const char* diskPath,
+                      const char* auxiliaryStoragePath,
+                      uint64_t diskSize,
+                      WardVzPrepareMacOSCompletion completion,
+                      void* context)
 {
     if (completion == nullptr) {
         return;
@@ -121,45 +124,47 @@ ward_vz_prepare_macos_bundle(const char* restoreImagePath,
 #if defined(__arm64__)
         if (@available(macOS 12.0, *)) {
             if (!VZVirtualMachine.isSupported) {
-                WardVzCompleteBundlePreparationWithError(
+                WardVzCompleteMacOSPreparationWithError(
                   completion,
                   context,
                   WardVzMakeError(WardVzErrorCode::UnsupportedHost,
                                   @"Virtualization.framework is unavailable on this host."));
                 return;
             }
-            if (restoreImagePath == nullptr || destinationPath == nullptr || diskSize == 0 || diskSize % 512 != 0 ||
-                diskSize > static_cast<uint64_t>(LLONG_MAX)) {
-                WardVzCompleteBundlePreparationWithError(
+            if (restoreImagePath == nullptr || diskPath == nullptr || auxiliaryStoragePath == nullptr ||
+                diskSize == 0 || diskSize % 512 != 0 || diskSize > static_cast<uint64_t>(LLONG_MAX)) {
+                WardVzCompleteMacOSPreparationWithError(
                   completion,
                   context,
-                  WardVzMakeError(WardVzErrorCode::InvalidArgument, @"The bundle preparation arguments are invalid."));
+                  WardVzMakeError(WardVzErrorCode::InvalidArgument, @"The macOS preparation arguments are invalid."));
                 return;
             }
 
             NSURL* restoreImageURL = [NSURL fileURLWithFileSystemRepresentation:restoreImagePath
                                                                     isDirectory:NO
                                                                   relativeToURL:nil];
-            NSURL* destinationURL = [NSURL fileURLWithFileSystemRepresentation:destinationPath
-                                                                   isDirectory:YES
-                                                                 relativeToURL:nil];
-            if (restoreImageURL == nil || destinationURL == nil) {
-                WardVzCompleteBundlePreparationWithError(
+            NSURL* diskURL = [NSURL fileURLWithFileSystemRepresentation:diskPath isDirectory:NO relativeToURL:nil];
+            NSURL* auxiliaryStorageURL = [NSURL fileURLWithFileSystemRepresentation:auxiliaryStoragePath
+                                                                        isDirectory:NO
+                                                                      relativeToURL:nil];
+            if (restoreImageURL == nil || diskURL == nil || auxiliaryStorageURL == nil) {
+                WardVzCompleteMacOSPreparationWithError(
                   completion,
                   context,
-                  WardVzMakeError(WardVzErrorCode::InvalidArgument, @"A bundle preparation path is invalid."));
+                  WardVzMakeError(WardVzErrorCode::InvalidArgument, @"A macOS preparation path is invalid."));
                 return;
             }
 
-            WardVzStartPreparingMacOSBundle(restoreImageURL, destinationURL, diskSize, completion, context);
+            WardVzStartPreparingMacOS(restoreImageURL, diskURL, auxiliaryStorageURL, diskSize, completion, context);
             return;
         }
 #else
         (void)restoreImagePath;
-        (void)destinationPath;
+        (void)diskPath;
+        (void)auxiliaryStoragePath;
         (void)diskSize;
 #endif
-        WardVzCompleteBundlePreparationWithError(
+        WardVzCompleteMacOSPreparationWithError(
           completion,
           context,
           WardVzMakeError(WardVzErrorCode::UnsupportedHost,
@@ -168,11 +173,11 @@ ward_vz_prepare_macos_bundle(const char* restoreImagePath,
 }
 
 void
-ward_vz_install_macos_bundle(const char* restoreImagePath,
-                             const char* bundlePath,
-                             WardVzMacOSInstallationProgress progress,
-                             WardVzInstallMacOSBundleCompletion completion,
-                             void* context)
+ward_vz_install_macos(const char* restoreImagePath,
+                      const WardVzMacOSVirtualMachineConfiguration* configuration,
+                      WardVzMacOSInstallationProgress progress,
+                      WardVzInstallMacOSCompletion completion,
+                      void* context)
 {
     if (completion == nullptr) {
         return;
@@ -189,7 +194,7 @@ ward_vz_install_macos_bundle(const char* restoreImagePath,
                                   @"Virtualization.framework is unavailable on this host."));
                 return;
             }
-            if (restoreImagePath == nullptr || bundlePath == nullptr) {
+            if (restoreImagePath == nullptr || configuration == nullptr) {
                 WardVzCompleteMacOSInstallation(
                   completion,
                   context,
@@ -200,8 +205,7 @@ ward_vz_install_macos_bundle(const char* restoreImagePath,
             NSURL* restoreImageURL = [NSURL fileURLWithFileSystemRepresentation:restoreImagePath
                                                                     isDirectory:NO
                                                                   relativeToURL:nil];
-            NSURL* bundleURL = [NSURL fileURLWithFileSystemRepresentation:bundlePath isDirectory:YES relativeToURL:nil];
-            if (restoreImageURL == nil || bundleURL == nil) {
+            if (restoreImageURL == nil) {
                 WardVzCompleteMacOSInstallation(
                   completion,
                   context,
@@ -209,12 +213,28 @@ ward_vz_install_macos_bundle(const char* restoreImagePath,
                 return;
             }
 
-            WardVzStartInstallingMacOSBundle(restoreImageURL, bundleURL, progress, completion, context);
+            @try {
+                NSError* error = nil;
+                WardVzMacOSConfiguration* configurationSource =
+                  [[WardVzMacOSConfiguration alloc] initWithConfiguration:configuration error:&error];
+                VZVirtualMachineConfiguration* virtualMachineConfiguration =
+                  [configurationSource makeVirtualMachineConfigurationWithError:&error];
+                if (virtualMachineConfiguration == nil) {
+                    WardVzCompleteMacOSInstallation(completion, context, error);
+                    return;
+                }
+
+                WardVzStartInstallingMacOS(restoreImageURL, virtualMachineConfiguration, progress, completion, context);
+            } @catch (NSException* exception) {
+                NSString* message = exception.reason != nil ? exception.reason : exception.name;
+                WardVzCompleteMacOSInstallation(
+                  completion, context, WardVzMakeError(WardVzErrorCode::BridgeException, message));
+            }
             return;
         }
 #else
         (void)restoreImagePath;
-        (void)bundlePath;
+        (void)configuration;
         (void)progress;
 #endif
         WardVzCompleteMacOSInstallation(
@@ -226,7 +246,10 @@ ward_vz_install_macos_bundle(const char* restoreImagePath,
 }
 
 void
-ward_vz_create_macos_virtual_machine(const char* bundlePath,
+ward_vz_create_macos_virtual_machine(const WardVzMacOSVirtualMachineConfiguration* configuration,
+                                     const char* machineStatePath,
+                                     const char* savingMachineStatePath,
+                                     const char* restoringMachineStatePath,
                                      WardVzMacOSVirtualMachineEvent event,
                                      void* eventContext,
                                      WardVzCreateMacOSVirtualMachineCompletion completion,
@@ -249,7 +272,8 @@ ward_vz_create_macos_virtual_machine(const char* bundlePath,
                                   @"Virtualization.framework is unavailable on this host."));
                 return;
             }
-            if (bundlePath == nullptr || event == nullptr) {
+            if (configuration == nullptr || machineStatePath == nullptr || savingMachineStatePath == nullptr ||
+                restoringMachineStatePath == nullptr || event == nullptr) {
                 WardVzCompleteMacOSVirtualMachineCreation(
                   completion,
                   completionContext,
@@ -260,24 +284,43 @@ ward_vz_create_macos_virtual_machine(const char* bundlePath,
                 return;
             }
 
-            NSURL* bundleURL = [NSURL fileURLWithFileSystemRepresentation:bundlePath isDirectory:YES relativeToURL:nil];
-            if (bundleURL == nil) {
+            NSURL* machineStateURL = [NSURL fileURLWithFileSystemRepresentation:machineStatePath
+                                                                    isDirectory:NO
+                                                                  relativeToURL:nil];
+            NSURL* savingMachineStateURL = [NSURL fileURLWithFileSystemRepresentation:savingMachineStatePath
+                                                                          isDirectory:NO
+                                                                        relativeToURL:nil];
+            NSURL* restoringMachineStateURL = [NSURL fileURLWithFileSystemRepresentation:restoringMachineStatePath
+                                                                             isDirectory:NO
+                                                                           relativeToURL:nil];
+            if (machineStateURL == nil || savingMachineStateURL == nil || restoringMachineStateURL == nil) {
                 WardVzCompleteMacOSVirtualMachineCreation(
                   completion,
                   completionContext,
                   nullptr,
                   nullptr,
-                  WardVzMakeError(WardVzErrorCode::InvalidArgument, @"The realm bundle path is invalid."));
+                  WardVzMakeError(WardVzErrorCode::InvalidArgument, @"A machine state path is invalid."));
                 return;
             }
 
             @try {
                 NSError* error = nil;
+                WardVzMacOSConfiguration* configurationSource =
+                  [[WardVzMacOSConfiguration alloc] initWithConfiguration:configuration error:&error];
+                if (configurationSource == nil) {
+                    WardVzCompleteMacOSVirtualMachineCreation(completion, completionContext, nullptr, nullptr, error);
+                    return;
+                }
+                WardVzMacOSMachineState* machineState =
+                  [[WardVzMacOSMachineState alloc] initWithMachineStateURL:machineStateURL
+                                                          savingStateAtURL:savingMachineStateURL
+                                                       restoringStateAtURL:restoringMachineStateURL];
                 WardVzMacOSVirtualMachine* virtualMachine =
-                  [WardVzMacOSVirtualMachine openInstalledBundleAtURL:bundleURL
-                                                                event:event
-                                                              context:eventContext
-                                                                error:&error];
+                  [WardVzMacOSVirtualMachine createWithConfiguration:configurationSource
+                                                        machineState:machineState
+                                                               event:event
+                                                             context:eventContext
+                                                               error:&error];
                 if (virtualMachine == nil) {
                     WardVzCompleteMacOSVirtualMachineCreation(completion, completionContext, nullptr, nullptr, error);
                     return;
@@ -298,7 +341,10 @@ ward_vz_create_macos_virtual_machine(const char* bundlePath,
             return;
         }
 #else
-        (void)bundlePath;
+        (void)configuration;
+        (void)machineStatePath;
+        (void)savingMachineStatePath;
+        (void)restoringMachineStatePath;
         (void)event;
         (void)eventContext;
 #endif

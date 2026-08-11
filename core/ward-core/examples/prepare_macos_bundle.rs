@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc;
 
-use ward_realm_vz::{MacOsBundleRequest, prepare_macos_bundle};
+use ward_core::{MacOsBundleRequest, prepare_macos_bundle};
 
 fn absolute_path(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     let path = path.as_ref();
@@ -70,7 +70,6 @@ fn run() -> Result<(), String> {
         "Minimum resources: {} CPUs, {} bytes of memory",
         bundle.minimum_cpu_count, bundle.minimum_memory_size
     );
-
     Ok(())
 }
 

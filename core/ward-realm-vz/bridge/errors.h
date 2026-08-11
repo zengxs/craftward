@@ -12,17 +12,16 @@ enum class WardVzErrorCode : NSInteger
     InvalidArgument = 1,
     UnsupportedHost = 2,
     UnsupportedRestoreImage = 3,
-    DestinationExists = 4,
     BridgeException = 5,
-    InvalidBundle = 6,
-    InvalidBundleState = 7,
+    InvalidConfiguration = 6,
+    InvalidState = 7,
 };
 
 NSError*
 WardVzMakeError(WardVzErrorCode code, NSString* message);
 
 void
-WardVzCompleteBundlePreparationWithError(WardVzPrepareMacOSBundleCompletion completion, void* context, NSError* error);
+WardVzCompleteMacOSPreparationWithError(WardVzPrepareMacOSCompletion completion, void* context, NSError* error);
 
 void
-WardVzCompleteMacOSInstallation(WardVzInstallMacOSBundleCompletion completion, void* context, NSError* error);
+WardVzCompleteMacOSInstallation(WardVzInstallMacOSCompletion completion, void* context, NSError* error);

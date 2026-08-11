@@ -9,14 +9,16 @@
 
 #import <Foundation/Foundation.h>
 
+@class VZVirtualMachineConfiguration;
+
 NS_ASSUME_NONNULL_BEGIN
 
 void
-WardVzStartInstallingMacOSBundle(NSURL* restoreImageURL,
-                                 NSURL* bundleURL,
-                                 WardVzMacOSInstallationProgress progress,
-                                 WardVzInstallMacOSBundleCompletion completion,
-                                 void* context);
+WardVzStartInstallingMacOS(NSURL* restoreImageURL,
+                           VZVirtualMachineConfiguration* configuration,
+                           WardVzMacOSInstallationProgress progress,
+                           WardVzInstallMacOSCompletion completion,
+                           void* context);
 
 NS_ASSUME_NONNULL_END
 

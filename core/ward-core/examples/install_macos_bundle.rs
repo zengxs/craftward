@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc;
 
-use ward_realm_vz::{MacOsBundleInstallationRequest, install_macos_bundle};
+use ward_core::{MacOsBundleInstallationRequest, install_macos_bundle};
 
 fn absolute_path(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     let path = path.as_ref();

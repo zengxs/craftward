@@ -3,9 +3,12 @@ name = "ward-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+thiserror = { workspace = true }
+ward-realm = { workspace = true }
 ward-realm-vz = { workspace = true }

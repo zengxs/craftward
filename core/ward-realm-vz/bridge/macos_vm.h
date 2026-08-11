@@ -10,6 +10,9 @@
 #import <Foundation/Foundation.h>
 #import <Virtualization/Virtualization.h>
 
+@class WardVzMacOSConfiguration;
+@class WardVzMacOSMachineState;
+
 NS_ASSUME_NONNULL_BEGIN
 
 @interface WardVzMacOSVirtualMachine : NSObject<VZVirtualMachineDelegate>
@@ -17,10 +20,11 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
-+ (nullable instancetype)openInstalledBundleAtURL:(NSURL*)bundleURL
-                                            event:(WardVzMacOSVirtualMachineEvent)event
-                                          context:(void*)context
-                                            error:(NSError**)error;
++ (nullable instancetype)createWithConfiguration:(WardVzMacOSConfiguration*)configuration
+                                    machineState:(WardVzMacOSMachineState*)machineState
+                                           event:(WardVzMacOSVirtualMachineEvent)event
+                                         context:(void*)context
+                                           error:(NSError**)error;
 
 @property (nonatomic, readonly) WardVzMacOSVirtualMachineStatus status;
 

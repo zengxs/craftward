@@ -31,6 +31,22 @@ tasks:
         'formatter=$1; shift; for path do test ! -f "$path" || "$formatter" -i "$path" || exit; done'
         sh "$QT6_ROOT/bin/qmlformat"
 
+  format:legal-catalog:
+    desc: Format the third-party license catalog
+    internal: true
+    preconditions:
+      - sh: command -v jq
+        msg: jq is not available in PATH
+    cmds:
+      - |
+        set -eu
+        catalog="assets/legal/components.json"
+        temporary="$(mktemp "${catalog}.XXXXXX")"
+        trap 'rm -f "$temporary"' EXIT
+        jq '.components |= sort_by([(.component | ascii_downcase), .component])' \
+          "$catalog" > "$temporary"
+        cp "$temporary" "$catalog"
+
   configure:
     label: "app:configure:{{.BUILD_TYPE}}"
     desc: Configure the application build

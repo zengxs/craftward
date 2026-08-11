@@ -1,13 +1,15 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::fmt;
-use std::path::PathBuf;
-
+use super::{MacOsSavedStateFiles, MacOsVirtualMachineConfiguration};
 #[cfg(target_os = "macos")]
-use super::{copy_bridge_string, is_supported, path_to_c_string};
+use super::{
+    NativeMacOsSavedStateFiles, NativeMacOsVirtualMachineConfiguration, copy_bridge_string,
+    is_supported,
+};
 #[cfg(target_os = "macos")]
 use crate::ffi;
+use std::fmt;
 
 /// The execution state of a Virtualization.framework macOS guest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,11 +48,11 @@ pub struct MacOsVirtualMachineStatus {
 pub enum MacOsVirtualMachineError {
     /// The current host cannot run Virtualization.framework macOS guests.
     UnsupportedHost,
-    /// The path was empty, relative, did not name a bundle, or contained a NUL
-    /// byte.
-    InvalidPath,
-    /// The bundle, virtual machine configuration, or lifecycle operation was
-    /// rejected.
+    /// One of the explicit saved-state paths is invalid.
+    InvalidPath(&'static str),
+    /// The typed machine configuration is incomplete or invalid.
+    InvalidConfiguration(&'static str),
+    /// Virtualization.framework rejected the configuration or operation.
     Native {
         domain: String,
         code: i64,
@@ -64,7 +66,10 @@ impl fmt::Display for MacOsVirtualMachineError {
             Self::UnsupportedHost => {
                 formatter.write_str("this host cannot run a Virtualization.framework macOS guest")
             }
-            Self::InvalidPath => formatter.write_str("the realm bundle path is invalid"),
+            Self::InvalidPath(name) => write!(formatter, "the {name} path is invalid"),
+            Self::InvalidConfiguration(name) => {
+                write!(formatter, "the macOS {name} configuration is invalid")
+            }
             Self::Native {
                 domain,
                 code,
@@ -190,9 +195,10 @@ unsafe impl Sync for MacOsVirtualMachine {}
 
 #[cfg(target_os = "macos")]
 impl MacOsVirtualMachine {
-    /// Opens an installed macOS realm bundle without starting its guest.
+    /// Creates a stopped macOS virtual machine from an explicit configuration.
     pub fn open(
-        bundle: impl Into<PathBuf>,
+        configuration: MacOsVirtualMachineConfiguration,
+        saved_state: MacOsSavedStateFiles,
         event_handler: impl FnMut(MacOsVirtualMachineEvent) + Send + 'static,
     ) -> Result<Self, MacOsVirtualMachineError> {
         use std::ffi::c_void;
@@ -254,9 +260,10 @@ impl MacOsVirtualMachine {
             result.error = unsafe { macos_virtual_machine_error_from_bridge(error) };
         }
 
-        let bundle = bundle.into();
-        let bundle = path_to_c_string(&bundle, "bundle", true)
-            .map_err(|_| MacOsVirtualMachineError::InvalidPath)?;
+        let native_configuration = NativeMacOsVirtualMachineConfiguration::new(&configuration)
+            .map_err(MacOsVirtualMachineError::InvalidConfiguration)?;
+        let native_saved_state = NativeMacOsSavedStateFiles::new(&saved_state)
+            .map_err(MacOsVirtualMachineError::InvalidPath)?;
         if !is_supported() {
             return Err(MacOsVirtualMachineError::UnsupportedHost);
         }
@@ -271,17 +278,23 @@ impl MacOsVirtualMachine {
             error: None,
         };
 
-        // SAFETY: The bridge copies the path, retains the event context until
-        // explicit destruction, and completes synchronously before returning.
-        unsafe {
-            ffi::ward_vz_create_macos_virtual_machine(
-                bundle.as_ptr(),
-                virtual_machine_event,
-                native_event_context.cast_mut().cast(),
-                virtual_machine_created,
-                (&raw mut creation).cast(),
-            );
-        }
+        native_configuration.with_raw(&configuration, |configuration| {
+            // SAFETY: The bridge copies the configuration and saved-state
+            // paths, retains the event context until explicit destruction,
+            // and completes synchronously before returning.
+            unsafe {
+                ffi::ward_vz_create_macos_virtual_machine(
+                    configuration,
+                    native_saved_state.machine_state.as_ptr(),
+                    native_saved_state.saving.as_ptr(),
+                    native_saved_state.restoring.as_ptr(),
+                    virtual_machine_event,
+                    native_event_context.cast_mut().cast(),
+                    virtual_machine_created,
+                    (&raw mut creation).cast(),
+                );
+            }
+        });
 
         let Some(handle) = std::ptr::NonNull::new(creation.handle) else {
             // SAFETY: This balances the strong reference passed to the bridge,
@@ -501,7 +514,8 @@ pub struct MacOsVirtualMachineDisplay {
 impl MacOsVirtualMachine {
     /// Returns [`MacOsVirtualMachineError::UnsupportedHost`].
     pub fn open(
-        _bundle: impl Into<PathBuf>,
+        _configuration: MacOsVirtualMachineConfiguration,
+        _saved_state: MacOsSavedStateFiles,
         _event_handler: impl FnMut(MacOsVirtualMachineEvent) + Send + 'static,
     ) -> Result<Self, MacOsVirtualMachineError> {
         Err(MacOsVirtualMachineError::UnsupportedHost)

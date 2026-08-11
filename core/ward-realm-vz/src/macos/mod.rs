@@ -1,13 +1,21 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-mod bundle;
+mod configuration;
+mod installer;
+mod preparation;
 mod vm;
 
-pub use bundle::{
-    DEFAULT_MACOS_DISK_SIZE, MacOsBundleInfo, MacOsBundleInstallationError,
-    MacOsBundleInstallationRequest, MacOsBundlePreparationError, MacOsBundleRequest, MacOsVersion,
-    install_macos_bundle, prepare_macos_bundle,
+pub use configuration::{
+    MacOsDiskConfiguration, MacOsDisplayConfiguration, MacOsSavedStateFiles,
+    MacOsVirtualMachineConfiguration,
+};
+#[cfg(target_os = "macos")]
+use configuration::{NativeMacOsSavedStateFiles, NativeMacOsVirtualMachineConfiguration};
+pub use installer::{MacOsInstallationError, MacOsInstallationRequest, install_macos};
+pub use preparation::{
+    MacOsPreparationError, MacOsPreparationInfo, MacOsPreparationRequest, MacOsVersion,
+    prepare_macos,
 };
 pub use vm::{
     MacOsVirtualMachine, MacOsVirtualMachineDisplay, MacOsVirtualMachineError,
@@ -43,6 +51,20 @@ unsafe fn copy_bridge_string(value: *const std::ffi::c_char) -> String {
     unsafe { std::ffi::CStr::from_ptr(value) }
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn copy_bridge_bytes(value: crate::ffi::WardVzByteSlice) -> Option<Vec<u8>> {
+    if value.length == 0 {
+        return Some(Vec::new());
+    }
+    if value.data.is_null() {
+        return None;
+    }
+
+    // SAFETY: The bridge keeps the byte slice alive for the duration of the
+    // callback that supplied it.
+    Some(unsafe { std::slice::from_raw_parts(value.data, value.length) }.to_vec())
 }
 
 /// Returns whether the current host supports Virtualization.framework virtual

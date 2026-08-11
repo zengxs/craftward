@@ -6,9 +6,10 @@ mod ffi;
 mod macos;
 
 pub use macos::{
-    DEFAULT_MACOS_DISK_SIZE, MacOsBundleInfo, MacOsBundleInstallationError,
-    MacOsBundleInstallationRequest, MacOsBundlePreparationError, MacOsBundleRequest, MacOsVersion,
-    MacOsVirtualMachine, MacOsVirtualMachineDisplay, MacOsVirtualMachineError,
-    MacOsVirtualMachineEvent, MacOsVirtualMachineState, MacOsVirtualMachineStatus,
-    install_macos_bundle, is_supported, prepare_macos_bundle,
+    MacOsDiskConfiguration, MacOsDisplayConfiguration, MacOsInstallationError,
+    MacOsInstallationRequest, MacOsPreparationError, MacOsPreparationInfo, MacOsPreparationRequest,
+    MacOsSavedStateFiles, MacOsVersion, MacOsVirtualMachine, MacOsVirtualMachineConfiguration,
+    MacOsVirtualMachineDisplay, MacOsVirtualMachineError, MacOsVirtualMachineEvent,
+    MacOsVirtualMachineState, MacOsVirtualMachineStatus, install_macos, is_supported,
+    prepare_macos,
 };

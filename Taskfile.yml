@@ -27,6 +27,7 @@ tasks:
       - task: format:clang
       - task: core:format:cargo
       - task: app:format:qml
+      - task: app:format:legal-catalog
 
   format:clang:
     desc: Format source code with clang-format

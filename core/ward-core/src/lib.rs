@@ -1,9 +1,17 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod macos;
+
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::PathBuf;
 
+use macos::open_macos_realm;
+pub use macos::{
+    DEFAULT_MACOS_DISK_SIZE, MacOsBundleInfo, MacOsBundleInstallationError,
+    MacOsBundleInstallationRequest, MacOsBundlePreparationError, MacOsBundleRequest, MacOsVersion,
+    install_macos_bundle, prepare_macos_bundle,
+};
 use ward_realm_vz::{
     MacOsVirtualMachine, MacOsVirtualMachineDisplay, MacOsVirtualMachineEvent,
     MacOsVirtualMachineState, MacOsVirtualMachineStatus,
@@ -170,7 +178,7 @@ pub unsafe extern "C" fn ward_core_realm_open(
         event,
         context: event_context,
     };
-    match MacOsVirtualMachine::open(bundle_path, move |event| sink.emit(event)) {
+    match open_macos_realm(bundle_path, move |event| sink.emit(event)) {
         Ok(virtual_machine) => Box::into_raw(Box::new(WardRealm {
             display: None,
             virtual_machine,

@@ -1,11 +1,23 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Core abstractions for isolated execution realms.
+//! Persistent domain model for isolated execution realms.
 //!
-//! # Stability
-//!
-//! This crate is internal and experimental. Its interface is currently being
-//! designed alongside the initial Virtualization.framework adapter and has not
-//! yet been validated against multiple backends. Expect it to evolve as the
-//! first adapter matures and materially different backends are introduced.
+//! This crate owns Realm bundle layout, validation, and schema migration. A
+//! backend adapter receives resolved, typed values and never needs to parse a
+//! bundle manifest or infer an artifact path.
+
+mod bundle;
+mod error;
+mod model;
+mod persistence;
+
+pub use bundle::{
+    PendingRealmBundle, RealmBundle, ResolvedDisk, ResolvedSavedStateFiles, ResolvedVzMacOsRealm,
+};
+pub use error::{RealmBundleError, RealmValidationError};
+pub use model::{
+    Architecture, Disk, DiskFormat, GuestOperatingSystem, MIB, MacOsRestoreImage, NetworkMode,
+    NewVzMacOsRealm, Platform, Realm, RealmBackend, RealmKind, RelativePath, VzBackend, VzDisplay,
+    VzInstallationState, VzMacOsConfiguration, VzNetwork,
+};

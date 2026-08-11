@@ -6,10 +6,14 @@ use std::env;
 fn main() -> anyhow::Result<()> {
     const BRIDGE_FILES: &[&str] = &[
         "bridge/errors.h",
-        "bridge/macos_bundle.h",
-        "bridge/macos_bundle.mm",
+        "bridge/macos_configuration.h",
+        "bridge/macos_configuration.mm",
         "bridge/macos_installer.h",
         "bridge/macos_installer.mm",
+        "bridge/macos_machine_state.h",
+        "bridge/macos_machine_state.mm",
+        "bridge/macos_restore_image.h",
+        "bridge/macos_restore_image.mm",
         "bridge/macos_vm.h",
         "bridge/macos_vm.mm",
         "bridge/vz.h",
@@ -26,8 +30,10 @@ fn main() -> anyhow::Result<()> {
     cc::Build::new()
         .cpp(true)
         .files([
-            "bridge/macos_bundle.mm",
+            "bridge/macos_configuration.mm",
             "bridge/macos_installer.mm",
+            "bridge/macos_machine_state.mm",
+            "bridge/macos_restore_image.mm",
             "bridge/macos_vm.mm",
             "bridge/vz.mm",
         ])

@@ -4,7 +4,8 @@
 #include "macos_vm.h"
 
 #include "errors.h"
-#include "macos_bundle.h"
+#include "macos_configuration.h"
+#include "macos_machine_state.h"
 
 #if defined(__arm64__)
 
@@ -44,7 +45,7 @@ NSError*
 WardVzMakeInvalidStateError(NSString* operation)
 {
     return WardVzMakeError(
-      WardVzErrorCode::InvalidBundleState,
+      WardVzErrorCode::InvalidState,
       [NSString stringWithFormat:@"The virtual machine cannot %@ from its current state.", operation]);
 }
 
@@ -61,7 +62,7 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
     if (@available(macOS 14.0, *)) {
         NSError* error = nil;
         if (![configuration validateSaveRestoreSupportWithError:&error] && error == nil) {
-            return WardVzMakeError(WardVzErrorCode::InvalidBundle,
+            return WardVzMakeError(WardVzErrorCode::InvalidConfiguration,
                                    @"The virtual machine configuration does not support saving and restoring state.");
         }
         return error;
@@ -76,7 +77,8 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
 @interface WardVzMacOSVirtualMachine ()
 
 @property (nonatomic, strong) VZVirtualMachine* virtualMachine;
-@property (nonatomic, strong) WardVzMacOSBundle* bundle;
+@property (nonatomic, strong) WardVzMacOSConfiguration* configurationSource;
+@property (nonatomic, strong) WardVzMacOSMachineState* machineState;
 @property (nonatomic) dispatch_queue_t queue;
 @property (nonatomic) WardVzMacOSVirtualMachineEvent event;
 @property (nonatomic) void* eventContext;
@@ -88,7 +90,8 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
 @property (nonatomic, strong) NSHashTable<VZVirtualMachineView*>* displayViews;
 
 - (instancetype)initWithConfiguration:(VZVirtualMachineConfiguration*)configuration
-                               bundle:(WardVzMacOSBundle*)bundle
+                  configurationSource:(WardVzMacOSConfiguration*)configurationSource
+                         machineState:(WardVzMacOSMachineState*)machineState
                                 queue:(dispatch_queue_t)queue
                                 event:(WardVzMacOSVirtualMachineEvent)event
                               context:(void*)context
@@ -110,17 +113,13 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
 
 @implementation WardVzMacOSVirtualMachine
 
-+ (instancetype)openInstalledBundleAtURL:(NSURL*)bundleURL
-                                   event:(WardVzMacOSVirtualMachineEvent)event
-                                 context:(void*)context
-                                   error:(NSError**)error
++ (instancetype)createWithConfiguration:(WardVzMacOSConfiguration*)configurationSource
+                           machineState:(WardVzMacOSMachineState*)machineState
+                                  event:(WardVzMacOSVirtualMachineEvent)event
+                                context:(void*)context
+                                  error:(NSError**)error
 {
-    WardVzMacOSBundle* bundle = [WardVzMacOSBundle openInstalledBundleAtURL:bundleURL error:error];
-    if (bundle == nil) {
-        return nil;
-    }
-
-    VZVirtualMachineConfiguration* configuration = [bundle createVirtualMachineConfigurationWithError:error];
+    VZVirtualMachineConfiguration* configuration = [configurationSource makeVirtualMachineConfigurationWithError:error];
     if (configuration == nil) {
         return nil;
     }
@@ -129,7 +128,8 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
 
     dispatch_queue_t queue = dispatch_queue_create("app.craftward.ward-realm-vz.vm", DISPATCH_QUEUE_SERIAL);
     return [[self alloc] initWithConfiguration:configuration
-                                        bundle:bundle
+                           configurationSource:configurationSource
+                                  machineState:machineState
                                          queue:queue
                                          event:event
                                        context:context
@@ -137,7 +137,8 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
 }
 
 - (instancetype)initWithConfiguration:(VZVirtualMachineConfiguration*)configuration
-                               bundle:(WardVzMacOSBundle*)bundle
+                  configurationSource:(WardVzMacOSConfiguration*)configurationSource
+                         machineState:(WardVzMacOSMachineState*)machineState
                                 queue:(dispatch_queue_t)queue
                                 event:(WardVzMacOSVirtualMachineEvent)event
                               context:(void*)context
@@ -145,7 +146,8 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
 {
     self = [super init];
     if (self != nil) {
-        _bundle = bundle;
+        _configurationSource = configurationSource;
+        _machineState = machineState;
         _queue = queue;
         _event = event;
         _eventContext = context;
@@ -173,7 +175,7 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
 {
     VZVirtualMachineState state = self.virtualMachine.state;
     WardVzMacOSVirtualMachineState reportedState = WardVzMapVirtualMachineState(state);
-    BOOL hasSavedMachineState = self.bundle.hasSavedMachineState;
+    BOOL hasSavedMachineState = self.machineState.hasSavedMachineState;
     BOOL lifecycleOperationRequested = self.suspensionRequested || self.restorationRequested;
     if (self.suspensionRequested) {
         reportedState = WardVzMacOSVirtualMachineStateSaving;
@@ -411,7 +413,7 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
     NSURL* savingURL = nil;
     @try {
         NSError* error = nil;
-        savingURL = [self.bundle beginSavingMachineStateWithError:&error];
+        savingURL = [self.machineState beginSavingWithError:&error];
         if (savingURL == nil) {
             [self finishSuspensionWithError:error];
             return;
@@ -423,19 +425,19 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
                   completionHandler:^(NSError* operationError) {
                     @try {
                         if (operationError != nil) {
-                            [self.bundle cancelSavingMachineStateAtURL:savingURL];
+                            [self.machineState cancelSavingAtURL:savingURL];
                             [self finishSuspensionWithError:operationError];
                             return;
                         }
 
                         NSError* publishError = nil;
-                        if (![self.bundle finishSavingMachineStateAtURL:savingURL error:&publishError]) {
-                            [self.bundle cancelSavingMachineStateAtURL:savingURL];
+                        if (![self.machineState finishSavingAtURL:savingURL error:&publishError]) {
+                            [self.machineState cancelSavingAtURL:savingURL];
                             [self finishSuspensionWithError:publishError];
                             return;
                         }
                         if (!self.virtualMachine.canStop) {
-                            [self.bundle discardSavedMachineStateWithError:nil];
+                            [self.machineState discardWithError:nil];
                             [self finishSuspensionWithError:WardVzMakeInvalidStateError(@"stop after saving")];
                             return;
                         }
@@ -443,7 +445,7 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
                         [self.virtualMachine stopWithCompletionHandler:^(NSError* stopError) {
                           @try {
                               if (stopError != nil) {
-                                  [self.bundle discardSavedMachineStateWithError:nil];
+                                  [self.machineState discardWithError:nil];
                                   [self finishSuspensionWithError:stopError];
                                   return;
                               }
@@ -454,19 +456,19 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
                           }
                         }];
                     } @catch (NSException* exception) {
-                        [self.bundle cancelSavingMachineStateAtURL:savingURL];
-                        [self.bundle discardSavedMachineStateWithError:nil];
+                        [self.machineState cancelSavingAtURL:savingURL];
+                        [self.machineState discardWithError:nil];
                         [self finishSuspensionWithError:WardVzMakeBridgeExceptionError(exception)];
                     }
                   }];
             return;
         }
 
-        [self.bundle cancelSavingMachineStateAtURL:savingURL];
+        [self.machineState cancelSavingAtURL:savingURL];
         [self finishSuspensionWithError:self.saveRestoreSupportError];
     } @catch (NSException* exception) {
         if (savingURL != nil) {
-            [self.bundle cancelSavingMachineStateAtURL:savingURL];
+            [self.machineState cancelSavingAtURL:savingURL];
         }
         [self finishSuspensionWithError:WardVzMakeBridgeExceptionError(exception)];
     }
@@ -480,13 +482,14 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
     // A VZVirtualMachineView with automatic display reconfiguration can change
     // the runtime graphics configuration. Reusing a restored VZVirtualMachine
     // and saving it again may produce state that a fresh instance created from
-    // the persistent bundle configuration rejects with VZErrorRestore.
+    // the persistent machine configuration rejects with VZErrorRestore.
     //
     // Reconstructing the stopped machine here makes in-process and cross-process
     // restores follow the same lifecycle. Guest memory and device state remain
     // in the saved-state file; only the host-side VZ object is replaced.
     NSError* error = nil;
-    VZVirtualMachineConfiguration* configuration = [self.bundle createVirtualMachineConfigurationWithError:&error];
+    VZVirtualMachineConfiguration* configuration =
+      [self.configurationSource makeVirtualMachineConfigurationWithError:&error];
     if (configuration == nil) {
         return error;
     }
@@ -542,7 +545,7 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
           }
 
           NSError* consumeError = nil;
-          restoringURL = [self.bundle consumeSavedMachineStateWithError:&consumeError];
+          restoringURL = [self.machineState consumeWithError:&consumeError];
           if (restoringURL == nil) {
               [self emitStatusWithError:consumeError];
               return;
@@ -554,8 +557,7 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
               [self.virtualMachine restoreMachineStateFromURL:restoringURL
                                             completionHandler:^(NSError* operationError) {
                                               NSError* cleanupError = nil;
-                                              [self.bundle finishConsumingMachineStateAtURL:restoringURL
-                                                                                      error:&cleanupError];
+                                              [self.machineState finishConsumingAtURL:restoringURL error:&cleanupError];
                                               if (operationError != nil) {
                                                   self.restorationRequested = NO;
                                                   [self emitStatusWithError:operationError];
@@ -566,12 +568,12 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
               return;
           }
 
-          [self.bundle finishConsumingMachineStateAtURL:restoringURL error:nil];
+          [self.machineState finishConsumingAtURL:restoringURL error:nil];
           self.restorationRequested = NO;
           [self emitStatusWithError:self.saveRestoreSupportError];
       } @catch (NSException* exception) {
           if (restoringURL != nil) {
-              [self.bundle finishConsumingMachineStateAtURL:restoringURL error:nil];
+              [self.machineState finishConsumingAtURL:restoringURL error:nil];
           }
           self.restorationRequested = NO;
           [self emitStatusWithError:WardVzMakeBridgeExceptionError(exception)];
@@ -603,7 +605,7 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
           }
 
           NSError* error = nil;
-          [self.bundle discardSavedMachineStateWithError:&error];
+          [self.machineState discardWithError:&error];
           [self emitStatusWithError:error];
       } @catch (NSException* exception) {
           [self emitStatusWithError:WardVzMakeBridgeExceptionError(exception)];
@@ -630,7 +632,7 @@ WardVzValidateSaveRestoreSupport(VZVirtualMachineConfiguration* configuration)
     if (invalidated || virtualMachine == nil) {
         if (error != nullptr) {
             *error =
-              WardVzMakeError(WardVzErrorCode::InvalidBundleState,
+              WardVzMakeError(WardVzErrorCode::InvalidState,
                               @"The virtual machine display cannot be attached after the machine is invalidated.");
         }
         return nil;

@@ -1,16 +1,58 @@
 {
   "components": [
     {
-      "component": "Qt",
-      "spdxIdentifier": "GPL-3.0-only",
-      "legalText": "qrc:///legal/Qt.txt",
-      "website": "https://www.qt.io/"
+      "component": "anyhow",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/MIT.txt",
+      "website": "https://github.com/dtolnay/anyhow"
+    },
+    {
+      "component": "cc",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/MIT.txt",
+      "website": "https://github.com/rust-lang/cc-rs"
     },
     {
       "component": "Phosphor Icons",
       "spdxIdentifier": "MIT",
       "legalText": "qrc:///legal/PhosphorIcons.txt",
       "website": "https://phosphoricons.com/"
+    },
+    {
+      "component": "Qt",
+      "spdxIdentifier": "GPL-3.0-only",
+      "legalText": "qrc:///legal/Qt.txt",
+      "website": "https://www.qt.io/"
+    },
+    {
+      "component": "serde",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/MIT.txt",
+      "website": "https://github.com/serde-rs/serde"
+    },
+    {
+      "component": "serde_json",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/MIT.txt",
+      "website": "https://github.com/serde-rs/json"
+    },
+    {
+      "component": "serde_with",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/MIT.txt",
+      "website": "https://github.com/jonasbb/serde_with"
+    },
+    {
+      "component": "thiserror",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/MIT.txt",
+      "website": "https://github.com/dtolnay/thiserror"
+    },
+    {
+      "component": "uuid",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/MIT.txt",
+      "website": "https://github.com/uuid-rs/uuid"
     }
   ]
 }
