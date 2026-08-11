@@ -38,7 +38,6 @@ Control {
             rightPadding: 2
             topPadding: 6
             bottomPadding: 6
-            font.family: "Menlo"
             readOnly: true
             wordWrap: true
         }

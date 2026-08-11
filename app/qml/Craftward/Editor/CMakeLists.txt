@@ -20,6 +20,7 @@ target_compile_options(CraftwardEditor
 
 target_link_libraries(CraftwardEditor
     PRIVATE
+        CraftwardComponentsplugin
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick

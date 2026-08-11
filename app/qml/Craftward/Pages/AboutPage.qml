@@ -82,7 +82,7 @@ Page {
                 Layout.fillWidth: true
                 Layout.topMargin: 8
                 text: root.versionSummary
-                font.family: "Menlo"
+                font.family: Typography.monoFamily
                 font.pixelSize: 11
                 color: root.palette.placeholderText
                 horizontalAlignment: Text.AlignHCenter

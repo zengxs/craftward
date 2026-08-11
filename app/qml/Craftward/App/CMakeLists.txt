@@ -12,9 +12,14 @@ set_source_files_properties(
     "${CRAFTWARD_APP_ICON_FILE}"
     PROPERTIES MACOSX_PACKAGE_LOCATION "Resources"
 )
+set_source_files_properties(
+    ${CRAFTWARD_LILEX_FONT_FILES}
+    PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/fonts/lilex"
+)
 target_sources(Craftward PRIVATE
     "${CRAFTWARD_ENTITLEMENTS_FILE}"
     "${CRAFTWARD_APP_ICON_FILE}"
+    ${CRAFTWARD_LILEX_FONT_FILES}
 )
 
 qt_add_qml_module(Craftward

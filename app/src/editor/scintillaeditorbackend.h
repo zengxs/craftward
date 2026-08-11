@@ -24,6 +24,8 @@ class ScintillaEditorBackend : public QObject
     Q_PROPERTY(bool wordWrap READ wordWrap WRITE setWordWrap NOTIFY wordWrapChanged)
     Q_PROPERTY(QString fontFamily READ fontFamily WRITE setFontFamily NOTIFY fontFamilyChanged)
     Q_PROPERTY(qreal fontPointSize READ fontPointSize WRITE setFontPointSize NOTIFY fontPointSizeChanged)
+    Q_PROPERTY(int fontWeight READ fontWeight WRITE setFontWeight NOTIFY fontWeightChanged)
+    Q_PROPERTY(qreal lineHeightScale READ lineHeightScale WRITE setLineHeightScale NOTIFY lineHeightScaleChanged)
     Q_PROPERTY(QColor foregroundColor READ foregroundColor WRITE setForegroundColor NOTIFY foregroundColorChanged)
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor NOTIFY backgroundColorChanged)
     Q_PROPERTY(QColor selectionForegroundColor READ selectionForegroundColor WRITE setSelectionForegroundColor NOTIFY
@@ -52,6 +54,12 @@ class ScintillaEditorBackend : public QObject
     qreal fontPointSize() const;
     void setFontPointSize(qreal fontPointSize);
 
+    int fontWeight() const;
+    void setFontWeight(int fontWeight);
+
+    qreal lineHeightScale() const;
+    void setLineHeightScale(qreal lineHeightScale);
+
     QColor foregroundColor() const;
     void setForegroundColor(const QColor& foregroundColor);
 
@@ -70,6 +78,8 @@ class ScintillaEditorBackend : public QObject
     void wordWrapChanged();
     void fontFamilyChanged();
     void fontPointSizeChanged();
+    void fontWeightChanged();
+    void lineHeightScaleChanged();
     void foregroundColorChanged();
     void backgroundColorChanged();
     void selectionForegroundColorChanged();

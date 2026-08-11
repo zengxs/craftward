@@ -23,11 +23,32 @@ if(APPLE)
     set(CRAFTWARD_APP_ICON_FILE
         "${CMAKE_CURRENT_SOURCE_DIR}/macos/Ward.icns"
     )
+    set(CRAFTWARD_LILEX_FONT_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Thin.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-ThinItalic.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-ExtraLight.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-ExtraLightItalic.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Light.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-LightItalic.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Italic.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Medium.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-MediumItalic.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-SemiBold.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-SemiBoldItalic.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Bold.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-BoldItalic.ttf"
+    )
     set(CRAFTWARD_APPLICATION_ICON_PROVIDER_SOURCE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/applicationiconprovider.mm"
     )
+    set(CRAFTWARD_APPLICATION_FONTS_SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/applicationfonts.mm"
+    )
     find_library(CRAFTWARD_APPKIT_FRAMEWORK AppKit REQUIRED)
     find_library(CRAFTWARD_COCOA_FRAMEWORK Cocoa REQUIRED)
+    find_library(CRAFTWARD_CORE_TEXT_FRAMEWORK CoreText REQUIRED)
+    find_library(CRAFTWARD_FOUNDATION_FRAMEWORK Foundation REQUIRED)
     find_library(CRAFTWARD_QUARTZ_CORE_FRAMEWORK QuartzCore REQUIRED)
     find_library(CRAFTWARD_VIRTUALIZATION_FRAMEWORK Virtualization REQUIRED)
     find_program(CRAFTWARD_CODESIGN_EXECUTABLE codesign REQUIRED)

@@ -9,6 +9,7 @@
 
 #include "Scintilla.h"
 
+#include <QFontDatabase>
 #include <QPointer>
 #include <QtGlobal>
 
@@ -112,10 +113,20 @@ class ScintillaEditorBackendPrivate
         [view setGeneralProperty:SCI_STYLESETSIZEFRACTIONAL
                        parameter:STYLE_DEFAULT
                            value:qRound(fontPointSize * SC_FONT_SIZE_MULTIPLIER)];
+        [view setGeneralProperty:SCI_STYLESETWEIGHT parameter:STYLE_DEFAULT value:fontWeight];
         [view setColorProperty:SCI_STYLESETFORE parameter:STYLE_DEFAULT value:nativeColor(foregroundColor)];
         [view setColorProperty:SCI_STYLESETBACK parameter:STYLE_DEFAULT value:nativeColor(backgroundColor)];
         [view setGeneralProperty:SCI_STYLECLEARALL parameter:0 value:0];
         [view setColorProperty:SCI_SETCARETFORE parameter:0 value:nativeColor(foregroundColor)];
+
+        [view message:SCI_SETEXTRAASCENT wParam:0];
+        [view message:SCI_SETEXTRADESCENT wParam:0];
+        const int baseLineHeight = static_cast<int>([view message:SCI_TEXTHEIGHT wParam:0]);
+        const int targetLineHeight = qRound(baseLineHeight * lineHeightScale);
+        const int extraLineHeight = qMax(0, targetLineHeight - baseLineHeight);
+        const int extraAscent = extraLineHeight / 2;
+        [view message:SCI_SETEXTRAASCENT wParam:extraAscent];
+        [view message:SCI_SETEXTRADESCENT wParam:extraLineHeight - extraAscent];
 
         view.scrollView.drawsBackground = YES;
         view.scrollView.backgroundColor = nativeColor(backgroundColor);
@@ -178,8 +189,10 @@ class ScintillaEditorBackendPrivate
     QString text;
     bool readOnly = false;
     bool wordWrap = false;
-    QString fontFamily = QStringLiteral("Menlo");
+    QString fontFamily = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
     qreal fontPointSize = 13.0;
+    int fontWeight = SC_WEIGHT_NORMAL;
+    qreal lineHeightScale = 1.0;
     QColor foregroundColor = Qt::black;
     QColor backgroundColor = Qt::white;
     QColor selectionForegroundColor = Qt::white;
@@ -307,6 +320,40 @@ ScintillaEditorBackend::setFontPointSize(qreal fontPointSize)
     d->fontPointSize = fontPointSize;
     d->applyDefaultStyle();
     emit fontPointSizeChanged();
+}
+
+int
+ScintillaEditorBackend::fontWeight() const
+{
+    return d->fontWeight;
+}
+
+void
+ScintillaEditorBackend::setFontWeight(int fontWeight)
+{
+    if (fontWeight <= 0 || fontWeight > 1000 || d->fontWeight == fontWeight)
+        return;
+
+    d->fontWeight = fontWeight;
+    d->applyDefaultStyle();
+    emit fontWeightChanged();
+}
+
+qreal
+ScintillaEditorBackend::lineHeightScale() const
+{
+    return d->lineHeightScale;
+}
+
+void
+ScintillaEditorBackend::setLineHeightScale(qreal lineHeightScale)
+{
+    if (lineHeightScale < 1.0 || qFuzzyCompare(d->lineHeightScale, lineHeightScale))
+        return;
+
+    d->lineHeightScale = lineHeightScale;
+    d->applyDefaultStyle();
+    emit lineHeightScaleChanged();
 }
 
 QColor

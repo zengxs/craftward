@@ -4,6 +4,9 @@ set(craftward_legal_catalog
 set(craftward_mit_legal_text
     "${CMAKE_CURRENT_SOURCE_DIR}/legal/MIT.txt"
 )
+set(craftward_lilex_legal_text
+    "${CMAKE_CURRENT_SOURCE_DIR}/legal/Lilex.txt"
+)
 set(craftward_phosphor_legal_text
     "${CMAKE_CURRENT_SOURCE_DIR}/legal/PhosphorIcons.txt"
 )
@@ -35,6 +38,10 @@ set_source_files_properties(
     PROPERTIES QT_RESOURCE_ALIAS "MIT.txt"
 )
 set_source_files_properties(
+    "${craftward_lilex_legal_text}"
+    PROPERTIES QT_RESOURCE_ALIAS "Lilex.txt"
+)
+set_source_files_properties(
     "${craftward_phosphor_legal_text}"
     PROPERTIES QT_RESOURCE_ALIAS "PhosphorIcons.txt"
 )
@@ -55,6 +62,7 @@ qt_add_resources(Craftward "craftward_legal"
     PREFIX "/legal"
     FILES
         "${craftward_legal_catalog}"
+        "${craftward_lilex_legal_text}"
         "${craftward_mit_legal_text}"
         "${craftward_phosphor_legal_text}"
         "${craftward_qt_legal_text}"
