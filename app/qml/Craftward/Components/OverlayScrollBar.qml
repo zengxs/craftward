@@ -1,13 +1,13 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Templates as T
 
-ScrollBar {
+T.ScrollBar {
     id: control
 
     implicitWidth: orientation === Qt.Vertical ? 10 : 0
     implicitHeight: orientation === Qt.Horizontal ? 10 : 0
     padding: 2
-    policy: ScrollBar.AsNeeded
+    policy: T.ScrollBar.AsNeeded
 
     background: Item {}
 
