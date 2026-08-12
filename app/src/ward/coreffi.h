@@ -13,6 +13,14 @@ extern "C"
 {
 #endif
 
+    typedef struct WardCliResult
+    {
+        bool handled;
+        int exit_code;
+    } WardCliResult;
+
+    WardCliResult ward_core_cli_try_run(int argc, char** argv);
+
     typedef enum WardRealmState
     {
         WardRealmStateStopped = 0,

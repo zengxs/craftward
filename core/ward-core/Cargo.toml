@@ -10,5 +10,6 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 thiserror = { workspace = true }
+ward-cli = { workspace = true }
 ward-realm = { workspace = true }
 ward-realm-vz = { workspace = true }

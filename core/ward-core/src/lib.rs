@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod cli;
 mod macos;
 
 use std::ffi::{CStr, CString, c_char, c_void};

@@ -13,6 +13,12 @@
       "website": "https://github.com/rust-lang/cc-rs"
     },
     {
+      "component": "clap",
+      "spdxIdentifier": "MIT",
+      "legalText": "qrc:///legal/MIT.txt",
+      "website": "https://github.com/clap-rs/clap"
+    },
+    {
       "component": "Lilex",
       "spdxIdentifier": "OFL-1.1",
       "legalText": "qrc:///legal/Lilex.txt",

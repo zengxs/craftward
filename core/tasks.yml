@@ -1,6 +1,14 @@
 version: "3"
 
 tasks:
+  cli:
+    desc: Run the Ward CLI
+    preconditions:
+      - sh: command -v cargo
+        msg: cargo is not available in PATH
+    cmds:
+      - cargo run --package ward-cli -- {{.CLI_ARGS}}
+
   build:
     label: "core:build:{{.BUILD_TYPE}}"
     desc: Build the Ward Core Universal2 static library

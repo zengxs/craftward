@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "applicationiconprovider.h"
+#include "ward/coreffi.h"
 #include "ward/realm/realmcontroller.h"
 
 #include <QCoreApplication>
@@ -22,6 +23,10 @@ Q_IMPORT_QML_PLUGIN(Craftward_RealmPlugin)
 int
 main(int argc, char* argv[])
 {
+    const WardCliResult cliResult = ward_core_cli_try_run(argc, argv);
+    if (cliResult.handled)
+        return cliResult.exit_code;
+
     QGuiApplication app(argc, argv);
 
     QCoreApplication::setApplicationName(QStringLiteral("Craftward"));
