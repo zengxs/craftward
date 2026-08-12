@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 use ward_codex::{CodexClient, ThreadItem, ThreadListOptions, UserInput};
 
+mod watch;
+
 const CODEX_PATH_ENVIRONMENT_VARIABLE: &str = "CRAFTWARD_CODEX_PATH";
 
 type CommandResult = Result<(), Box<dyn Error>>;
@@ -32,6 +34,7 @@ impl CodexArguments {
             CodexCommand::Check => check(&mut client, output),
             CodexCommand::List(arguments) => list(&mut client, arguments, output),
             CodexCommand::Read { thread_id } => read(&mut client, &thread_id, output),
+            CodexCommand::Watch(arguments) => watch::run(&mut client, arguments, output),
         }
     }
 }
@@ -47,6 +50,8 @@ enum CodexCommand {
         /// Identifier of the thread to read.
         thread_id: String,
     },
+    /// Watch a persisted thread for changes made by another app-server.
+    Watch(watch::WatchArguments),
 }
 
 #[derive(Debug, Args)]
