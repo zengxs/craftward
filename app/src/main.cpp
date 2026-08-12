@@ -1,7 +1,9 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "applicationcontroller.h"
 #include "applicationiconprovider.h"
+#include "ward/codex/codexhistorycontroller.h"
 #include "ward/coreffi.h"
 #include "ward/realm/realmcontroller.h"
 
@@ -15,8 +17,10 @@
 #include <QtQml/QQmlExtensionPlugin>
 
 Q_IMPORT_QML_PLUGIN(Craftward_ComponentsPlugin)
+Q_IMPORT_QML_PLUGIN(Craftward_CodexPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_EditorPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_Features_LegalPlugin)
+Q_IMPORT_QML_PLUGIN(Craftward_Features_RealmPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_PagesPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_RealmPlugin)
 
@@ -28,6 +32,7 @@ main(int argc, char* argv[])
         return cliResult.exit_code;
 
     QGuiApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
 
     QCoreApplication::setApplicationName(QStringLiteral("Craftward"));
     QCoreApplication::setApplicationVersion(QStringLiteral(CRAFTWARD_VERSION));
@@ -37,7 +42,9 @@ main(int argc, char* argv[])
     // Use native text rendering for better font quality, especially for CJK fonts.
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
+    CodexHistoryController codexHistoryController;
     RealmController realmController;
+    ApplicationController applicationController(app, realmController);
     QQmlApplicationEngine engine;
 
     auto applicationIconProvider = createApplicationIconProvider();
@@ -48,6 +55,10 @@ main(int argc, char* argv[])
                              QUrl(QStringLiteral("image://application-icon/app")));
     initialProperties.insert(QStringLiteral("buildNumber"), QStringLiteral(CRAFTWARD_BUILD_NUMBER));
     initialProperties.insert(QStringLiteral("commitHash"), QStringLiteral(CRAFTWARD_COMMIT_HASH));
+    initialProperties.insert(QStringLiteral("applicationController"),
+                             QVariant::fromValue(static_cast<QObject*>(&applicationController)));
+    initialProperties.insert(QStringLiteral("codexHistoryController"),
+                             QVariant::fromValue(static_cast<QObject*>(&codexHistoryController)));
     initialProperties.insert(QStringLiteral("realmController"),
                              QVariant::fromValue(static_cast<QObject*>(&realmController)));
     engine.setInitialProperties(initialProperties);

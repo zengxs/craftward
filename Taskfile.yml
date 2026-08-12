@@ -46,6 +46,7 @@ tasks:
         "*.c" "*.cc" "*.cpp" "*.cxx"
         "*.h" "*.hh" "*.hpp" "*.hxx"
         "*.m" "*.mm"
+        "*.proto"
         | xargs -0 sh -c
         'for path do test ! -f "$path" || clang-format -i "$path" || exit; done'
         sh

@@ -9,7 +9,12 @@ license.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+prost = { workspace = true }
 thiserror = { workspace = true }
 ward-cli = { workspace = true }
+ward-codex = { workspace = true }
 ward-realm = { workspace = true }
 ward-realm-vz = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }

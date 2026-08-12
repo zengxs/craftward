@@ -66,7 +66,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.11 REQUIRED COMPONENTS Qml Quick QuickControls2 QuickDialogs2)
+find_package(Qt6 6.11 REQUIRED COMPONENTS Concurrent Protobuf Qml Quick QuickControls2 QuickDialogs2 Svg)
 
 qt_standard_project_setup(REQUIRES 6.11)
 
@@ -103,6 +103,7 @@ add_subdirectory(src/ward)
 add_subdirectory(qml/Craftward/Components)
 add_subdirectory(qml/Craftward/Editor)
 add_subdirectory(qml/Craftward/Features/Legal)
+add_subdirectory(qml/Craftward/Features/Realm)
 add_subdirectory(qml/Craftward/Pages)
 add_subdirectory(qml/Craftward/App)
 # Assets attach resources directly to the Craftward executable.

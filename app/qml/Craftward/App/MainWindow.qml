@@ -3,40 +3,23 @@
 
 import QtQuick
 import QtQuick.Controls
-import Craftward.Components
+import Craftward.Codex
 import Craftward.Pages
-import Craftward.Realm
 
 ApplicationWindow {
     id: window
 
-    property url applicationIconSource
-    property string buildNumber
-    property string commitHash
-    required property RealmController realmController
-    property var realmDisplayWindow: null
-    property var settingsWindow: null
+    required property CodexHistoryController codexHistoryController
 
-    function presentRealmDisplay() {
-        if (!window.realmDisplayWindow) {
-            window.realmDisplayWindow = realmDisplayWindowComponent.createObject(window, {
-                "controller": window.realmController
-            });
-        }
+    signal closeWindowRequested
+    signal quitRequested
+    signal realmManagerRequested
+    signal settingsRequested(int pageIndex)
 
-        window.realmDisplayWindow.present();
-    }
-
-    function presentSettings(pageIndex) {
-        if (!window.settingsWindow) {
-            window.settingsWindow = settingsWindowComponent.createObject(window, {
-                "applicationIconSource": window.applicationIconSource,
-                "buildNumber": window.buildNumber,
-                "commitHash": window.commitHash
-            });
-        }
-
-        window.settingsWindow.present(pageIndex);
+    function present() {
+        window.show();
+        window.raise();
+        window.requestActivate();
     }
 
     width: 960
@@ -46,21 +29,28 @@ ApplicationWindow {
     flags: Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
     visible: true
     title: qsTr("Craftward")
-    onClosing: close => {
-        if (window.realmController.requiresStopBeforeExit) {
-            close.accepted = false;
-            realmRunningDialog.open();
-        }
-    }
 
     menuBar: MenuBar {
         Menu {
             title: qsTr("File")
 
             Action {
+                text: qsTr("Close Window")
+                shortcut: StandardKey.Close
+                onTriggered: window.closeWindowRequested()
+            }
+
+            MenuSeparator {}
+
+            Action {
+                text: qsTr("Manage Realms…")
+                onTriggered: window.realmManagerRequested()
+            }
+
+            Action {
                 text: qsTr("Settings…")
                 shortcut: StandardKey.Preferences
-                onTriggered: window.presentSettings(0)
+                onTriggered: window.settingsRequested(0)
             }
 
             MenuSeparator {}
@@ -68,7 +58,7 @@ ApplicationWindow {
             Action {
                 text: qsTr("Quit Craftward")
                 shortcut: StandardKey.Quit
-                onTriggered: Qt.quit()
+                onTriggered: window.quitRequested()
             }
         }
 
@@ -77,48 +67,13 @@ ApplicationWindow {
 
             Action {
                 text: qsTr("About Craftward")
-                onTriggered: window.presentSettings(1)
+                onTriggered: window.settingsRequested(1)
             }
         }
     }
 
-    background: Rectangle {
-        color: window.palette.window
-
-        WindowMoveHandler {
-            targetWindow: window
-        }
-    }
-
-    StackView {
-        id: stackView
-
+    CodexHistoryPage {
         anchors.fill: parent
-        initialItem: RealmPage {
-            controller: window.realmController
-            onDisplayRequested: window.presentRealmDisplay()
-        }
-    }
-
-    Component {
-        id: realmDisplayWindowComponent
-
-        RealmDisplayWindow {}
-    }
-
-    Component {
-        id: settingsWindowComponent
-
-        SettingsWindow {}
-    }
-
-    ConfirmationDialog {
-        id: realmRunningDialog
-
-        title: qsTr("Shut down the Realm before quitting")
-        message: qsTr("Return to the Realm controls and use Suspend or Shut Down. If the guest does not respond, use Force Stop from the actions menu.")
-        acceptText: qsTr("Return to Realm")
-        rejectText: ""
-        primaryAction: true
+        controller: window.codexHistoryController
     }
 }

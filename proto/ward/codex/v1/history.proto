@@ -1,0 +1,50 @@
+// Copyright (C) 2026 Xiangsong Zeng
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+syntax = "proto3";
+
+package ward.codex.v1;
+
+// A page of persisted Codex thread summaries.
+message ThreadPage {
+  repeated ThreadSummary threads = 1;
+  optional string next_cursor = 2;
+}
+
+// The metadata needed to present one persisted Codex thread.
+message ThreadSummary {
+  string thread_id = 1;
+  optional string name = 2;
+  string preview = 3;
+  string working_directory = 4;
+  int64 created_at_unix_seconds = 5;
+  int64 updated_at_unix_seconds = 6;
+}
+
+// The displayable content of one persisted Codex thread.
+message Conversation {
+  string title = 1;
+  repeated Message messages = 2;
+}
+
+enum MessageRole {
+  MESSAGE_ROLE_UNSPECIFIED = 0;
+  MESSAGE_ROLE_USER = 1;
+  MESSAGE_ROLE_AGENT = 2;
+}
+
+enum MessagePhase {
+  MESSAGE_PHASE_UNSPECIFIED = 0;
+  MESSAGE_PHASE_COMMENTARY = 1;
+  MESSAGE_PHASE_FINAL_ANSWER = 2;
+  MESSAGE_PHASE_OTHER = 3;
+}
+
+// One normalized user or agent message.
+message Message {
+  // Stable identifier inherited from the source thread item.
+  string message_id = 1;
+  MessageRole role = 2;
+  MessagePhase phase = 3;
+  string text = 4;
+}

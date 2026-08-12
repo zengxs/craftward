@@ -13,4 +13,9 @@ Language: ObjC
 Standard: c++20
 DerivePointerAlignment: false
 PointerAlignment: Left
+---
+Language: Proto
+BasedOnStyle: Google
+DerivePointerAlignment: false
+PointerAlignment: Left
 ...

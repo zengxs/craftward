@@ -3,15 +3,14 @@ qt_add_qml_module(CraftwardPages
     URI Craftward.Pages
     QML_FILES
         AboutPage.qml
-        RealmPage.qml
+        CodexHistoryPage.qml
         SettingsGeneralPage.qml
 )
 
 target_link_libraries(CraftwardPages
     PRIVATE
         CraftwardComponentsplugin
-        CraftwardRealmplugin
+        CraftwardCodexplugin
         Qt6::Quick
         Qt6::QuickControls2
-        Qt6::QuickDialogs2
 )

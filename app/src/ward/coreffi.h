@@ -7,6 +7,8 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -20,6 +22,15 @@ extern "C"
     } WardCliResult;
 
     WardCliResult ward_core_cli_try_run(int argc, char** argv);
+
+    typedef struct WardBuffer WardBuffer;
+    typedef struct WardError WardError;
+
+    WardBuffer* ward_core_codex_list_threads(const char* executable, uint32_t limit, WardError** error);
+    WardBuffer* ward_core_codex_read_thread(const char* executable, const char* thread_id, WardError** error);
+    const uint8_t* ward_core_buffer_data(const WardBuffer* buffer);
+    size_t ward_core_buffer_size(const WardBuffer* buffer);
+    void ward_core_buffer_destroy(WardBuffer* buffer);
 
     typedef enum WardRealmState
     {
@@ -50,7 +61,6 @@ extern "C"
     } WardRealmStatus;
 
     typedef struct WardRealm WardRealm;
-    typedef struct WardError WardError;
 
     typedef void (*WardRealmEvent)(void* context, const WardRealmStatus* status, const char* error_message);
 

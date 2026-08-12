@@ -24,23 +24,34 @@ target_sources(Craftward PRIVATE
 
 qt_add_qml_module(Craftward
     URI Craftward.App
+    SOURCES
+        ../../../src/applicationcontroller.cpp
+        ../../../src/applicationcontroller.h
     QML_FILES
         Main.qml
         MainWindow.qml
-        RealmDisplayWindow.qml
         SettingsWindow.qml
+)
+
+target_include_directories(Craftward
+    PRIVATE
+        ../../../src
 )
 
 target_link_libraries(Craftward
     PRIVATE
         CraftwardComponentsplugin
+        CraftwardCodex
+        CraftwardCodexplugin
         CraftwardEditorplugin
         CraftwardFeaturesLegalplugin
+        CraftwardFeaturesRealmplugin
         CraftwardPagesplugin
         CraftwardRealmplugin
         Qt6::Quick
         Qt6::QuickControls2
         Qt6::QuickDialogs2
+        Qt6::Svg
         "${CRAFTWARD_APPKIT_FRAMEWORK}"
 )
 

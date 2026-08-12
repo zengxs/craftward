@@ -31,6 +31,18 @@
       "website": "https://phosphoricons.com/"
     },
     {
+      "component": "prost",
+      "spdxIdentifier": "Apache-2.0",
+      "legalText": "qrc:///legal/Apache-2.0.txt",
+      "website": "https://github.com/tokio-rs/prost"
+    },
+    {
+      "component": "prost-build",
+      "spdxIdentifier": "Apache-2.0",
+      "legalText": "qrc:///legal/Apache-2.0.txt",
+      "website": "https://github.com/tokio-rs/prost"
+    },
+    {
       "component": "Qt",
       "spdxIdentifier": "GPL-3.0-only",
       "legalText": "qrc:///legal/Qt.txt",
