@@ -53,4 +53,27 @@ impl CodexError {
     pub(crate) fn io(operation: &'static str, source: io::Error) -> Self {
         Self::Io { operation, source }
     }
+
+    pub(crate) fn is_connection_lost(&self) -> bool {
+        matches!(self, Self::Io { .. } | Self::UnexpectedEof(_))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_stream_failures_are_treated_as_lost_connections() {
+        assert!(CodexError::UnexpectedEof("thread/read").is_connection_lost());
+        assert!(CodexError::io("read from", io::Error::other("closed")).is_connection_lost());
+        assert!(
+            !CodexError::Server {
+                method: "thread/read",
+                code: -1,
+                message: "missing".to_owned(),
+            }
+            .is_connection_lost()
+        );
+    }
 }

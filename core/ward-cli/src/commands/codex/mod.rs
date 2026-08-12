@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use ward_codex::{CodexClient, ThreadItem, ThreadListOptions, UserInput};
+use ward_codex::{CodexClient, CodexHistorySession, ThreadItem, ThreadListOptions, UserInput};
 
 mod watch;
 
@@ -29,12 +29,23 @@ pub(crate) struct CodexArguments {
 impl CodexArguments {
     pub(crate) fn run(self, output: &mut dyn Write) -> CommandResult {
         let executable = resolve_codex_executable(self.executable);
-        let mut client = CodexClient::spawn(executable)?;
         match self.command {
-            CodexCommand::Check => check(&mut client, output),
-            CodexCommand::List(arguments) => list(&mut client, arguments, output),
-            CodexCommand::Read { thread_id } => read(&mut client, &thread_id, output),
-            CodexCommand::Watch(arguments) => watch::run(&mut client, arguments, output),
+            CodexCommand::Check => {
+                let mut client = CodexClient::spawn(executable)?;
+                check(&mut client, output)
+            }
+            CodexCommand::List(arguments) => {
+                let mut client = CodexClient::spawn(executable)?;
+                list(&mut client, arguments, output)
+            }
+            CodexCommand::Read { thread_id } => {
+                let mut client = CodexClient::spawn(executable)?;
+                read(&mut client, &thread_id, output)
+            }
+            CodexCommand::Watch(arguments) => {
+                let mut session = CodexHistorySession::spawn(executable)?;
+                watch::run(&mut session, arguments, output)
+            }
         }
     }
 }

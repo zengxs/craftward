@@ -9,11 +9,13 @@
 
 mod client;
 mod error;
+mod history;
 mod model;
 mod protocol;
 
 pub use client::{CodexClient, ThreadListOptions};
 pub use error::CodexError;
+pub use history::{CodexHistorySession, ThreadPoll};
 pub use model::{
     AgentMessagePhase, ServerInfo, Thread, ThreadItem, ThreadPage, ThreadSummary, Turn, TurnStatus,
     UserInput,

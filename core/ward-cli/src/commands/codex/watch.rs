@@ -9,12 +9,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::Args;
 use ward_codex::{
-    AgentMessagePhase, CodexClient, CodexError, Thread, ThreadItem, ThreadListOptions, UserInput,
+    AgentMessagePhase, CodexHistorySession, Thread, ThreadItem, ThreadPoll, UserInput,
 };
 
 use super::CommandResult;
-
-const WATCH_LIST_LIMIT: u32 = 100;
 
 #[derive(Debug, Args)]
 pub(super) struct WatchArguments {
@@ -28,14 +26,8 @@ pub(super) struct WatchArguments {
     polls: Option<NonZeroU32>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct ThreadObservation {
-    state_database_updated_at_unix_seconds: Option<i64>,
-    thread: Thread,
-}
-
 pub(super) fn run(
-    client: &mut CodexClient,
+    session: &mut CodexHistorySession,
     arguments: WatchArguments,
     output: &mut dyn Write,
 ) -> CommandResult {
@@ -50,10 +42,20 @@ pub(super) fn run(
     )?;
 
     loop {
-        let observation = observe_thread(client, &arguments.thread_id)?;
-        if previous.as_ref() != Some(&observation) {
-            display_observation(previous.as_ref(), &observation, output)?;
-            previous = Some(observation);
+        let current = match session.poll_thread(&arguments.thread_id)? {
+            ThreadPoll::Baseline(thread) => {
+                display_snapshot("baseline", None, &thread, output)?;
+                Some(thread)
+            }
+            ThreadPoll::Changed(thread) => {
+                display_snapshot("change", previous.as_ref(), &thread, output)?;
+                Some(thread)
+            }
+            ThreadPoll::Unchanged => None,
+            _ => None,
+        };
+        if current.is_some() {
+            previous = current;
         }
 
         if let Some(remaining) = polls_remaining.as_mut() {
@@ -68,29 +70,10 @@ pub(super) fn run(
     Ok(())
 }
 
-fn observe_thread(
-    client: &mut CodexClient,
-    thread_id: &str,
-) -> Result<ThreadObservation, CodexError> {
-    let page = client.list_threads(&ThreadListOptions {
-        limit: Some(WATCH_LIST_LIMIT),
-        ..ThreadListOptions::default()
-    })?;
-    let state_database_updated_at_unix_seconds = page
-        .threads
-        .iter()
-        .find(|summary| summary.id == thread_id)
-        .map(|summary| summary.updated_at_unix_seconds);
-    let thread = client.read_thread(thread_id)?;
-    Ok(ThreadObservation {
-        state_database_updated_at_unix_seconds,
-        thread,
-    })
-}
-
-fn display_observation(
-    previous: Option<&ThreadObservation>,
-    current: &ThreadObservation,
+fn display_snapshot(
+    label: &str,
+    previous: Option<&Thread>,
+    current: &Thread,
     output: &mut dyn Write,
 ) -> io::Result<()> {
     let observed_at_unix_milliseconds = SystemTime::now()
@@ -98,36 +81,26 @@ fn display_observation(
         .unwrap_or_default()
         .as_millis();
     let item_count = current
-        .thread
         .turns
         .iter()
         .map(|turn| turn.items.len())
         .sum::<usize>();
-    let state_database_updated_at = current
-        .state_database_updated_at_unix_seconds
-        .map_or_else(|| "not-listed".to_owned(), |value| value.to_string());
-    let label = if previous.is_some() {
-        "change"
-    } else {
-        "baseline"
-    };
     writeln!(
         output,
-        "[{observed_at_unix_milliseconds}] {label}: state-db-updated={state_database_updated_at} history-updated={} turns={} items={item_count}",
-        current.thread.summary.updated_at_unix_seconds,
-        current.thread.turns.len()
+        "[{observed_at_unix_milliseconds}] {label}: history-updated={} turns={} items={item_count}",
+        current.summary.updated_at_unix_seconds,
+        current.turns.len()
     )?;
 
     let Some(previous) = previous else {
         return Ok(());
     };
     let previous_turns = previous
-        .thread
         .turns
         .iter()
         .map(|turn| (turn.id.as_str(), &turn.status))
         .collect::<HashMap<_, _>>();
-    for turn in &current.thread.turns {
+    for turn in &current.turns {
         match previous_turns.get(turn.id.as_str()) {
             None => writeln!(output, "  new turn {} status={:?}", turn.id, turn.status)?,
             Some(status) if **status != turn.status => writeln!(
@@ -140,13 +113,12 @@ fn display_observation(
     }
 
     let previous_items = previous
-        .thread
         .turns
         .iter()
         .flat_map(|turn| &turn.items)
         .filter_map(|item| item_id(item).map(|id| (id, item)))
         .collect::<HashMap<_, _>>();
-    for item in current.thread.turns.iter().flat_map(|turn| &turn.items) {
+    for item in current.turns.iter().flat_map(|turn| &turn.items) {
         let Some(id) = item_id(item) else {
             continue;
         };
@@ -248,7 +220,7 @@ mod tests {
 
     use super::*;
 
-    fn observed_thread(agent_text: &str, include_new_message: bool) -> ThreadObservation {
+    fn observed_thread(agent_text: &str, include_new_message: bool) -> Thread {
         let mut items = vec![ThreadItem::AgentMessage {
             id: "agent-1".to_owned(),
             text: agent_text.to_owned(),
@@ -260,23 +232,20 @@ mod tests {
                 content: vec![UserInput::Text("Continue".to_owned())],
             });
         }
-        ThreadObservation {
-            state_database_updated_at_unix_seconds: Some(20),
-            thread: Thread {
-                summary: ThreadSummary {
-                    id: "thread-1".to_owned(),
-                    name: Some("Example".to_owned()),
-                    preview: "Hello".to_owned(),
-                    cwd: PathBuf::from("/workspace"),
-                    created_at_unix_seconds: 10,
-                    updated_at_unix_seconds: 20,
-                },
-                turns: vec![Turn {
-                    id: "turn-1".to_owned(),
-                    status: TurnStatus::InProgress,
-                    items,
-                }],
+        Thread {
+            summary: ThreadSummary {
+                id: "thread-1".to_owned(),
+                name: Some("Example".to_owned()),
+                preview: "Hello".to_owned(),
+                cwd: PathBuf::from("/workspace"),
+                created_at_unix_seconds: 10,
+                updated_at_unix_seconds: 20,
             },
+            turns: vec![Turn {
+                id: "turn-1".to_owned(),
+                status: TurnStatus::InProgress,
+                items,
+            }],
         }
     }
 
@@ -286,7 +255,7 @@ mod tests {
         let current = observed_thread("Working on it", true);
         let mut output = Vec::new();
 
-        display_observation(Some(&previous), &current, &mut output).unwrap();
+        display_snapshot("change", Some(&previous), &current, &mut output).unwrap();
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("changed agent-message agent-1"));
