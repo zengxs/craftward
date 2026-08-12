@@ -11,6 +11,8 @@ use ward_codex::{
 
 use crate::{WardError, write_error};
 
+mod observer;
+
 mod wire {
     include!(concat!(env!("OUT_DIR"), "/ward.codex.v1.rs"));
 }
@@ -158,45 +160,6 @@ pub unsafe extern "C" fn ward_core_codex_list_threads(
             threads: page.threads.into_iter().map(Into::into).collect(),
             next_cursor: page.next_cursor,
         }),
-        Err(error) => {
-            // SAFETY: The caller supplied the optional error output pointer.
-            unsafe { write_error(output_error, error.to_string()) };
-            std::ptr::null_mut()
-        }
-    }
-}
-
-/// Loads and serializes the persisted conversation for one Codex thread.
-///
-/// # Safety
-///
-/// `executable` and `thread_id` must point to NUL-terminated strings.
-/// `output_error`, when non-null, must be writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_read_thread(
-    executable: *const c_char,
-    thread_id: *const c_char,
-    output_error: *mut *mut WardError,
-) -> *mut WardBuffer {
-    // SAFETY: The caller supplied the optional error output pointer.
-    unsafe { clear_error(output_error) };
-    // SAFETY: The private C interface requires the documented string pointers.
-    let Some(executable) =
-        (unsafe { required_string(executable, "the Codex executable", output_error) })
-    else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: The private C interface requires the documented string pointers.
-    let Some(thread_id) =
-        (unsafe { required_string(thread_id, "the Codex thread identifier", output_error) })
-    else {
-        return std::ptr::null_mut();
-    };
-
-    let result = CodexClient::spawn(PathBuf::from(executable))
-        .and_then(|mut client| client.read_thread(&thread_id));
-    match result {
-        Ok(thread) => serialized_buffer(&wire::Conversation::from(thread)),
         Err(error) => {
             // SAFETY: The caller supplied the optional error output pointer.
             unsafe { write_error(output_error, error.to_string()) };

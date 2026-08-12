@@ -8,22 +8,24 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QFutureWatcher>
+#include <QMetaObject>
+#include <QThread>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtProtobuf/QProtobufSerializer>
 
 #include <memory>
+#include <utility>
+
+struct CodexHistoryCallbackContext
+{
+    CodexHistoryController* controller;
+    std::uint64_t generation;
+};
 
 namespace {
 struct ThreadLoadResult
 {
     QList<CodexThreadSummary> threads;
-    QString errorMessage;
-};
-
-struct ConversationLoadResult
-{
-    QString title;
-    QList<CodexMessage> messages;
     QString errorMessage;
 };
 
@@ -52,14 +54,21 @@ copyError(WardError* error)
 
 template<typename Message>
 QString
+deserializeBytes(QByteArrayView bytes, Message& message)
+{
+    QProtobufSerializer serializer;
+    if (message.deserialize(&serializer, bytes))
+        return {};
+    return QStringLiteral("Failed to decode Ward Core response: %1").arg(serializer.lastErrorString());
+}
+
+template<typename Message>
+QString
 deserializeBuffer(const WardBuffer* buffer, Message& message)
 {
     const auto* data = reinterpret_cast<const char*>(ward_core_buffer_data(buffer));
     const auto size = qsizetype(ward_core_buffer_size(buffer));
-    QProtobufSerializer serializer;
-    if (message.deserialize(&serializer, QByteArrayView(data, size)))
-        return {};
-    return QStringLiteral("Failed to decode Ward Core response: %1").arg(serializer.lastErrorString());
+    return deserializeBytes(QByteArrayView(data, size), message);
 }
 
 QByteArray
@@ -75,12 +84,32 @@ CodexHistoryController::CodexHistoryController(QObject* parent)
   , threadModel_(this)
   , messageModel_(this)
 {
+    ++observerGeneration_;
+    callbackContext_ = std::make_unique<CodexHistoryCallbackContext>(CodexHistoryCallbackContext{
+      .controller = this,
+      .generation = observerGeneration_,
+    });
+
+    WardError* rawError = nullptr;
+    const QByteArray executable = codexExecutable();
+    historyObserver_ = ward_core_codex_history_observer_open(
+      executable.constData(), handleHistoryEvent, callbackContext_.get(), &rawError);
+    if (historyObserver_ == nullptr) {
+        callbackContext_.reset();
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("The Codex history observer could not be started.");
+        setErrorMessage(message);
+    }
 }
 
 CodexHistoryController::~CodexHistoryController()
 {
     ++threadGeneration_;
-    ++conversationGeneration_;
+    ++observerGeneration_;
+    if (historyObserver_ != nullptr)
+        ward_core_codex_history_observer_destroy(std::exchange(historyObserver_, nullptr));
+    callbackContext_.reset();
 }
 
 CodexThreadModel*
@@ -162,9 +191,14 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
 {
     if (threadId.isEmpty())
         return;
+    if (threadId == selectedThreadId_) {
+        if (title != selectedThreadTitle_) {
+            selectedThreadTitle_ = title;
+            emit selectionChanged();
+        }
+        return;
+    }
 
-    const std::uint64_t generation = ++conversationGeneration_;
-    const QByteArray executable = codexExecutable();
     const QByteArray encodedThreadId = threadId.toUtf8();
     selectedThreadId_ = threadId;
     selectedThreadTitle_ = title;
@@ -174,30 +208,23 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     emit selectionChanged();
     emit loadingChanged();
 
-    auto* watcher = new QFutureWatcher<ConversationLoadResult>(this);
-    connect(watcher, &QFutureWatcher<ConversationLoadResult>::finished, this, [this, watcher, generation, threadId] {
-        ConversationLoadResult result = watcher->result();
-        watcher->deleteLater();
-        applyConversation(generation, threadId, result.title, std::move(result.messages), result.errorMessage);
-    });
-    watcher->setFuture(QtConcurrent::run([executable, encodedThreadId, title] {
-        WardError* rawError = nullptr;
-        std::unique_ptr<WardBuffer, BufferDeleter> payload(
-          ward_core_codex_read_thread(executable.constData(), encodedThreadId.constData(), &rawError));
-        ConversationLoadResult result{ .title = title };
-        if (payload == nullptr) {
-            result.errorMessage = copyError(rawError);
-        } else {
-            ward::codex::v1::Conversation conversation;
-            result.errorMessage = deserializeBuffer(payload.get(), conversation);
-            if (result.errorMessage.isEmpty()) {
-                if (!conversation.title().trimmed().isEmpty())
-                    result.title = conversation.title();
-                result.messages = conversation.messages();
-            }
-        }
-        return result;
-    }));
+    if (historyObserver_ == nullptr) {
+        loadingConversation_ = false;
+        if (errorMessage_.isEmpty())
+            setErrorMessage(tr("The Codex history observer is unavailable."));
+        emit loadingChanged();
+        return;
+    }
+
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_watch(historyObserver_, encodedThreadId.constData(), &rawError)) {
+        loadingConversation_ = false;
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("The Codex conversation could not be observed.");
+        setErrorMessage(message);
+        emit loadingChanged();
+    }
 }
 
 void
@@ -216,6 +243,53 @@ CodexHistoryController::setErrorMessage(const QString& message)
 }
 
 void
+CodexHistoryController::handleHistoryEvent(void* context, const WardCodexHistoryEvent* event)
+{
+    if (context == nullptr || event == nullptr || event->thread_id == nullptr)
+        return;
+
+    auto* callbackContext = static_cast<CodexHistoryCallbackContext*>(context);
+    CodexHistoryController* controller = callbackContext->controller;
+    const std::uint64_t generation = callbackContext->generation;
+    const CodexHistoryEventKind kind = [event] {
+        switch (event->kind) {
+            case WardCodexHistoryEventUpdated:
+                return CodexHistoryEventKind::Updated;
+            case WardCodexHistoryEventRecovered:
+                return CodexHistoryEventKind::Recovered;
+            case WardCodexHistoryEventError:
+                return CodexHistoryEventKind::Error;
+        }
+        return CodexHistoryEventKind::Unsupported;
+    }();
+    const QString threadId = copyString(event->thread_id);
+    QString errorMessage = copyString(event->error_message);
+    QString title;
+    QList<CodexMessage> messages;
+    if (event->conversation != nullptr) {
+        const auto* data = reinterpret_cast<const char*>(ward_core_buffer_data(event->conversation));
+        const auto size = qsizetype(ward_core_buffer_size(event->conversation));
+        ward::codex::v1::Conversation conversation;
+        errorMessage = deserializeBytes(QByteArrayView(data, size), conversation);
+        if (errorMessage.isEmpty()) {
+            title = conversation.title();
+            messages = conversation.messages();
+        }
+    }
+
+    auto apply =
+      [controller, generation, kind, threadId, title, messages = std::move(messages), errorMessage]() mutable {
+          if (controller->observerGeneration_ == generation)
+              controller->applyHistoryEvent(kind, threadId, title, std::move(messages), errorMessage);
+      };
+    if (QThread::currentThread() == controller->thread()) {
+        apply();
+    } else {
+        QMetaObject::invokeMethod(controller, std::move(apply), Qt::QueuedConnection);
+    }
+}
+
+void
 CodexHistoryController::applyThreads(std::uint64_t generation,
                                      QList<CodexThreadSummary> threads,
                                      const QString& errorMessage)
@@ -230,20 +304,41 @@ CodexHistoryController::applyThreads(std::uint64_t generation,
 }
 
 void
-CodexHistoryController::applyConversation(std::uint64_t generation,
+CodexHistoryController::applyHistoryEvent(CodexHistoryEventKind kind,
                                           const QString& threadId,
                                           const QString& title,
                                           QList<CodexMessage> messages,
                                           const QString& errorMessage)
 {
-    if (generation != conversationGeneration_ || threadId != selectedThreadId_)
+    if (threadId != selectedThreadId_)
         return;
-    loadingConversation_ = false;
-    if (errorMessage.isEmpty()) {
-        selectedThreadTitle_ = title;
-        messageModel_.replaceMessages(std::move(messages));
-        emit selectionChanged();
+
+    const bool wasLoading = std::exchange(loadingConversation_, false);
+    switch (kind) {
+        case CodexHistoryEventKind::Updated: {
+            if (!errorMessage.isEmpty()) {
+                setErrorMessage(errorMessage);
+                break;
+            }
+            if (!title.trimmed().isEmpty() && title != selectedThreadTitle_) {
+                selectedThreadTitle_ = title;
+                emit selectionChanged();
+            }
+            messageModel_.reconcileMessages(std::move(messages));
+            setErrorMessage({});
+            break;
+        }
+        case CodexHistoryEventKind::Recovered:
+            setErrorMessage({});
+            break;
+        case CodexHistoryEventKind::Error:
+            setErrorMessage(errorMessage.isEmpty() ? tr("The Codex conversation could not be observed.")
+                                                   : errorMessage);
+            break;
+        case CodexHistoryEventKind::Unsupported:
+            setErrorMessage(tr("Ward Core returned an unsupported Codex history event."));
+            break;
     }
-    setErrorMessage(errorMessage);
-    emit loadingChanged();
+    if (wasLoading)
+        emit loadingChanged();
 }

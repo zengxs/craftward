@@ -11,6 +11,19 @@
 #include <QtQml/qqmlregistration.h>
 
 #include <cstdint>
+#include <memory>
+
+struct CodexHistoryCallbackContext;
+struct WardCodexHistoryEvent;
+struct WardCodexHistoryObserver;
+
+enum class CodexHistoryEventKind
+{
+    Updated,
+    Recovered,
+    Error,
+    Unsupported,
+};
 
 class CodexHistoryController : public QObject
 {
@@ -47,9 +60,11 @@ class CodexHistoryController : public QObject
     void loadingChanged();
 
   private:
+    static void handleHistoryEvent(void* context, const WardCodexHistoryEvent* event);
+
     void setErrorMessage(const QString& message);
     void applyThreads(std::uint64_t generation, QList<CodexThreadSummary> threads, const QString& errorMessage);
-    void applyConversation(std::uint64_t generation,
+    void applyHistoryEvent(CodexHistoryEventKind kind,
                            const QString& threadId,
                            const QString& title,
                            QList<CodexMessage> messages,
@@ -57,11 +72,13 @@ class CodexHistoryController : public QObject
 
     CodexThreadModel threadModel_;
     CodexMessageModel messageModel_;
+    WardCodexHistoryObserver* historyObserver_ = nullptr;
+    std::unique_ptr<CodexHistoryCallbackContext> callbackContext_;
     QString selectedThreadId_;
     QString selectedThreadTitle_;
     QString errorMessage_;
     std::uint64_t threadGeneration_ = 0;
-    std::uint64_t conversationGeneration_ = 0;
+    std::uint64_t observerGeneration_ = 0;
     bool loadingThreads_ = false;
     bool loadingConversation_ = false;
 };

@@ -10,6 +10,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CodexError {
+    #[error("the Codex app-server operation was interrupted")]
+    Interrupted,
     #[error("failed to start Codex app-server from {executable}: {source}")]
     Spawn {
         executable: PathBuf,
@@ -67,6 +69,7 @@ mod tests {
     fn only_stream_failures_are_treated_as_lost_connections() {
         assert!(CodexError::UnexpectedEof("thread/read").is_connection_lost());
         assert!(CodexError::io("read from", io::Error::other("closed")).is_connection_lost());
+        assert!(!CodexError::Interrupted.is_connection_lost());
         assert!(
             !CodexError::Server {
                 method: "thread/read",

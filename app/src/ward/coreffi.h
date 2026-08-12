@@ -27,7 +27,37 @@ extern "C"
     typedef struct WardError WardError;
 
     WardBuffer* ward_core_codex_list_threads(const char* executable, uint32_t limit, WardError** error);
-    WardBuffer* ward_core_codex_read_thread(const char* executable, const char* thread_id, WardError** error);
+
+    typedef enum WardCodexHistoryEventKind
+    {
+        WardCodexHistoryEventUpdated = 0,
+        WardCodexHistoryEventRecovered = 1,
+        WardCodexHistoryEventError = 2,
+    } WardCodexHistoryEventKind;
+
+    typedef struct WardCodexHistoryEvent
+    {
+        WardCodexHistoryEventKind kind;
+        const char* thread_id;
+        const WardBuffer* conversation;
+        const char* error_message;
+    } WardCodexHistoryEvent;
+
+    typedef struct WardCodexHistoryObserver WardCodexHistoryObserver;
+    typedef void (*WardCodexHistoryEventCallback)(void* context, const WardCodexHistoryEvent* event);
+
+    // Event fields are borrowed until the callback returns. The callback
+    // context must remain valid until observer destruction completes.
+    WardCodexHistoryObserver* ward_core_codex_history_observer_open(const char* executable,
+                                                                    WardCodexHistoryEventCallback callback,
+                                                                    void* callback_context,
+                                                                    WardError** error);
+    bool ward_core_codex_history_observer_watch(WardCodexHistoryObserver* observer,
+                                                const char* thread_id,
+                                                WardError** error);
+    // Destruction waits for in-flight work and must not run inside the callback.
+    void ward_core_codex_history_observer_destroy(WardCodexHistoryObserver* observer);
+
     const uint8_t* ward_core_buffer_data(const WardBuffer* buffer);
     size_t ward_core_buffer_size(const WardBuffer* buffer);
     void ward_core_buffer_destroy(WardBuffer* buffer);

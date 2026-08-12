@@ -3,6 +3,7 @@
 
 #include "ward/codex/codexmessagemodel.h"
 
+#include <algorithm>
 #include <utility>
 
 CodexMessageModel::CodexMessageModel(QObject* parent)
@@ -56,6 +57,56 @@ CodexMessageModel::replaceMessages(QList<CodexMessage> messages)
     beginResetModel();
     messages_ = std::move(messages);
     endResetModel();
+}
+
+void
+CodexMessageModel::reconcileMessages(QList<CodexMessage> messages)
+{
+    const qsizetype sharedSize = std::min(messages_.size(), messages.size());
+    qsizetype commonPrefix = 0;
+    while (commonPrefix < sharedSize && !messages_.at(commonPrefix).messageId().isEmpty() &&
+           messages_.at(commonPrefix).messageId() == messages.at(commonPrefix).messageId()) {
+        ++commonPrefix;
+    }
+
+    if (commonPrefix != sharedSize) {
+        replaceMessages(std::move(messages));
+        return;
+    }
+
+    qsizetype firstChanged = -1;
+    qsizetype lastChanged = -1;
+    for (qsizetype index = 0; index < commonPrefix; ++index) {
+        const CodexMessage& replacement = messages.at(index);
+        CodexMessage& current = messages_[index];
+        if (current.role() == replacement.role() && current.phase() == replacement.phase() &&
+            current.text() == replacement.text()) {
+            continue;
+        }
+        current = replacement;
+        if (firstChanged < 0)
+            firstChanged = index;
+        lastChanged = index;
+    }
+    if (firstChanged >= 0) {
+        emit dataChanged(
+          this->index(firstChanged), this->index(lastChanged), { FromUserRole, CommentaryRole, TextRole });
+    }
+
+    if (messages.size() > messages_.size()) {
+        const qsizetype first = messages_.size();
+        const qsizetype last = messages.size() - 1;
+        beginInsertRows({}, first, last);
+        for (qsizetype index = first; index <= last; ++index)
+            messages_.append(std::move(messages[index]));
+        endInsertRows();
+    } else if (messages.size() < messages_.size()) {
+        const qsizetype first = messages.size();
+        const qsizetype last = messages_.size() - 1;
+        beginRemoveRows({}, first, last);
+        messages_.remove(first, messages_.size() - first);
+        endRemoveRows();
+    }
 }
 
 void

@@ -32,9 +32,11 @@ class CodexMessageModel : public QAbstractListModel
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
-    void replaceMessages(QList<CodexMessage> messages);
+    void reconcileMessages(QList<CodexMessage> messages);
     void clear();
 
   private:
+    void replaceMessages(QList<CodexMessage> messages);
+
     QList<CodexMessage> messages_;
 };
