@@ -4,6 +4,9 @@ qt_add_executable(Craftward
     "${CRAFTWARD_APPLICATION_ICON_PROVIDER_SOURCE}"
 )
 
+qt_add_resources(craftward_legal_resources "${CRAFTWARD_LEGAL_QRC}")
+target_sources(Craftward PRIVATE ${craftward_legal_resources})
+
 set_source_files_properties(
     "${CRAFTWARD_ENTITLEMENTS_FILE}"
     PROPERTIES HEADER_FILE_ONLY TRUE

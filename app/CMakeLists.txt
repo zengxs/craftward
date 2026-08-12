@@ -72,6 +72,18 @@ qt_standard_project_setup(REQUIRES 6.11)
 
 set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
 
+set(CRAFTWARD_LEGAL_QRC
+    "${CMAKE_BINARY_DIR}/generated/legal/legal.qrc"
+    CACHE FILEPATH "Generated Craftward legal resource collection"
+)
+if(NOT EXISTS "${CRAFTWARD_LEGAL_QRC}")
+    message(FATAL_ERROR
+        "Generated legal resources were not found. "
+        "Run `task licenses:generate OUTPUT_DIR=${CMAKE_BINARY_DIR}/generated/legal` "
+        "before configuring the application."
+    )
+endif()
+
 add_library(Ward::Core STATIC IMPORTED GLOBAL)
 set_target_properties(Ward::Core PROPERTIES
     IMPORTED_LOCATION

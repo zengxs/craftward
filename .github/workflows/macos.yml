@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   test:
-    name: Test Rust workspace
+    name: Rust tests
     runs-on: macos-26
     timeout-minutes: 15
 
@@ -27,9 +27,14 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Test Rust workspace
+      - name: Test core
         working-directory: core
         run: cargo test --workspace --all-targets --locked
+
+      - name: Test xtask
+        run: |
+          cargo test --manifest-path xtask/Cargo.toml --all-targets --locked
+          cargo run --manifest-path xtask/Cargo.toml --locked -- licenses check
 
   build:
     name: Build universal DMG
@@ -56,7 +61,7 @@ jobs:
           aqt install-qt \
             --outputdir "$HOME/Library/Qt" \
             mac desktop 6.11.1 clang_64 \
-            -m qtgrpc qtimageformats
+            -m qtgrpc qtimageformats qttasktree
           echo "QT6_ROOT=$HOME/Library/Qt/6.11.1/macos" >> "$GITHUB_ENV"
 
       - name: Build and package

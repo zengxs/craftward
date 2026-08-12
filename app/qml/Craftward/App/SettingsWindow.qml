@@ -170,7 +170,7 @@ ApplicationWindow {
         id: applicationLicenseDialog
 
         documentTitle: qsTr("Craftward License")
-        documentUri: "qrc:///legal/GPL-3.0.txt"
+        documentUri: "qrc:///legal/application.txt"
     }
 
     ThirdPartyLicensesDialog {

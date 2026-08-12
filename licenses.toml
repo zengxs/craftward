@@ -1,0 +1,98 @@
+spdx-license-list-version = "3.28.0"
+
+[application]
+license-file = "LICENSE.md"
+
+[[component]]
+name = "anyhow"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/dtolnay/anyhow/1dbe1862aae650423e3361fbd20b7d17c5109cc3a/LICENSE-MIT"
+website = "https://github.com/dtolnay/anyhow"
+
+[[component]]
+name = "cc"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/rust-lang/cc-rs/a91e05ec40f26d4637d4bff9e9764221d0a59dd8/LICENSE-MIT"
+website = "https://github.com/rust-lang/cc-rs"
+
+[[component]]
+name = "clap"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/clap-rs/clap/4a622b4340d5e1fffff60c0ecefdc6882f738159/LICENSE-MIT"
+website = "https://github.com/clap-rs/clap"
+
+[[component]]
+name = "Lilex"
+spdx-identifier = "OFL-1.1"
+license-url = "https://raw.githubusercontent.com/mishamyrt/Lilex/43cbe3f9e5b9214fdcf48d22fddcbb84d48c65cf/OFL.txt"
+website = "https://github.com/mishamyrt/Lilex"
+
+[[component]]
+name = "Phosphor Icons"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/phosphor-icons/core/2b75f3ad12b420c9504ef05df8d2564a28f8500e/LICENSE"
+website = "https://phosphoricons.com/"
+notice-text = '''
+Craftward uses icons from the Phosphor Icons project.
+
+Phosphor Icons project:
+https://phosphoricons.com/
+'''
+
+[[component]]
+name = "prost"
+spdx-identifier = "Apache-2.0"
+website = "https://github.com/tokio-rs/prost"
+
+[[component]]
+name = "prost-build"
+spdx-identifier = "Apache-2.0"
+website = "https://github.com/tokio-rs/prost"
+
+[[component]]
+name = "Qt"
+spdx-identifier = "GPL-3.0-only"
+website = "https://www.qt.io/"
+notice-text = '''
+Craftward uses the Qt framework under the GNU General Public License,
+version 3.
+
+Qt licensing information:
+https://www.qt.io/licensing/
+'''
+
+[[component]]
+name = "Scintilla"
+spdx-identifier = "HPND"
+license-file = "app/third_party/scintilla/License.txt"
+website = "https://www.scintilla.org/"
+
+[[component]]
+name = "serde"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/serde-rs/serde/7fc3b4c30c94f73a96ebd1553f2b090d928fc3a8/LICENSE-MIT"
+website = "https://github.com/serde-rs/serde"
+
+[[component]]
+name = "serde_json"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/serde-rs/json/de8500740cdcabffb9734f503e4889def823cf10/LICENSE-MIT"
+website = "https://github.com/serde-rs/json"
+
+[[component]]
+name = "serde_with"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/jonasbb/serde_with/88f576a17c5cd45cea6a30252ef10653dde69fa8/LICENSE-MIT"
+website = "https://github.com/jonasbb/serde_with"
+
+[[component]]
+name = "thiserror"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/dtolnay/thiserror/b1d5db5e039275d95bf7536a2b2192aeb4dc28bf/LICENSE-MIT"
+website = "https://github.com/dtolnay/thiserror"
+
+[[component]]
+name = "uuid"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/uuid-rs/uuid/6a8aeab3d02838f6fef71e69cdfda963e8c4158b/LICENSE-MIT"
+website = "https://github.com/uuid-rs/uuid"
