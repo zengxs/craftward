@@ -23,3 +23,37 @@ New commit messages must follow
 - Mark a breaking change with `!` before the colon or a `BREAKING CHANGE:`
   footer, and explain the impact in the body or footer.
 - Keep each commit focused on one coherent change.
+
+### AI Assistance
+
+Reserve authorship and human-attestation trailers, including
+`Co-authored-by`, `Signed-off-by`, `Reviewed-by`, and `Tested-by`, for human
+contributors.
+
+When an AI coding agent materially contributes to a commit, add one trailer
+for each materially involved agent:
+
+```
+Assisted-by: <agent>:<model>[:<reasoning-effort>]
+```
+
+- Write the agent identifier in lowercase kebab case, such as `codex` or
+  `github-copilot`.
+- Use the exact model identifier reported by the agent.
+- Include the optional reasoning effort only when the agent reports the
+  effective setting. Use one of `none`, `low`, `medium`, `high`, `xhigh`, or
+  `max`; do not infer an unavailable setting.
+- Treat assistance as material when it shapes the implementation, design,
+  tests, documentation, or commit message. The trailer is not required for
+  trivial completion, mechanical formatting or renaming, or spelling and
+  grammar correction.
+- Review and understand the entire change, verify its provenance and
+  licensing, run appropriate tests, and remain responsible for the
+  contribution.
+
+For example, a commit materially assisted by Codex using GPT-5.6 Sol with max
+reasoning effort uses:
+
+```
+Assisted-by: codex:gpt-5.6-sol:max
+```
