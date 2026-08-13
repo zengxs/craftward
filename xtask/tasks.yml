@@ -1,0 +1,30 @@
+version: "3"
+
+tasks:
+  format:cargo:
+    desc: Format Cargo files
+    internal: true
+    cmds:
+      - cargo fmt
+
+  licenses:fetch:
+    desc: Fetch pinned third-party license texts
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - cargo run --manifest-path xtask/Cargo.toml --locked -- licenses fetch
+
+  licenses:generate:
+    desc: Generate application legal resources without network access
+    dir: "{{.ROOT_DIR}}"
+    vars:
+      OUTPUT_DIR: '{{default "app/build/generated/legal" .OUTPUT_DIR}}'
+    cmds:
+      - >-
+        cargo run --manifest-path xtask/Cargo.toml --locked --
+        licenses generate --output "{{.OUTPUT_DIR}}"
+
+  licenses:check:
+    desc: Validate application and third-party license sources
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - cargo run --manifest-path xtask/Cargo.toml --locked -- licenses check

@@ -73,7 +73,7 @@ set(CRAFTWARD_LEGAL_QRC
 if(NOT EXISTS "${CRAFTWARD_LEGAL_QRC}")
     message(FATAL_ERROR
         "Generated legal resources were not found. "
-        "Run `task licenses:generate OUTPUT_DIR=${CMAKE_BINARY_DIR}/generated/legal` "
+        "Run `task xtask:licenses:generate OUTPUT_DIR=${CMAKE_BINARY_DIR}/generated/legal` "
         "before configuring the application."
     )
 endif()

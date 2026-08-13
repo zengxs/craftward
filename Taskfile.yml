@@ -14,6 +14,10 @@ includes:
     taskfile: ./app/tasks.yml
     dir: ./app
 
+  xtask:
+    taskfile: ./xtask/tasks.yml
+    dir: ./xtask
+
 tasks:
   default:
     silent: true
@@ -26,14 +30,8 @@ tasks:
     cmds:
       - task: format:clang
       - task: core:format:cargo
-      - task: format:xtask
       - task: app:format:qml
-
-  format:xtask:
-    desc: Format xtask Rust source code
-    internal: true
-    cmds:
-      - cargo fmt --manifest-path xtask/Cargo.toml
+      - task: xtask:format:cargo
 
   format:clang:
     desc: Format source code with clang-format
@@ -56,22 +54,3 @@ tasks:
         | xargs -0 sh -c
         'for path do test ! -f "$path" || clang-format -i "$path" || exit; done'
         sh
-
-  licenses:fetch:
-    desc: Fetch pinned third-party license texts
-    cmds:
-      - cargo run --manifest-path xtask/Cargo.toml --locked -- licenses fetch
-
-  licenses:generate:
-    desc: Generate application legal resources without network access
-    vars:
-      OUTPUT_DIR: '{{default "app/build/generated/legal" .OUTPUT_DIR}}'
-    cmds:
-      - >-
-        cargo run --manifest-path xtask/Cargo.toml --locked --
-        licenses generate --output "{{.OUTPUT_DIR}}"
-
-  licenses:check:
-    desc: Validate application and third-party license sources
-    cmds:
-      - cargo run --manifest-path xtask/Cargo.toml --locked -- licenses check

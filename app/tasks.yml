@@ -40,7 +40,7 @@ tasks:
     requires:
       vars: [QT6_ROOT]
     deps:
-      - task: :licenses:generate
+      - task: :xtask:licenses:generate
         vars:
           OUTPUT_DIR: "app/{{.BUILD_DIR}}/generated/legal"
     env:
