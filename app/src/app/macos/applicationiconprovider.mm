@@ -1,4 +1,7 @@
-#include "../applicationiconprovider.h"
+// Copyright (C) 2026 Xiangsong Zeng
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include "applicationiconprovider.h"
 
 #import <AppKit/AppKit.h>
 

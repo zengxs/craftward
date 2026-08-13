@@ -39,12 +39,6 @@ if(APPLE)
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Bold.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-BoldItalic.ttf"
     )
-    set(CRAFTWARD_APPLICATION_ICON_PROVIDER_SOURCE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/applicationiconprovider.mm"
-    )
-    set(CRAFTWARD_APPLICATION_FONTS_SOURCE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/applicationfonts.mm"
-    )
     find_library(CRAFTWARD_APPKIT_FRAMEWORK AppKit REQUIRED)
     find_library(CRAFTWARD_COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(CRAFTWARD_CORE_TEXT_FRAMEWORK CoreText REQUIRED)

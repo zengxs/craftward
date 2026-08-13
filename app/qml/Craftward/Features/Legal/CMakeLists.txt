@@ -2,8 +2,8 @@ qt_add_qml_module(CraftwardFeaturesLegal
     STATIC
     URI Craftward.Features.Legal
     SOURCES
-        ../../../../src/resourcetextreader.cpp
-        ../../../../src/resourcetextreader.h
+        "${PROJECT_SOURCE_DIR}/src/features/legal/resourcetextreader.cpp"
+        "${PROJECT_SOURCE_DIR}/src/features/legal/resourcetextreader.h"
     QML_FILES
         LegalTextView.qml
         LicenseTextDialog.qml
@@ -12,7 +12,7 @@ qt_add_qml_module(CraftwardFeaturesLegal
 
 target_include_directories(CraftwardFeaturesLegal
     PRIVATE
-        ../../../../src
+        "${PROJECT_SOURCE_DIR}/src/features/legal"
 )
 
 target_link_libraries(CraftwardFeaturesLegal

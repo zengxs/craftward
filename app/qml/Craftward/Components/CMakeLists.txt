@@ -2,10 +2,8 @@ qt_add_qml_module(CraftwardComponents
     STATIC
     URI Craftward.Components
     SOURCES
-        ../../../src/ui/applicationfonts.h
-        ../../../src/ui/typography.cpp
-        ../../../src/ui/typography.h
-        "${CRAFTWARD_APPLICATION_FONTS_SOURCE}"
+        "${PROJECT_SOURCE_DIR}/src/components/macos/typography.mm"
+        "${PROJECT_SOURCE_DIR}/src/components/typography.h"
     QML_FILES
         ConfirmationDialog.qml
         IconButton.qml
@@ -17,7 +15,7 @@ qt_add_qml_module(CraftwardComponents
 
 target_include_directories(CraftwardComponents
     PRIVATE
-        ../../../src/ui
+        "${PROJECT_SOURCE_DIR}/src/components"
 )
 
 target_link_libraries(CraftwardComponents

@@ -1,7 +1,7 @@
 qt_add_executable(Craftward
-    ../../../src/applicationiconprovider.h
-    ../../../src/main.cpp
-    "${CRAFTWARD_APPLICATION_ICON_PROVIDER_SOURCE}"
+    "${PROJECT_SOURCE_DIR}/src/app/applicationiconprovider.h"
+    "${PROJECT_SOURCE_DIR}/src/app/macos/applicationiconprovider.mm"
+    "${PROJECT_SOURCE_DIR}/src/app/main.cpp"
 )
 
 qt_add_resources(craftward_legal_resources "${CRAFTWARD_LEGAL_QRC}")
@@ -28,8 +28,8 @@ target_sources(Craftward PRIVATE
 qt_add_qml_module(Craftward
     URI Craftward.App
     SOURCES
-        ../../../src/applicationcontroller.cpp
-        ../../../src/applicationcontroller.h
+        "${PROJECT_SOURCE_DIR}/src/app/applicationcontroller.cpp"
+        "${PROJECT_SOURCE_DIR}/src/app/applicationcontroller.h"
     QML_FILES
         Main.qml
         MainWindow.qml
@@ -38,7 +38,8 @@ qt_add_qml_module(Craftward
 
 target_include_directories(Craftward
     PRIVATE
-        ../../../src
+        "${PROJECT_SOURCE_DIR}/src"
+        "${PROJECT_SOURCE_DIR}/src/app"
 )
 
 target_link_libraries(Craftward

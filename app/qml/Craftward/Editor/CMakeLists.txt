@@ -2,15 +2,15 @@ qt_add_qml_module(CraftwardEditor
     STATIC
     URI Craftward.Editor
     SOURCES
-        ../../../src/editor/scintillaeditorbackend.h
-        ../../../src/editor/scintillaeditorbackend.mm
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaeditorbackend.h"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaeditorbackend.mm"
     QML_FILES
         CodeEditor.qml
 )
 
 target_include_directories(CraftwardEditor
     PRIVATE
-        ../../../src/editor
+        "${PROJECT_SOURCE_DIR}/src/editor"
 )
 
 target_compile_options(CraftwardEditor

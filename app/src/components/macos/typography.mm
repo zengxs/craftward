@@ -1,16 +1,18 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "applicationfonts.h"
+#include "typography.h"
 
 #import <CoreText/CoreText.h>
 #import <Foundation/Foundation.h>
 
 #include <QDebug>
 #include <QFontDatabase>
-#include <QStringList>
 
 namespace {
+
+constexpr qreal codeFontPointSize = 13.0;
+constexpr qreal codeLineHeightScaleValue = 1.25;
 
 bool
 registerNativeFont(NSURL* fontUrl)
@@ -36,8 +38,6 @@ registerNativeFont(NSURL* fontUrl)
     return alreadyRegistered;
 }
 
-} // namespace
-
 QString
 loadApplicationMonoFont()
 {
@@ -55,9 +55,8 @@ loadApplicationMonoFont()
         const bool registeredNatively = registerNativeFont(fontUrl);
 
         const int fontId = QFontDatabase::addApplicationFont(QString::fromNSString(fontUrl.path));
-        if (fontId < 0) {
+        if (fontId < 0)
             qWarning() << "Failed to register Qt application font" << QString::fromNSString(fontUrl.path);
-        }
 
         if ([fontUrl.lastPathComponent isEqualToString:@"Lilex-Medium.ttf"]) {
             codeFontRegisteredNatively = registeredNatively;
@@ -74,4 +73,36 @@ loadApplicationMonoFont()
     }
 
     return codeFontFamily;
+}
+
+} // namespace
+
+Typography::Typography(QObject* parent)
+  : QObject(parent)
+  , m_monoFamily(loadApplicationMonoFont())
+{
+    if (m_monoFamily.isEmpty())
+        m_monoFamily = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+
+    m_codeFont.setFamily(m_monoFamily);
+    m_codeFont.setPointSizeF(codeFontPointSize);
+    m_codeFont.setWeight(QFont::Medium);
+}
+
+QString
+Typography::monoFamily() const
+{
+    return m_monoFamily;
+}
+
+QFont
+Typography::codeFont() const
+{
+    return m_codeFont;
+}
+
+qreal
+Typography::codeLineHeightScale() const
+{
+    return codeLineHeightScaleValue;
 }
