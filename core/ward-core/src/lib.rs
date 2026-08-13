@@ -4,6 +4,7 @@
 mod cli;
 mod codex;
 mod macos;
+mod runtime;
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::PathBuf;
@@ -18,6 +19,8 @@ use ward_realm_vz::{
     MacOsVirtualMachine, MacOsVirtualMachineDisplay, MacOsVirtualMachineEvent,
     MacOsVirtualMachineState, MacOsVirtualMachineStatus,
 };
+
+pub use runtime::WardRuntime;
 
 const WARD_REALM_STATE_STOPPED: i32 = 0;
 const WARD_REALM_STATE_RUNNING: i32 = 1;

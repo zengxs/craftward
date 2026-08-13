@@ -12,6 +12,8 @@ use thiserror::Error;
 pub enum CodexError {
     #[error("the Codex app-server operation was interrupted")]
     Interrupted,
+    #[error("the Codex app-server timed out while responding to {0}")]
+    TimedOut(&'static str),
     #[error("failed to start Codex app-server from {executable}: {source}")]
     Spawn {
         executable: PathBuf,
@@ -57,7 +59,10 @@ impl CodexError {
     }
 
     pub(crate) fn is_connection_lost(&self) -> bool {
-        matches!(self, Self::Io { .. } | Self::UnexpectedEof(_))
+        matches!(
+            self,
+            Self::Io { .. } | Self::UnexpectedEof(_) | Self::TimedOut(_)
+        )
     }
 
     /// Returns whether a thread resume failed because another app-server owns
@@ -83,6 +88,7 @@ mod tests {
     fn only_stream_failures_are_treated_as_lost_connections() {
         assert!(CodexError::UnexpectedEof("thread/read").is_connection_lost());
         assert!(CodexError::io("read from", io::Error::other("closed")).is_connection_lost());
+        assert!(CodexError::TimedOut("thread/read").is_connection_lost());
         assert!(!CodexError::Interrupted.is_connection_lost());
         assert!(
             !CodexError::Server {

@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::ffi::OsStr;
-use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex, Weak};
+use std::process::Stdio;
+use std::time::Duration;
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufRead, AsyncWrite, BufReader, BufWriter};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
@@ -18,70 +23,7 @@ use crate::protocol::{
 use crate::{CodexError, ServerInfo, Thread, ThreadPage, TurnStreamEvent};
 
 type AppServerConnection = Connection<BufReader<ChildStdout>, BufWriter<ChildStdin>>;
-
-#[derive(Clone, Default)]
-pub(crate) struct ProcessInterrupt {
-    inner: Arc<ProcessInterruptState>,
-}
-
-#[derive(Default)]
-struct ProcessInterruptState {
-    interrupted: std::sync::atomic::AtomicBool,
-    children: Mutex<Vec<Weak<Mutex<Child>>>>,
-}
-
-impl ProcessInterrupt {
-    pub(crate) fn interrupt(&self) {
-        self.inner
-            .interrupted
-            .store(true, std::sync::atomic::Ordering::Release);
-        let children = self
-            .inner
-            .children
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .filter_map(Weak::upgrade)
-            .collect::<Vec<_>>();
-        for child in children {
-            terminate_child(&child);
-        }
-    }
-
-    pub(crate) fn is_interrupted(&self) -> bool {
-        self.inner
-            .interrupted
-            .load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    fn register(&self, child: &Arc<Mutex<Child>>) -> bool {
-        let mut active_children = self
-            .inner
-            .children
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        active_children.retain(|child| child.strong_count() > 0);
-        active_children.push(Arc::downgrade(child));
-        let interrupted = self.is_interrupted();
-        drop(active_children);
-        if interrupted {
-            terminate_child(child);
-        }
-        interrupted
-    }
-}
-
-fn terminate_child(child: &Arc<Mutex<Child>>) {
-    let mut child = child
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return;
-    }
-    if child.kill().is_ok() {
-        let _ = child.wait();
-    }
-}
+const APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Filters and pagination controls for a thread history request.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -91,94 +33,75 @@ pub struct ThreadListOptions {
     pub archived: Option<bool>,
 }
 
-/// A synchronous client for one Codex app-server child process.
-///
-/// Calls block until the corresponding app-server response arrives. GUI callers
-/// should own the client on a worker thread rather than invoke it on the UI
-/// thread.
+/// An asynchronous client for one Codex app-server child process.
 pub struct CodexClient {
-    child: Arc<Mutex<Child>>,
+    child: Child,
     connection: Option<AppServerConnection>,
     server_info: ServerInfo,
+    cancellation: CancellationToken,
 }
 
 impl CodexClient {
     /// Starts the specified Codex executable in app-server stdio mode and
     /// completes the initialization handshake.
-    pub fn spawn(executable: impl AsRef<OsStr>) -> Result<Self, CodexError> {
-        Self::spawn_inner(executable.as_ref(), None)
+    pub async fn spawn(executable: impl AsRef<OsStr>) -> Result<Self, CodexError> {
+        Self::spawn_with_cancellation(executable, CancellationToken::new()).await
     }
 
-    pub(crate) fn spawn_interruptible(
+    pub(crate) async fn spawn_with_cancellation(
         executable: impl AsRef<OsStr>,
-        interrupt: &ProcessInterrupt,
+        cancellation: CancellationToken,
     ) -> Result<Self, CodexError> {
-        Self::spawn_inner(executable.as_ref(), Some(interrupt))
-    }
-
-    fn spawn_inner(
-        executable: &OsStr,
-        interrupt: Option<&ProcessInterrupt>,
-    ) -> Result<Self, CodexError> {
-        if interrupt.is_some_and(ProcessInterrupt::is_interrupted) {
+        if cancellation.is_cancelled() {
             return Err(CodexError::Interrupted);
         }
-        let executable = PathBuf::from(executable);
-        let child = Command::new(&executable)
+        let executable = PathBuf::from(executable.as_ref());
+        let mut child = Command::new(&executable)
             .args(["app-server", "--stdio"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|source| CodexError::Spawn {
                 executable: executable.clone(),
                 source,
             })?;
 
-        let child = Arc::new(Mutex::new(child));
-        if interrupt.is_some_and(|interrupt| interrupt.register(&child)) {
-            return Err(CodexError::Interrupted);
-        }
-
-        let setup_result = (|| {
-            let (input, output) = {
-                let mut child = child
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let input = child
-                    .stdin
-                    .take()
-                    .ok_or(CodexError::MissingPipe("standard input"))?;
-                let output = child
-                    .stdout
-                    .take()
-                    .ok_or(CodexError::MissingPipe("standard output"))?;
-                (input, output)
-            };
+        let setup_result = async {
+            let input = child
+                .stdin
+                .take()
+                .ok_or(CodexError::MissingPipe("standard input"))?;
+            let output = child
+                .stdout
+                .take()
+                .ok_or(CodexError::MissingPipe("standard output"))?;
             let mut connection = Connection::new(BufReader::new(output), BufWriter::new(input));
-            let response: InitializeResponse =
-                connection.request(INITIALIZE_METHOD, &InitializeParams::craftward())?;
-            connection.initialized()?;
+            let response: InitializeResponse = connection
+                .request(INITIALIZE_METHOD, &InitializeParams::craftward())
+                .await?;
+            connection.initialized().await?;
             Ok::<_, CodexError>((connection, ServerInfo::from(response)))
-        })();
+        };
+        let setup_result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(CodexError::Interrupted),
+            result = timeout(APP_SERVER_REQUEST_TIMEOUT, setup_result) => {
+                result.unwrap_or(Err(CodexError::TimedOut(INITIALIZE_METHOD)))
+            },
+        };
 
         match setup_result {
-            Ok(_) if interrupt.is_some_and(ProcessInterrupt::is_interrupted) => {
-                terminate_child(&child);
-                Err(CodexError::Interrupted)
-            }
             Ok((connection, server_info)) => Ok(Self {
                 child,
                 connection: Some(connection),
                 server_info,
+                cancellation,
             }),
             Err(error) => {
-                terminate_child(&child);
-                if interrupt.is_some_and(ProcessInterrupt::is_interrupted) {
-                    Err(CodexError::Interrupted)
-                } else {
-                    Err(error)
-                }
+                terminate_child(&mut child).await;
+                Err(error)
             }
         }
     }
@@ -189,14 +112,13 @@ impl CodexClient {
     }
 
     /// Lists persisted threads without triggering rollout scan-and-repair.
-    pub fn list_threads(&mut self, options: &ThreadListOptions) -> Result<ThreadPage, CodexError> {
+    pub async fn list_threads(
+        &mut self,
+        options: &ThreadListOptions,
+    ) -> Result<ThreadPage, CodexError> {
         let params =
             ThreadListParams::new(options.cursor.as_deref(), options.limit, options.archived);
-        let response: ThreadListResponse = self
-            .connection
-            .as_mut()
-            .expect("the connection exists while CodexClient is alive")
-            .request(THREAD_LIST_METHOD, &params)?;
+        let response: ThreadListResponse = self.request(THREAD_LIST_METHOD, &params).await?;
         Ok(ThreadPage {
             threads: response
                 .data
@@ -208,16 +130,12 @@ impl CodexClient {
     }
 
     /// Reads one persisted thread, including its available turns and items.
-    pub fn read_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
+    pub async fn read_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
         let params = ThreadReadParams {
             thread_id,
             include_turns: true,
         };
-        let response: ThreadReadResponse = self
-            .connection
-            .as_mut()
-            .expect("the connection exists while CodexClient is alive")
-            .request(THREAD_READ_METHOD, &params)?;
+        let response: ThreadReadResponse = self.request(THREAD_READ_METHOD, &params).await?;
         response
             .thread
             .into_thread()
@@ -228,12 +146,9 @@ impl CodexClient {
     }
 
     /// Resumes a persisted thread and subscribes this connection to its events.
-    pub fn resume_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
-        let response: ThreadResumeResponse = self
-            .connection
-            .as_mut()
-            .expect("the connection exists while CodexClient is alive")
-            .request(THREAD_RESUME_METHOD, &ThreadResumeParams { thread_id })?;
+    pub async fn resume_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
+        let params = ThreadResumeParams { thread_id };
+        let response: ThreadResumeResponse = self.request(THREAD_RESUME_METHOD, &params).await?;
         response
             .thread
             .into_thread()
@@ -248,7 +163,7 @@ impl CodexClient {
     /// Server approval requests are declined because Craftward does not expose
     /// approval controls yet. Other server requests receive an unsupported
     /// response so the app-server stream cannot remain blocked indefinitely.
-    pub fn start_text_turn(
+    pub async fn start_text_turn(
         &mut self,
         thread_id: &str,
         text: &str,
@@ -257,23 +172,58 @@ impl CodexClient {
         let connection = self
             .connection
             .as_mut()
-            .expect("the connection exists while CodexClient is alive");
-        start_text_turn_on_connection(connection, thread_id, text, &mut on_event)
+            .ok_or(CodexError::UnexpectedEof(TURN_START_METHOD))?;
+        tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => Err(CodexError::Interrupted),
+            result = start_text_turn_on_connection(connection, thread_id, text, &mut on_event) => result,
+        }
+    }
+
+    /// Terminates and reaps the app-server child process.
+    pub async fn shutdown(mut self) {
+        self.connection.take();
+        terminate_child(&mut self.child).await;
+    }
+
+    async fn request<P, T>(&mut self, method: &'static str, params: &P) -> Result<T, CodexError>
+    where
+        P: Serialize,
+        T: DeserializeOwned,
+    {
+        let cancellation = self.cancellation.clone();
+        let Some(connection) = self.connection.as_mut() else {
+            return Err(CodexError::UnexpectedEof(method));
+        };
+        let request = connection.request(method, params);
+        let result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(CodexError::Interrupted),
+            result = timeout(APP_SERVER_REQUEST_TIMEOUT, request) => {
+                result.unwrap_or(Err(CodexError::TimedOut(method)))
+            },
+        };
+        if matches!(result, Err(CodexError::TimedOut(_))) {
+            self.connection.take();
+            terminate_child(&mut self.child).await;
+        }
+        result
     }
 }
 
-fn start_text_turn_on_connection<R, W>(
+async fn start_text_turn_on_connection<R, W>(
     connection: &mut Connection<R, W>,
     thread_id: &str,
     text: &str,
     mut on_event: impl FnMut(TurnStreamEvent),
 ) -> Result<(), CodexError>
 where
-    R: BufRead,
-    W: Write,
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
 {
-    let response: TurnStartResponse =
-        connection.request(TURN_START_METHOD, &TurnStartParams::text(thread_id, text))?;
+    let response: TurnStartResponse = connection
+        .request(TURN_START_METHOD, &TurnStartParams::text(thread_id, text))
+        .await?;
     let turn = response
         .into_turn()
         .map_err(|source| CodexError::InvalidResponse {
@@ -287,7 +237,7 @@ where
     });
 
     loop {
-        match connection.next_server_message(TURN_START_METHOD)? {
+        match connection.next_server_message(TURN_START_METHOD).await? {
             ServerMessage::Notification { method, params } => {
                 let event = turn_stream_event(&method, params).map_err(|source| {
                     CodexError::InvalidResponse {
@@ -319,17 +269,21 @@ where
                     method.as_str(),
                     "item/commandExecution/requestApproval" | "item/fileChange/requestApproval"
                 ) {
-                    connection.respond_result(id, json!({ "decision": "decline" }))?;
+                    connection
+                        .respond_result(id, json!({ "decision": "decline" }))
+                        .await?;
                     on_event(TurnStreamEvent::ApprovalDeclined {
                         thread_id: request_thread_id,
                         method,
                     });
                 } else {
-                    connection.respond_error(
-                        id,
-                        -32601,
-                        format!("Craftward does not support the server request {method}"),
-                    )?;
+                    connection
+                        .respond_error(
+                            id,
+                            -32601,
+                            format!("Craftward does not support the server request {method}"),
+                        )
+                        .await?;
                     on_event(TurnStreamEvent::UnsupportedServerRequest {
                         thread_id: request_thread_id,
                         method,
@@ -340,117 +294,62 @@ where
     }
 }
 
-impl Drop for CodexClient {
-    fn drop(&mut self) {
-        // Closing stdin lets a healthy app-server observe EOF. Kill and reap the
-        // child as a bounded fallback so dropping the client never leaves it
-        // running or creates a zombie process.
-        self.connection.take();
-        terminate_child(&self.child);
+async fn terminate_child(child: &mut Child) {
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
     }
+    let _ = child.kill().await;
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead as _, BufReader, Cursor, Write as _};
+    use std::io::Cursor;
     use std::time::Duration;
 
     use super::*;
 
-    const HELPER_ENVIRONMENT_VARIABLE: &str = "CRAFTWARD_CODEX_INTERRUPT_HELPER";
-    const HELPER_READY_LINE: &str = "craftward-interrupt-helper-ready";
+    const CHILD_HELPER_ENV: &str = "WARD_CODEX_CHILD_CLEANUP_HELPER";
 
     #[test]
-    fn interrupt_helper_process() {
-        if std::env::var_os(HELPER_ENVIRONMENT_VARIABLE).is_none() {
-            return;
+    fn child_cleanup_helper() {
+        if std::env::var_os(CHILD_HELPER_ENV).is_some() {
+            std::thread::sleep(Duration::from_secs(60));
         }
-        println!("{HELPER_READY_LINE}");
-        std::io::stdout().flush().unwrap();
-        std::thread::sleep(Duration::from_secs(60));
     }
 
-    fn running_helper() -> Arc<Mutex<Child>> {
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "client::tests::interrupt_helper_process",
-                "--nocapture",
-            ])
-            .env(HELPER_ENVIRONMENT_VARIABLE, "1")
+    #[tokio::test]
+    async fn pre_cancelled_spawn_does_not_start_a_child() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let result = CodexClient::spawn_with_cancellation(
+            "/an/executable/that/does/not/exist",
+            cancellation,
+        )
+        .await;
+
+        assert!(matches!(result, Err(CodexError::Interrupted)));
+    }
+
+    #[tokio::test]
+    async fn termination_reaps_a_running_child() {
+        let executable = std::env::current_exe().unwrap();
+        let mut child = Command::new(executable)
+            .args(["--exact", "client::tests::child_cleanup_helper"])
+            .env(CHILD_HELPER_ENV, "1")
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let mut output = BufReader::new(child.stdout.take().unwrap());
-        let mut line = String::new();
-        loop {
-            line.clear();
-            assert_ne!(output.read_line(&mut line).unwrap(), 0);
-            if line.trim() == HELPER_READY_LINE {
-                break;
-            }
-        }
-        Arc::new(Mutex::new(child))
+
+        terminate_child(&mut child).await;
+
+        assert!(child.try_wait().unwrap().is_some());
     }
 
-    #[test]
-    fn interrupt_terminates_the_registered_child() {
-        let child = running_helper();
-        let interrupt = ProcessInterrupt::default();
-        assert!(!interrupt.register(&child));
-
-        interrupt.interrupt();
-
-        assert!(matches!(
-            child
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .try_wait(),
-            Ok(Some(_))
-        ));
-    }
-
-    #[test]
-    fn a_preexisting_interrupt_terminates_a_newly_registered_child() {
-        let interrupt = ProcessInterrupt::default();
-        interrupt.interrupt();
-        let child = running_helper();
-
-        assert!(interrupt.register(&child));
-        assert!(matches!(
-            child
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .try_wait(),
-            Ok(Some(_))
-        ));
-    }
-
-    #[test]
-    fn interrupt_terminates_every_registered_child() {
-        let first = running_helper();
-        let second = running_helper();
-        let interrupt = ProcessInterrupt::default();
-        assert!(!interrupt.register(&first));
-        assert!(!interrupt.register(&second));
-
-        interrupt.interrupt();
-
-        for child in [first, second] {
-            assert!(matches!(
-                child
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .try_wait(),
-                Ok(Some(_))
-            ));
-        }
-    }
-
-    #[test]
-    fn streams_a_complete_turn_in_protocol_order() {
+    #[tokio::test]
+    async fn streams_a_complete_turn_in_protocol_order() {
         let input = concat!(
             "{\"id\":1,\"result\":{\"turn\":{\"id\":\"turn-2\",\"status\":\"inProgress\",\"items\":[]}}}\n",
             "{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"startedAtMs\":0,\"item\":{\"id\":\"user-1\",\"type\":\"userMessage\",\"content\":[{\"type\":\"text\",\"text\":\"Continue\"}]}}}\n",
@@ -475,6 +374,7 @@ mod tests {
         start_text_turn_on_connection(&mut connection, "thread-1", "Continue", |event| {
             events.push(event);
         })
+        .await
         .expect("the streamed turn should complete");
 
         assert!(matches!(events[0], TurnStreamEvent::TurnStarted { .. }));

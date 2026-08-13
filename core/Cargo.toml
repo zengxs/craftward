@@ -6,6 +6,7 @@ members = [
     "ward-core",
     "ward-realm",
     "ward-realm-vz",
+    "ward-runtime",
 ]
 
 [workspace.package]
@@ -21,6 +22,7 @@ ward-codex = { path = "ward-codex" }
 ward-core = { path = "ward-core" }
 ward-realm = { path = "ward-realm" }
 ward-realm-vz = { path = "ward-realm-vz" }
+ward-runtime = { path = "ward-runtime" }
 
 # third-party crates
 anyhow = "1"
@@ -30,6 +32,8 @@ serde = "1"
 serde_json = "1"
 serde_with = "3"
 thiserror = "2"
+tokio = { version = "1.53", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 uuid = "1"
 prost = "0.14"
 prost-build = "0.14"

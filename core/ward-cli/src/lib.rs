@@ -47,12 +47,12 @@ enum Command {
 /// An invocation without a subcommand displays help successfully. Clap writes
 /// help and parse errors directly to the process streams so its normal terminal
 /// detection and color behavior remain intact.
-pub fn run<I, T>(args: I) -> i32
+pub async fn run<I, T>(args: I) -> i32
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
 {
-    run_with_output(args, ProcessOutput::new())
+    run_with_output(args, ProcessOutput::new()).await
 }
 
 /// Handles an embedded CLI invocation when arguments were supplied.
@@ -60,15 +60,15 @@ where
 /// The GUI executable calls this before constructing its GUI application. A
 /// no-argument invocation is deliberately left unhandled so normal GUI startup
 /// remains the default.
-pub fn try_run<I, T>(args: I) -> CliDisposition
+pub async fn try_run<I, T>(args: I) -> CliDisposition
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
 {
-    try_run_with_output(args, ProcessOutput::new())
+    try_run_with_output(args, ProcessOutput::new()).await
 }
 
-fn run_with_output<I, T, O>(args: I, mut output: O) -> i32
+async fn run_with_output<I, T, O>(args: I, mut output: O) -> i32
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
@@ -78,10 +78,10 @@ where
     if args.len() <= 1 {
         return write_help(&args, &mut output);
     }
-    run_arguments(args, &mut output)
+    run_arguments(args, &mut output).await
 }
 
-fn try_run_with_output<I, T, O>(args: I, mut output: O) -> CliDisposition
+async fn try_run_with_output<I, T, O>(args: I, mut output: O) -> CliDisposition
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
@@ -91,7 +91,7 @@ where
     if args.len() <= 1 {
         return CliDisposition::NotRequested;
     }
-    CliDisposition::Exit(run_arguments(args, &mut output))
+    CliDisposition::Exit(run_arguments(args, &mut output).await)
 }
 
 fn collect_arguments<I, T>(args: I) -> Vec<OsString>
@@ -102,7 +102,7 @@ where
     args.into_iter().map(Into::into).collect()
 }
 
-fn run_arguments(args: Vec<OsString>, output: &mut impl CliOutput) -> i32 {
+async fn run_arguments(args: Vec<OsString>, output: &mut impl CliOutput) -> i32 {
     let cli = match parse_arguments(args) {
         Ok(cli) => cli,
         Err(error) => {
@@ -116,7 +116,7 @@ fn run_arguments(args: Vec<OsString>, output: &mut impl CliOutput) -> i32 {
     };
 
     let result = match cli.command {
-        Command::Codex(arguments) => arguments.run(output.stdout()),
+        Command::Codex(arguments) => arguments.run(output.stdout()).await,
     };
     match result {
         Ok(()) => 0,
@@ -225,15 +225,15 @@ mod tests {
         }
     }
 
-    fn run_captured<I, T>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32
+    async fn run_captured<I, T>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString>,
     {
-        run_with_output(args, CapturedOutput { stdout, stderr })
+        run_with_output(args, CapturedOutput { stdout, stderr }).await
     }
 
-    fn try_run_captured<I, T>(
+    async fn try_run_captured<I, T>(
         args: I,
         stdout: &mut dyn Write,
         stderr: &mut dyn Write,
@@ -242,27 +242,27 @@ mod tests {
         I: IntoIterator<Item = T>,
         T: Into<OsString>,
     {
-        try_run_with_output(args, CapturedOutput { stdout, stderr })
+        try_run_with_output(args, CapturedOutput { stdout, stderr }).await
     }
 
-    #[test]
-    fn leaves_an_argument_free_embedded_invocation_for_the_gui() {
+    #[tokio::test]
+    async fn leaves_an_argument_free_embedded_invocation_for_the_gui() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        let disposition = try_run_captured(["Craftward"], &mut stdout, &mut stderr);
+        let disposition = try_run_captured(["Craftward"], &mut stdout, &mut stderr).await;
 
         assert_eq!(disposition, CliDisposition::NotRequested);
         assert!(stdout.is_empty());
         assert!(stderr.is_empty());
     }
 
-    #[test]
-    fn handles_embedded_help_without_starting_a_command() {
+    #[tokio::test]
+    async fn handles_embedded_help_without_starting_a_command() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        let disposition = try_run_captured(["Craftward", "--help"], &mut stdout, &mut stderr);
+        let disposition = try_run_captured(["Craftward", "--help"], &mut stdout, &mut stderr).await;
 
         assert_eq!(disposition, CliDisposition::Exit(0));
         assert!(
@@ -273,24 +273,25 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
-    #[test]
-    fn displays_help_for_an_argument_free_standalone_invocation() {
+    #[tokio::test]
+    async fn displays_help_for_an_argument_free_standalone_invocation() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        let exit_code = run_captured(["ward"], &mut stdout, &mut stderr);
+        let exit_code = run_captured(["ward"], &mut stdout, &mut stderr).await;
 
         assert_eq!(exit_code, 0);
         assert!(String::from_utf8(stdout).unwrap().contains("Usage: ward"));
         assert!(stderr.is_empty());
     }
 
-    #[test]
-    fn uses_the_actual_embedded_executable_name_for_version_output() {
+    #[tokio::test]
+    async fn uses_the_actual_embedded_executable_name_for_version_output() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        let disposition = try_run_captured(["Craftward", "--version"], &mut stdout, &mut stderr);
+        let disposition =
+            try_run_captured(["Craftward", "--version"], &mut stdout, &mut stderr).await;
 
         assert_eq!(disposition, CliDisposition::Exit(0));
         assert_eq!(
@@ -300,12 +301,13 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
-    #[test]
-    fn handles_invalid_embedded_arguments_as_a_cli_error() {
+    #[tokio::test]
+    async fn handles_invalid_embedded_arguments_as_a_cli_error() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        let disposition = try_run_captured(["Craftward", "--unknown"], &mut stdout, &mut stderr);
+        let disposition =
+            try_run_captured(["Craftward", "--unknown"], &mut stdout, &mut stderr).await;
 
         assert_eq!(disposition, CliDisposition::Exit(2));
         assert!(stdout.is_empty());

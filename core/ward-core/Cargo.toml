@@ -11,10 +11,12 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 prost = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 ward-cli = { workspace = true }
 ward-codex = { workspace = true }
 ward-realm = { workspace = true }
 ward-realm-vz = { workspace = true }
+ward-runtime = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }

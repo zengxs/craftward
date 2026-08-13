@@ -4,16 +4,18 @@
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
-use crate::client::ProcessInterrupt;
+use tokio_util::sync::CancellationToken;
+
 use crate::{CodexClient, CodexError, Thread, ThreadListOptions, ThreadPage, TurnStreamEvent};
 
 /// A cloneable handle that interrupts in-flight Codex session operations.
 ///
-/// Cancellation is permanent for the associated session. It terminates every
-/// currently owned app-server child process so blocked stream reads return.
+/// Cancellation is permanent for the associated session. Every in-flight
+/// operation observes this token so its owner can proceed to asynchronous
+/// shutdown of the app-server child.
 #[derive(Clone, Default)]
 pub struct CodexHistoryCancellation {
-    process: ProcessInterrupt,
+    token: CancellationToken,
 }
 
 impl CodexHistoryCancellation {
@@ -23,12 +25,16 @@ impl CodexHistoryCancellation {
     }
 
     pub fn cancel(&self) {
-        self.process.interrupt();
+        self.token.cancel();
     }
 
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.process.is_interrupted()
+        self.token.is_cancelled()
+    }
+
+    pub async fn cancelled(&self) {
+        self.token.cancelled().await;
     }
 }
 
@@ -131,18 +137,19 @@ impl ThreadPageTracker {
 
 impl CodexHistorySession {
     /// Starts an app-server child process for a history observation session.
-    pub fn spawn(executable: impl AsRef<OsStr>) -> Result<Self, CodexError> {
-        Self::spawn_with_cancellation(executable, CodexHistoryCancellation::new())
+    pub async fn spawn(executable: impl AsRef<OsStr>) -> Result<Self, CodexError> {
+        Self::spawn_with_cancellation(executable, CodexHistoryCancellation::new()).await
     }
 
     /// Starts a history session controlled by a pre-created cancellation
     /// handle.
-    pub fn spawn_with_cancellation(
+    pub async fn spawn_with_cancellation(
         executable: impl AsRef<OsStr>,
         cancellation: CodexHistoryCancellation,
     ) -> Result<Self, CodexError> {
         let executable = PathBuf::from(executable.as_ref());
-        let client = CodexClient::spawn_interruptible(&executable, &cancellation.process)?;
+        let client =
+            CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone()).await?;
         Ok(Self {
             executable,
             cancellation,
@@ -153,11 +160,21 @@ impl CodexHistorySession {
     }
 
     /// Lists persisted threads and reports whether the complete page changed.
-    pub fn poll_thread_page(
+    pub async fn poll_thread_page(
         &mut self,
         options: &ThreadListOptions,
     ) -> Result<ThreadPagePoll, CodexError> {
-        let page = self.request(|client| client.list_threads(options))?;
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        let result = self.client.list_threads(options).await;
+        let page = match result {
+            Err(error) if error.is_connection_lost() && !self.cancellation.is_cancelled() => {
+                self.reconnect().await?;
+                self.client.list_threads(options).await?
+            }
+            result => result?,
+        };
         Ok(self.page_tracker.record(page))
     }
 
@@ -165,8 +182,18 @@ impl CodexHistorySession {
     ///
     /// Polling a different thread establishes a new baseline. Failed polls do
     /// not replace the last successful snapshot.
-    pub fn poll_thread(&mut self, thread_id: &str) -> Result<ThreadPoll, CodexError> {
-        let thread = self.request(|client| client.read_thread(thread_id))?;
+    pub async fn poll_thread(&mut self, thread_id: &str) -> Result<ThreadPoll, CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        let result = self.client.read_thread(thread_id).await;
+        let thread = match result {
+            Err(error) if error.is_connection_lost() && !self.cancellation.is_cancelled() => {
+                self.reconnect().await?;
+                self.client.read_thread(thread_id).await?
+            }
+            result => result?,
+        };
         Ok(self.thread_tracker.record(thread))
     }
 
@@ -184,50 +211,52 @@ impl CodexHistorySession {
         self.page_tracker.reset();
     }
 
-    fn request<T>(
-        &mut self,
-        mut operation: impl FnMut(&mut CodexClient) -> Result<T, CodexError>,
-    ) -> Result<T, CodexError> {
-        if self.cancellation.is_cancelled() {
-            return Err(CodexError::Interrupted);
-        }
+    async fn reconnect(&mut self) -> Result<(), CodexError> {
+        let replacement =
+            CodexClient::spawn_with_cancellation(&self.executable, self.cancellation.token.clone())
+                .await?;
+        let previous = std::mem::replace(&mut self.client, replacement);
+        previous.shutdown().await;
+        Ok(())
+    }
 
-        match operation(&mut self.client) {
-            _ if self.cancellation.is_cancelled() => Err(CodexError::Interrupted),
-            Ok(value) => Ok(value),
-            Err(error) if error.is_connection_lost() => {
-                self.client =
-                    CodexClient::spawn_interruptible(&self.executable, &self.cancellation.process)?;
-                let result = operation(&mut self.client);
-                if self.cancellation.is_cancelled() {
-                    Err(CodexError::Interrupted)
-                } else {
-                    result
-                }
-            }
-            Err(error) => Err(error),
-        }
+    /// Terminates and reaps the session's app-server child.
+    pub async fn shutdown(self) {
+        self.client.shutdown().await;
     }
 }
 
 impl CodexThreadWriter {
     /// Acquires the writer for a persisted thread on a dedicated app-server
     /// child controlled by the supplied cancellation handle.
-    pub fn acquire_with_cancellation(
+    pub async fn acquire_with_cancellation(
         executable: impl AsRef<OsStr>,
         cancellation: CodexHistoryCancellation,
         thread_id: &str,
     ) -> Result<(Self, Thread), CodexError> {
         let executable = PathBuf::from(executable.as_ref());
-        let mut client = CodexClient::spawn_interruptible(&executable, &cancellation.process)?;
-        let thread = match client.resume_thread(thread_id) {
-            Err(error) if error.is_connection_lost() && !cancellation.is_cancelled() => {
-                client = CodexClient::spawn_interruptible(&executable, &cancellation.process)?;
-                client.resume_thread(thread_id)?
+        let mut client =
+            CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone()).await?;
+        let mut result = client.resume_thread(thread_id).await;
+        if result
+            .as_ref()
+            .is_err_and(|error| error.is_connection_lost())
+            && !cancellation.is_cancelled()
+        {
+            client.shutdown().await;
+            client = CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone())
+                .await?;
+            result = client.resume_thread(thread_id).await;
+        }
+        let thread = match result {
+            Ok(thread) => thread,
+            Err(error) => {
+                client.shutdown().await;
+                return Err(error);
             }
-            result => result?,
         };
         if cancellation.is_cancelled() {
+            client.shutdown().await;
             return Err(CodexError::Interrupted);
         }
         Ok((
@@ -247,7 +276,7 @@ impl CodexThreadWriter {
 
     /// Starts a text turn without resuming again, preserving the writer lease
     /// acquired on this same connection.
-    pub fn start_text_turn(
+    pub async fn start_text_turn(
         &mut self,
         text: &str,
         mut on_event: impl FnMut(TurnStreamEvent),
@@ -257,18 +286,25 @@ impl CodexThreadWriter {
         }
         let result = self
             .client
-            .start_text_turn(&self.thread_id, text, &mut on_event);
+            .start_text_turn(&self.thread_id, text, &mut on_event)
+            .await;
         if self.cancellation.is_cancelled() {
             Err(CodexError::Interrupted)
         } else {
             result
         }
     }
+
+    /// Terminates and reaps the writer's app-server child.
+    pub async fn shutdown(self) {
+        self.client.shutdown().await;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use crate::{ThreadItem, ThreadSummary, Turn, TurnStatus};
 
@@ -381,5 +417,21 @@ mod tests {
             tracker.record(first.clone()),
             ThreadPagePoll::Baseline(first)
         );
+    }
+
+    #[tokio::test]
+    async fn cancellation_wakes_waiters() {
+        let cancellation = CodexHistoryCancellation::new();
+        let waiter = tokio::spawn({
+            let cancellation = cancellation.clone();
+            async move { cancellation.cancelled().await }
+        });
+
+        cancellation.cancel();
+
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("cancellation should wake the waiter")
+            .expect("the cancellation waiter should not panic");
     }
 }

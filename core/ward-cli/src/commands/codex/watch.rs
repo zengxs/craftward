@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::num::{NonZeroU32, NonZeroU64};
-use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::Args;
@@ -26,7 +25,7 @@ pub(super) struct WatchArguments {
     polls: Option<NonZeroU32>,
 }
 
-pub(super) fn run(
+pub(super) async fn run(
     session: &mut CodexHistorySession,
     arguments: WatchArguments,
     output: &mut dyn Write,
@@ -42,7 +41,7 @@ pub(super) fn run(
     )?;
 
     loop {
-        let current = match session.poll_thread(&arguments.thread_id)? {
+        let current = match session.poll_thread(&arguments.thread_id).await? {
             ThreadPoll::Baseline(thread) => {
                 display_snapshot("baseline", None, &thread, output)?;
                 Some(thread)
@@ -64,7 +63,7 @@ pub(super) fn run(
                 break;
             }
         }
-        thread::sleep(interval);
+        tokio::time::sleep(interval).await;
     }
 
     Ok(())

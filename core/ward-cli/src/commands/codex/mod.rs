@@ -27,24 +27,32 @@ pub(crate) struct CodexArguments {
 }
 
 impl CodexArguments {
-    pub(crate) fn run(self, output: &mut dyn Write) -> CommandResult {
+    pub(crate) async fn run(self, output: &mut dyn Write) -> CommandResult {
         let executable = resolve_codex_executable(self.executable);
         match self.command {
             CodexCommand::Check => {
-                let mut client = CodexClient::spawn(executable)?;
-                check(&mut client, output)
+                let mut client = CodexClient::spawn(executable).await?;
+                let result = check(&mut client, output).await;
+                client.shutdown().await;
+                result
             }
             CodexCommand::List(arguments) => {
-                let mut client = CodexClient::spawn(executable)?;
-                list(&mut client, arguments, output)
+                let mut client = CodexClient::spawn(executable).await?;
+                let result = list(&mut client, arguments, output).await;
+                client.shutdown().await;
+                result
             }
             CodexCommand::Read { thread_id } => {
-                let mut client = CodexClient::spawn(executable)?;
-                read(&mut client, &thread_id, output)
+                let mut client = CodexClient::spawn(executable).await?;
+                let result = read(&mut client, &thread_id, output).await;
+                client.shutdown().await;
+                result
             }
             CodexCommand::Watch(arguments) => {
-                let mut session = CodexHistorySession::spawn(executable)?;
-                watch::run(&mut session, arguments, output)
+                let mut session = CodexHistorySession::spawn(executable).await?;
+                let result = watch::run(&mut session, arguments, output).await;
+                session.shutdown().await;
+                result
             }
         }
     }
@@ -78,17 +86,19 @@ struct ListArguments {
     cursor: Option<String>,
 }
 
-fn check(client: &mut CodexClient, output: &mut dyn Write) -> CommandResult {
+async fn check(client: &mut CodexClient, output: &mut dyn Write) -> CommandResult {
     writeln!(output, "Connected to {}", client.server_info().user_agent)?;
-    let page = client.list_threads(&ThreadListOptions {
-        limit: Some(1),
-        ..ThreadListOptions::default()
-    })?;
+    let page = client
+        .list_threads(&ThreadListOptions {
+            limit: Some(1),
+            ..ThreadListOptions::default()
+        })
+        .await?;
     let Some(summary) = page.threads.first() else {
         writeln!(output, "The state database contains no threads")?;
         return Ok(());
     };
-    let thread = client.read_thread(&summary.id)?;
+    let thread = client.read_thread(&summary.id).await?;
     let item_count = thread
         .turns
         .iter()
@@ -102,16 +112,18 @@ fn check(client: &mut CodexClient, output: &mut dyn Write) -> CommandResult {
     Ok(())
 }
 
-fn list(
+async fn list(
     client: &mut CodexClient,
     arguments: ListArguments,
     output: &mut dyn Write,
 ) -> CommandResult {
-    let page = client.list_threads(&ThreadListOptions {
-        cursor: arguments.cursor,
-        limit: Some(arguments.limit),
-        archived: arguments.archived.then_some(true),
-    })?;
+    let page = client
+        .list_threads(&ThreadListOptions {
+            cursor: arguments.cursor,
+            limit: Some(arguments.limit),
+            archived: arguments.archived.then_some(true),
+        })
+        .await?;
     writeln!(output, "Found {} threads", page.threads.len())?;
     for thread in page.threads {
         let title = thread.name.as_deref().unwrap_or(&thread.preview);
@@ -123,8 +135,8 @@ fn list(
     Ok(())
 }
 
-fn read(client: &mut CodexClient, thread_id: &str, output: &mut dyn Write) -> CommandResult {
-    let thread = client.read_thread(thread_id)?;
+async fn read(client: &mut CodexClient, thread_id: &str, output: &mut dyn Write) -> CommandResult {
+    let thread = client.read_thread(thread_id).await?;
     let title = thread
         .summary
         .name

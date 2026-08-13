@@ -25,13 +25,21 @@ extern "C"
 
     typedef struct WardBuffer WardBuffer;
     typedef struct WardError WardError;
+    typedef struct WardRuntime WardRuntime;
+
+    // Every asynchronous handle created from a runtime must be destroyed before
+    // the runtime itself. Runtime and handle destruction must occur outside a
+    // Ward callback and outside the runtime's Tokio worker threads.
+    WardRuntime* ward_core_runtime_create(WardError** error);
+    void ward_core_runtime_destroy(WardRuntime* runtime);
 
     typedef struct WardCodexHistoryObserver WardCodexHistoryObserver;
     typedef void (*WardCodexHistoryEventCallback)(void* context, const WardBuffer* event);
 
     // The serialized event buffer is borrowed until the callback returns. The
     // callback context must remain valid until observer destruction completes.
-    WardCodexHistoryObserver* ward_core_codex_history_observer_open(const char* executable,
+    WardCodexHistoryObserver* ward_core_codex_history_observer_open(const WardRuntime* runtime,
+                                                                    const char* executable,
                                                                     WardCodexHistoryEventCallback callback,
                                                                     void* callback_context,
                                                                     WardError** error);
@@ -49,7 +57,8 @@ extern "C"
                                                      const char* thread_id,
                                                      const char* prompt,
                                                      WardError** error);
-    // Destruction waits for in-flight work and must not run inside the callback.
+    // Destruction waits for in-flight work and must not run inside the callback
+    // or on a Tokio worker belonging to this observer's runtime.
     void ward_core_codex_history_observer_destroy(WardCodexHistoryObserver* observer);
 
     const uint8_t* ward_core_buffer_data(const WardBuffer* buffer);

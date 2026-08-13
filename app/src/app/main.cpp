@@ -16,6 +16,8 @@
 #include <QVariantMap>
 #include <QtQml/QQmlExtensionPlugin>
 
+#include <memory>
+
 Q_IMPORT_QML_PLUGIN(Craftward_ComponentsPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_CodexPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_EditorPlugin)
@@ -23,6 +25,18 @@ Q_IMPORT_QML_PLUGIN(Craftward_Features_LegalPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_Features_RealmPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_PagesPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_RealmPlugin)
+
+namespace {
+struct RuntimeDeleter
+{
+    void operator()(WardRuntime* runtime) const { ward_core_runtime_destroy(runtime); }
+};
+
+struct ErrorDeleter
+{
+    void operator()(WardError* error) const { ward_core_error_destroy(error); }
+};
+}
 
 int
 main(int argc, char* argv[])
@@ -42,7 +56,16 @@ main(int argc, char* argv[])
     // Use native text rendering for better font quality, especially for CJK fonts.
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
-    CodexHistoryController codexHistoryController;
+    WardError* rawRuntimeError = nullptr;
+    std::unique_ptr<WardRuntime, RuntimeDeleter> runtime(ward_core_runtime_create(&rawRuntimeError));
+    std::unique_ptr<WardError, ErrorDeleter> runtimeError(rawRuntimeError);
+    if (runtime == nullptr) {
+        const char* message = runtimeError != nullptr ? ward_core_error_message(runtimeError.get()) : nullptr;
+        qCritical("%s", message != nullptr ? message : "The Ward async runtime could not be started.");
+        return 1;
+    }
+
+    CodexHistoryController codexHistoryController(runtime.get());
     RealmController realmController;
     ApplicationController applicationController(app, realmController);
     QQmlApplicationEngine engine;

@@ -16,6 +16,7 @@
 struct CodexHistoryCallbackContext;
 struct WardBuffer;
 struct WardCodexHistoryObserver;
+struct WardRuntime;
 
 namespace ward::codex::v1 {
 class HistoryEvent;
@@ -49,7 +50,7 @@ class CodexHistoryController : public QObject
     };
     Q_ENUM(WriteAvailability)
 
-    explicit CodexHistoryController(QObject* parent = nullptr);
+    explicit CodexHistoryController(const WardRuntime* runtime, QObject* parent = nullptr);
     ~CodexHistoryController() override;
 
     [[nodiscard]] CodexThreadModel* threads();

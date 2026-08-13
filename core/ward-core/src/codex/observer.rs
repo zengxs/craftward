@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::ffi::{c_char, c_void};
+use std::future::Future;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
-use std::thread::{self, JoinHandle};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use prost::Message as _;
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::task::JoinHandle;
+use tokio::time::Instant as TokioInstant;
 use ward_codex::{
     CodexError, CodexHistoryCancellation, CodexHistorySession, CodexThreadWriter, Thread,
     ThreadItem, ThreadListOptions, ThreadPage, ThreadPagePoll, ThreadPoll, Turn, TurnStatus,
@@ -22,6 +27,7 @@ const CONVERSATION_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const LIVE_DELTA_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 const HISTORY_ERROR_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const THREAD_PAGE_LIMIT: u32 = 100;
+const COMMAND_QUEUE_CAPACITY: usize = 64;
 
 type WardCodexHistoryEventCallback =
     unsafe extern "C" fn(context: *mut c_void, event: *const WardBuffer);
@@ -35,6 +41,11 @@ struct HistoryEventSink {
 // until `ward_core_codex_history_observer_destroy` returns. The callback
 // decides how to marshal each borrowed event onto its own thread.
 unsafe impl Send for HistoryEventSink {}
+
+// SAFETY: This private sink belongs to exactly one observer actor. Tokio may
+// move that actor between workers while shared references live across an
+// await, but the actor never invokes the callback concurrently.
+unsafe impl Sync for HistoryEventSink {}
 
 impl HistoryEventSink {
     fn emit_threads_updated(&self, page: ThreadPage) {
@@ -171,12 +182,49 @@ struct CommandUpdate {
     watched_thread: Option<String>,
     refresh: bool,
     write_access: Option<WriteAccessRequest>,
-    turns: Vec<TurnRequest>,
+    turn: Option<TurnRequest>,
+}
+
+impl CommandUpdate {
+    fn merge(&mut self, newer: Self) {
+        if newer.watched_thread.is_some() {
+            self.watched_thread = newer.watched_thread;
+        }
+        self.refresh |= newer.refresh;
+        if newer.write_access.is_some() {
+            self.write_access = newer.write_access;
+        }
+        if self.turn.is_none() {
+            self.turn = newer.turn;
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.watched_thread.is_none()
+            && !self.refresh
+            && self.write_access.is_none()
+            && self.turn.is_none()
+    }
+
+    fn is_turn_only(&self) -> bool {
+        self.watched_thread.is_none()
+            && !self.refresh
+            && self.write_access.is_none()
+            && self.turn.is_some()
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
 enum DrainedCommands {
     Update(CommandUpdate),
+    Stop,
+}
+
+enum OperationDrive<T> {
+    Completed {
+        output: T,
+        deferred: Option<CommandUpdate>,
+    },
     Stop,
 }
 
@@ -268,8 +316,10 @@ impl ObserverState {
         }
     }
 
-    fn select_thread(&mut self) {
-        self.writer = None;
+    async fn select_thread(&mut self) {
+        if let Some(writer) = self.writer.take() {
+            writer.shutdown().await;
+        }
         self.conversation_health.reset();
         self.latest_conversation = None;
         self.retained_live_turn = None;
@@ -278,7 +328,7 @@ impl ObserverState {
         }
     }
 
-    fn acquire_write(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
+    async fn acquire_write(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
         if self
             .writer
             .as_ref()
@@ -288,13 +338,16 @@ impl ObserverState {
             return true;
         }
 
-        self.writer = None;
+        if let Some(writer) = self.writer.take() {
+            writer.shutdown().await;
+        }
         sink.emit_thread_write_state(thread_id, wire::ThreadWriteStatus::Checking, None);
         let result = CodexThreadWriter::acquire_with_cancellation(
             &self.executable,
             self.cancellation.clone(),
             thread_id,
-        );
+        )
+        .await;
         match classify_write_access_result(result, self.cancellation.is_cancelled()) {
             WriteAccessEffect::Acquired(acquired) => {
                 let (writer, thread) = *acquired;
@@ -321,13 +374,14 @@ impl ObserverState {
         }
     }
 
-    fn release_write(&mut self, thread_id: &str, sink: &HistoryEventSink) {
+    async fn release_write(&mut self, thread_id: &str, sink: &HistoryEventSink) {
         if self
             .writer
             .as_ref()
             .is_some_and(|writer| writer.thread_id() == thread_id)
+            && let Some(writer) = self.writer.take()
         {
-            self.writer = None;
+            writer.shutdown().await;
         }
         sink.emit_thread_write_state(thread_id, wire::ThreadWriteStatus::Idle, None);
     }
@@ -341,8 +395,8 @@ impl ObserverState {
         }
     }
 
-    fn poll_threads(&mut self, sink: &HistoryEventSink) -> bool {
-        let result = self.poll_thread_page().map(|poll| match poll {
+    async fn poll_threads(&mut self, sink: &HistoryEventSink) -> bool {
+        let result = self.poll_thread_page().await.map(|poll| match poll {
             ThreadPagePoll::Baseline(page) | ThreadPagePoll::Changed(page) => {
                 PollSample::Updated(page)
             }
@@ -361,8 +415,8 @@ impl ObserverState {
         succeeded
     }
 
-    fn poll_conversation(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
-        let result = self.poll_thread(thread_id).map(|poll| match poll {
+    async fn poll_conversation(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
+        let result = self.poll_thread(thread_id).await.map(|poll| match poll {
             ThreadPoll::Baseline(thread) | ThreadPoll::Changed(thread) => {
                 PollSample::Updated(thread)
             }
@@ -412,7 +466,7 @@ impl ObserverState {
         }
     }
 
-    fn run_turn(&mut self, request: TurnRequest, sink: &HistoryEventSink) -> bool {
+    async fn run_turn(&mut self, request: TurnRequest, sink: &HistoryEventSink) -> bool {
         self.conversation_health.reset();
         let TurnRequest { thread_id, prompt } = request;
         let Some(writer) = self
@@ -518,7 +572,8 @@ impl ObserverState {
                     sink.emit_turn_completed(&thread_id);
                 }
             }
-        });
+        })
+        .await;
 
         match result {
             Ok(()) => {
@@ -538,7 +593,9 @@ impl ObserverState {
                 self.latest_conversation = live_conversation;
                 self.retained_live_turn =
                     retained_live_turn(&self.latest_conversation, live_turn_id.as_deref());
-                self.writer = None;
+                if let Some(writer) = self.writer.take() {
+                    writer.shutdown().await;
+                }
                 let (status, message) = if error.is_thread_writer_conflict() {
                     (wire::ThreadWriteStatus::Busy, None)
                 } else {
@@ -554,28 +611,47 @@ impl ObserverState {
         }
     }
 
-    fn poll_thread_page(&mut self) -> Result<ThreadPagePoll, CodexError> {
-        self.session()?.poll_thread_page(&ThreadListOptions {
-            limit: Some(THREAD_PAGE_LIMIT),
-            ..ThreadListOptions::default()
-        })
-    }
-
-    fn poll_thread(&mut self, thread_id: &str) -> Result<ThreadPoll, CodexError> {
-        self.session()?.poll_thread(thread_id)
-    }
-
-    fn session(&mut self) -> Result<&mut CodexHistorySession, CodexError> {
-        if self.session.is_none() {
-            self.session = Some(CodexHistorySession::spawn_with_cancellation(
-                &self.executable,
-                self.cancellation.clone(),
-            )?);
-        }
-        Ok(self
-            .session
+    async fn poll_thread_page(&mut self) -> Result<ThreadPagePoll, CodexError> {
+        self.ensure_session().await?;
+        self.session
             .as_mut()
-            .expect("the history session was initialized above"))
+            .expect("the history session was initialized above")
+            .poll_thread_page(&ThreadListOptions {
+                limit: Some(THREAD_PAGE_LIMIT),
+                ..ThreadListOptions::default()
+            })
+            .await
+    }
+
+    async fn poll_thread(&mut self, thread_id: &str) -> Result<ThreadPoll, CodexError> {
+        self.ensure_session().await?;
+        self.session
+            .as_mut()
+            .expect("the history session was initialized above")
+            .poll_thread(thread_id)
+            .await
+    }
+
+    async fn ensure_session(&mut self) -> Result<(), CodexError> {
+        if self.session.is_none() {
+            self.session = Some(
+                CodexHistorySession::spawn_with_cancellation(
+                    &self.executable,
+                    self.cancellation.clone(),
+                )
+                .await?,
+            );
+        }
+        Ok(())
+    }
+
+    async fn shutdown(mut self) {
+        if let Some(writer) = self.writer.take() {
+            writer.shutdown().await;
+        }
+        if let Some(session) = self.session.take() {
+            session.shutdown().await;
+        }
     }
 }
 
@@ -779,15 +855,17 @@ fn mark_turn_failed(thread: &mut Thread, turn_id: &str) {
 pub struct WardCodexHistoryObserver {
     commands: Sender<ObserverCommand>,
     cancellation: CodexHistoryCancellation,
+    turn_active: Arc<AtomicBool>,
+    runtime: Handle,
     worker: Option<JoinHandle<()>>,
 }
 
 impl Drop for WardCodexHistoryObserver {
     fn drop(&mut self) {
-        let _ = self.commands.send(ObserverCommand::Stop);
+        let _ = self.commands.try_send(ObserverCommand::Stop);
         self.cancellation.cancel();
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            let _ = self.runtime.block_on(worker);
         }
     }
 }
@@ -800,10 +878,13 @@ impl Drop for WardCodexHistoryObserver {
 ///
 /// # Safety
 ///
-/// `executable` must point to a NUL-terminated string. `callback` must be a
-/// valid function pointer. `output_error`, when non-null, must be writable.
+/// `runtime` must point to a live Ward runtime that outlives the returned
+/// observer. `executable` must point to a NUL-terminated string. `callback`
+/// must be a valid function pointer. `output_error`, when non-null, must be
+/// writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_codex_history_observer_open(
+    runtime: *const crate::WardRuntime,
     executable: *const c_char,
     callback: Option<WardCodexHistoryEventCallback>,
     callback_context: *mut c_void,
@@ -811,6 +892,11 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
 ) -> *mut WardCodexHistoryObserver {
     // SAFETY: The caller supplied the optional error output pointer.
     unsafe { clear_error(output_error) };
+    let Some(runtime) = (unsafe { runtime.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Ward async runtime is missing") };
+        return std::ptr::null_mut();
+    };
     // SAFETY: The private C interface requires the documented string pointer.
     let Some(executable) =
         (unsafe { required_string(executable, "the Codex executable", output_error) })
@@ -823,36 +909,36 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
         return std::ptr::null_mut();
     };
 
-    let (commands, receiver) = mpsc::channel();
+    let (commands, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     let cancellation = CodexHistoryCancellation::new();
+    let turn_active = Arc::new(AtomicBool::new(false));
     let sink = HistoryEventSink {
         callback,
         context: callback_context,
     };
-    let worker = thread::Builder::new()
-        .name("ward-codex-history".to_owned())
-        .spawn({
-            let cancellation = cancellation.clone();
-            move || run_observer(PathBuf::from(executable), receiver, sink, cancellation)
-        });
-
-    match worker {
-        Ok(worker) => Box::into_raw(Box::new(WardCodexHistoryObserver {
-            commands,
-            cancellation,
-            worker: Some(worker),
-        })),
-        Err(error) => {
-            // SAFETY: The caller supplied the optional error output pointer.
-            unsafe {
-                write_error(
-                    output_error,
-                    format!("failed to start the Codex history observer: {error}"),
-                )
-            };
-            std::ptr::null_mut()
+    let runtime = runtime.handle();
+    let worker = runtime.spawn({
+        let cancellation = cancellation.clone();
+        let turn_active = Arc::clone(&turn_active);
+        async move {
+            run_observer(
+                PathBuf::from(executable),
+                receiver,
+                sink,
+                cancellation,
+                turn_active,
+            )
+            .await;
         }
-    }
+    });
+
+    Box::into_raw(Box::new(WardCodexHistoryObserver {
+        commands,
+        cancellation,
+        turn_active,
+        runtime,
+        worker: Some(worker),
+    }))
 }
 
 /// Selects the persisted thread observed by a Codex history observer.
@@ -1027,11 +1113,30 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
         return false;
     }
 
-    send_command(
+    if observer
+        .turn_active
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe {
+            write_error(
+                output_error,
+                "a Codex turn is already queued or running for this observer",
+            )
+        };
+        return false;
+    }
+
+    let sent = send_command(
         observer,
         ObserverCommand::StartTurn(TurnRequest { thread_id, prompt }),
         output_error,
-    )
+    );
+    if !sent {
+        observer.turn_active.store(false, Ordering::Release);
+    }
+    sent
 }
 
 fn send_command(
@@ -1039,18 +1144,26 @@ fn send_command(
     command: ObserverCommand,
     output_error: *mut *mut WardError,
 ) -> bool {
-    if observer.commands.send(command).is_err() {
-        // SAFETY: The caller supplied the optional error output pointer.
-        unsafe { write_error(output_error, "the Codex history observer has stopped") };
-        return false;
+    match observer.commands.try_send(command) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex history command queue is full") };
+            false
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex history observer has stopped") };
+            false
+        }
     }
-    true
 }
 
 /// Stops and destroys a Codex history observer.
 ///
 /// This function waits for any in-flight read and callback to finish before it
-/// returns. It must not be called from the observer callback itself.
+/// returns. It must not be called from the observer callback itself or from a
+/// worker thread belonging to the observer's Ward runtime.
 ///
 /// # Safety
 ///
@@ -1067,96 +1180,196 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_destroy(
     }
 }
 
-fn run_observer(
+async fn run_observer(
     executable: PathBuf,
-    receiver: Receiver<ObserverCommand>,
+    mut receiver: Receiver<ObserverCommand>,
     sink: HistoryEventSink,
     cancellation: CodexHistoryCancellation,
+    turn_active: Arc<AtomicBool>,
 ) {
     let mut state = ObserverState::new(executable, cancellation.clone());
     let mut watched_thread: Option<String> = None;
-    let mut threads_due = Instant::now();
-    let mut conversation_due: Option<Instant> = None;
+    let mut threads_due = TokioInstant::now();
+    let mut conversation_due: Option<TokioInstant> = None;
+    let mut deferred_update = None;
 
-    loop {
-        let now = Instant::now();
-        if now >= threads_due {
-            let succeeded = state.poll_threads(&sink);
-            if cancellation.is_cancelled() {
-                break;
-            }
-            threads_due = Instant::now()
-                + if succeeded {
-                    THREAD_PAGE_POLL_INTERVAL
-                } else {
-                    HISTORY_ERROR_RETRY_INTERVAL
+    'observer: loop {
+        if deferred_update.is_none() {
+            let now = TokioInstant::now();
+            if now >= threads_due {
+                let OperationDrive::Completed {
+                    output: succeeded,
+                    deferred,
+                } = drive_operation(state.poll_threads(&sink), &mut receiver, &cancellation).await
+                else {
+                    break;
                 };
-        }
-
-        if let (Some(thread_id), Some(due)) = (watched_thread.as_deref(), conversation_due)
-            && Instant::now() >= due
-        {
-            let succeeded = state.poll_conversation(thread_id, &sink);
-            if cancellation.is_cancelled() {
-                break;
-            }
-            conversation_due = Some(
-                Instant::now()
+                threads_due = TokioInstant::now()
                     + if succeeded {
-                        CONVERSATION_POLL_INTERVAL
+                        THREAD_PAGE_POLL_INTERVAL
                     } else {
                         HISTORY_ERROR_RETRY_INTERVAL
-                    },
-            );
+                    };
+                deferred_update = deferred;
+            }
+
+            if deferred_update.is_none()
+                && let (Some(thread_id), Some(due)) = (watched_thread.as_deref(), conversation_due)
+                && TokioInstant::now() >= due
+            {
+                let thread_id = thread_id.to_owned();
+                let OperationDrive::Completed {
+                    output: succeeded,
+                    deferred,
+                } = drive_operation(
+                    state.poll_conversation(&thread_id, &sink),
+                    &mut receiver,
+                    &cancellation,
+                )
+                .await
+                else {
+                    break;
+                };
+                conversation_due = Some(
+                    TokioInstant::now()
+                        + if succeeded {
+                            CONVERSATION_POLL_INTERVAL
+                        } else {
+                            HISTORY_ERROR_RETRY_INTERVAL
+                        },
+                );
+                deferred_update = deferred;
+            }
         }
 
-        let next_due = conversation_due.map_or(threads_due, |due| due.min(threads_due));
-        let timeout = next_due.saturating_duration_since(Instant::now());
-        match receiver.recv_timeout(timeout) {
-            Ok(command) => match drain_commands(command, &receiver) {
+        let drained = if let Some(update) = deferred_update.take() {
+            Some(DrainedCommands::Update(update))
+        } else {
+            let next_due = conversation_due.map_or(threads_due, |due| due.min(threads_due));
+            let sleep = tokio::time::sleep_until(next_due);
+            tokio::pin!(sleep);
+            let received = tokio::select! {
+                _ = cancellation.cancelled() => None,
+                command = receiver.recv() => command,
+                () = &mut sleep => continue,
+            };
+            received.map(|command| drain_commands(command, &mut receiver))
+        };
+        match drained {
+            Some(drained) => match drained {
                 DrainedCommands::Stop => break,
-                DrainedCommands::Update(update) => {
-                    let now = Instant::now();
-                    if let Some(thread_id) = update.watched_thread {
-                        state.select_thread();
+                DrainedCommands::Update(mut update) => {
+                    if update.is_turn_only()
+                        && let Ok(command) = receiver.try_recv()
+                    {
+                        if !merge_command(&mut update, command) {
+                            break 'observer;
+                        }
+                        while let Ok(command) = receiver.try_recv() {
+                            if !merge_command(&mut update, command) {
+                                break 'observer;
+                            }
+                        }
+                    }
+                    let now = TokioInstant::now();
+                    let CommandUpdate {
+                        watched_thread: requested_thread,
+                        refresh,
+                        write_access,
+                        turn,
+                    } = update;
+                    let mut following = CommandUpdate::default();
+
+                    if let Some(thread_id) = requested_thread {
+                        let OperationDrive::Completed { deferred, .. } =
+                            drive_operation(state.select_thread(), &mut receiver, &cancellation)
+                                .await
+                        else {
+                            break 'observer;
+                        };
+                        if let Some(deferred) = deferred {
+                            following.merge(deferred);
+                        }
                         watched_thread = Some(thread_id);
                         conversation_due = Some(now);
                     }
-                    if update.refresh {
+                    if refresh {
                         state.refresh();
                         threads_due = now;
                         if watched_thread.is_some() {
                             conversation_due = Some(now);
                         }
                     }
-                    if let Some(request) = update.write_access {
+                    if let Some(request) = write_access {
                         match request {
                             WriteAccessRequest::Acquire(thread_id)
                                 if watched_thread.as_deref() == Some(thread_id.as_str()) =>
                             {
-                                state.acquire_write(&thread_id, &sink);
+                                let OperationDrive::Completed { deferred, .. } = drive_operation(
+                                    state.acquire_write(&thread_id, &sink),
+                                    &mut receiver,
+                                    &cancellation,
+                                )
+                                .await
+                                else {
+                                    break 'observer;
+                                };
+                                if let Some(deferred) = deferred {
+                                    following.merge(deferred);
+                                }
                             }
                             WriteAccessRequest::Acquire(_) => {}
                             WriteAccessRequest::Release(thread_id) => {
-                                state.release_write(&thread_id, &sink);
+                                let OperationDrive::Completed { deferred, .. } = drive_operation(
+                                    state.release_write(&thread_id, &sink),
+                                    &mut receiver,
+                                    &cancellation,
+                                )
+                                .await
+                                else {
+                                    break 'observer;
+                                };
+                                if let Some(deferred) = deferred {
+                                    following.merge(deferred);
+                                }
                             }
                         }
-                        if cancellation.is_cancelled() {
-                            return;
-                        }
                     }
-                    for request in update.turns {
+                    if let Some(request) = turn {
                         if watched_thread.as_deref() != Some(request.thread_id.as_str()) {
-                            state.select_thread();
+                            let OperationDrive::Completed { deferred, .. } = drive_operation(
+                                state.select_thread(),
+                                &mut receiver,
+                                &cancellation,
+                            )
+                            .await
+                            else {
+                                break 'observer;
+                            };
+                            if let Some(deferred) = deferred {
+                                following.merge(deferred);
+                            }
                             watched_thread = Some(request.thread_id.clone());
                         }
-                        let succeeded = state.run_turn(request, &sink);
-                        if cancellation.is_cancelled() {
-                            return;
+                        let OperationDrive::Completed {
+                            output: succeeded,
+                            deferred,
+                        } = drive_operation(
+                            state.run_turn(request, &sink),
+                            &mut receiver,
+                            &cancellation,
+                        )
+                        .await
+                        else {
+                            break 'observer;
+                        };
+                        turn_active.store(false, Ordering::Release);
+                        if let Some(update) = deferred {
+                            following.merge(update);
                         }
-                        threads_due = Instant::now();
+                        threads_due = TokioInstant::now();
                         conversation_due = Some(
-                            Instant::now()
+                            TokioInstant::now()
                                 + if succeeded {
                                     CONVERSATION_POLL_INTERVAL
                                 } else {
@@ -1164,37 +1377,98 @@ fn run_observer(
                                 },
                         );
                     }
+                    if !following.is_empty() {
+                        deferred_update = Some(following);
+                    }
                 }
             },
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+            None => break,
+        }
+    }
+    turn_active.store(false, Ordering::Release);
+    state.shutdown().await;
+}
+
+async fn drive_operation<F>(
+    operation: F,
+    receiver: &mut Receiver<ObserverCommand>,
+    cancellation: &CodexHistoryCancellation,
+) -> OperationDrive<F::Output>
+where
+    F: Future,
+{
+    tokio::pin!(operation);
+    let mut deferred = CommandUpdate::default();
+
+    loop {
+        if cancellation.is_cancelled() {
+            let _ = operation.as_mut().await;
+            return OperationDrive::Stop;
+        }
+        tokio::select! {
+            _ = cancellation.cancelled() => {
+                let _ = operation.as_mut().await;
+                return OperationDrive::Stop;
+            },
+            command = receiver.recv() => {
+                let keep_running = command
+                    .is_some_and(|command| merge_command(&mut deferred, command));
+                if !keep_running {
+                    cancellation.cancel();
+                    let _ = operation.as_mut().await;
+                    return OperationDrive::Stop;
+                }
+            },
+            output = &mut operation => {
+                return OperationDrive::Completed {
+                    output,
+                    deferred: (!deferred.is_empty()).then_some(deferred),
+                };
+            }
         }
     }
 }
 
-fn drain_commands(first: ObserverCommand, receiver: &Receiver<ObserverCommand>) -> DrainedCommands {
+fn drain_commands(
+    first: ObserverCommand,
+    receiver: &mut Receiver<ObserverCommand>,
+) -> DrainedCommands {
     let mut update = CommandUpdate::default();
-    let mut command = first;
-    loop {
-        match command {
-            ObserverCommand::Watch(thread_id) => update.watched_thread = Some(thread_id),
-            ObserverCommand::Refresh => update.refresh = true,
-            ObserverCommand::AcquireWrite(thread_id) => {
-                update.write_access = Some(WriteAccessRequest::Acquire(thread_id));
-            }
-            ObserverCommand::ReleaseWrite(thread_id) => {
-                update.write_access = Some(WriteAccessRequest::Release(thread_id));
-            }
-            ObserverCommand::StartTurn(request) => update.turns.push(request),
-            ObserverCommand::Stop => return DrainedCommands::Stop,
-        }
+    if !merge_command(&mut update, first) {
+        return DrainedCommands::Stop;
+    }
+    drain_available_commands(&mut update, receiver)
+}
 
-        match receiver.try_recv() {
-            Ok(next) => command = next,
-            Err(TryRecvError::Empty) => return DrainedCommands::Update(update),
-            Err(TryRecvError::Disconnected) => return DrainedCommands::Stop,
+fn drain_available_commands(
+    update: &mut CommandUpdate,
+    receiver: &mut Receiver<ObserverCommand>,
+) -> DrainedCommands {
+    while let Ok(command) = receiver.try_recv() {
+        if !merge_command(update, command) {
+            return DrainedCommands::Stop;
         }
     }
+    DrainedCommands::Update(std::mem::take(update))
+}
+
+fn merge_command(update: &mut CommandUpdate, command: ObserverCommand) -> bool {
+    match command {
+        ObserverCommand::Watch(thread_id) => update.watched_thread = Some(thread_id),
+        ObserverCommand::Refresh => update.refresh = true,
+        ObserverCommand::AcquireWrite(thread_id) => {
+            update.write_access = Some(WriteAccessRequest::Acquire(thread_id));
+        }
+        ObserverCommand::ReleaseWrite(thread_id) => {
+            update.write_access = Some(WriteAccessRequest::Release(thread_id));
+        }
+        ObserverCommand::StartTurn(request) if update.turn.is_none() => {
+            update.turn = Some(request);
+        }
+        ObserverCommand::StartTurn(_) => {}
+        ObserverCommand::Stop => return false,
+    }
+    true
 }
 
 #[cfg(test)]
@@ -1202,6 +1476,7 @@ mod tests {
     use std::sync::Mutex;
 
     use prost::Message as _;
+    use tokio::sync::oneshot;
     use ward_codex::{
         Activity, ActivityKind, ActivityStatus, AgentMessagePhase, ThreadItem, ThreadSummary, Turn,
         TurnStatus,
@@ -1564,8 +1839,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn suppresses_repeated_identical_errors_for_each_target() {
+    #[tokio::test]
+    async fn suppresses_repeated_identical_errors_for_each_target() {
         let captured = Mutex::new(CapturedEvent::default());
         let sink = event_sink(&captured);
         let mut state = ObserverState::new(
@@ -1573,11 +1848,11 @@ mod tests {
             CodexHistoryCancellation::new(),
         );
 
-        assert!(!state.poll_threads(&sink));
-        assert!(!state.poll_threads(&sink));
-        state.select_thread();
-        assert!(!state.poll_conversation("thread-1", &sink));
-        assert!(!state.poll_conversation("thread-1", &sink));
+        assert!(!state.poll_threads(&sink).await);
+        assert!(!state.poll_threads(&sink).await);
+        state.select_thread().await;
+        assert!(!state.poll_conversation("thread-1", &sink).await);
+        assert!(!state.poll_conversation("thread-1", &sink).await);
 
         let captured = captured.lock().unwrap();
         assert_eq!(captured.events.len(), 2);
@@ -1603,54 +1878,156 @@ mod tests {
 
     #[test]
     fn coalesces_commands_and_prioritizes_stop() {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
         sender
-            .send(ObserverCommand::Watch("thread-2".to_owned()))
+            .try_send(ObserverCommand::Watch("thread-2".to_owned()))
             .unwrap();
-        sender.send(ObserverCommand::Refresh).unwrap();
+        sender.try_send(ObserverCommand::Refresh).unwrap();
         sender
-            .send(ObserverCommand::AcquireWrite("thread-2".to_owned()))
+            .try_send(ObserverCommand::AcquireWrite("thread-2".to_owned()))
             .unwrap();
         sender
-            .send(ObserverCommand::StartTurn(TurnRequest {
+            .try_send(ObserverCommand::StartTurn(TurnRequest {
                 thread_id: "thread-2".to_owned(),
                 prompt: "Continue".to_owned(),
             }))
             .unwrap();
         assert_eq!(
-            drain_commands(ObserverCommand::Watch("thread-1".to_owned()), &receiver),
+            drain_commands(ObserverCommand::Watch("thread-1".to_owned()), &mut receiver),
             DrainedCommands::Update(CommandUpdate {
                 watched_thread: Some("thread-2".to_owned()),
                 refresh: true,
                 write_access: Some(WriteAccessRequest::Acquire("thread-2".to_owned())),
-                turns: vec![TurnRequest {
+                turn: Some(TurnRequest {
                     thread_id: "thread-2".to_owned(),
                     prompt: "Continue".to_owned(),
-                }],
+                }),
             })
         );
 
-        sender.send(ObserverCommand::Stop).unwrap();
+        sender.try_send(ObserverCommand::Stop).unwrap();
         assert_eq!(
-            drain_commands(ObserverCommand::Refresh, &receiver),
+            drain_commands(ObserverCommand::Refresh, &mut receiver),
             DrainedCommands::Stop
         );
     }
 
     #[test]
     fn keeps_only_the_latest_write_access_intent() {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
         sender
-            .send(ObserverCommand::ReleaseWrite("thread-1".to_owned()))
+            .try_send(ObserverCommand::ReleaseWrite("thread-1".to_owned()))
             .unwrap();
 
         assert_eq!(
             drain_commands(
                 ObserverCommand::AcquireWrite("thread-1".to_owned()),
-                &receiver,
+                &mut receiver,
             ),
             DrainedCommands::Update(CommandUpdate {
                 write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
+                ..CommandUpdate::default()
+            })
+        );
+    }
+
+    #[test]
+    fn merges_deferred_updates_without_replacing_the_reserved_turn() {
+        let mut deferred = CommandUpdate {
+            watched_thread: Some("thread-1".to_owned()),
+            refresh: false,
+            write_access: Some(WriteAccessRequest::Acquire("thread-1".to_owned())),
+            turn: Some(TurnRequest {
+                thread_id: "thread-1".to_owned(),
+                prompt: "First".to_owned(),
+            }),
+        };
+
+        deferred.merge(CommandUpdate {
+            watched_thread: Some("thread-2".to_owned()),
+            refresh: true,
+            write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
+            turn: Some(TurnRequest {
+                thread_id: "thread-2".to_owned(),
+                prompt: "Second".to_owned(),
+            }),
+        });
+
+        assert_eq!(
+            deferred,
+            CommandUpdate {
+                watched_thread: Some("thread-2".to_owned()),
+                refresh: true,
+                write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
+                turn: Some(TurnRequest {
+                    thread_id: "thread-1".to_owned(),
+                    prompt: "First".to_owned(),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn processes_control_commands_before_a_reserved_turn() {
+        let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+        sender
+            .try_send(ObserverCommand::Watch("thread-2".to_owned()))
+            .unwrap();
+        sender.try_send(ObserverCommand::Refresh).unwrap();
+        let mut update = CommandUpdate {
+            turn: Some(TurnRequest {
+                thread_id: "thread-1".to_owned(),
+                prompt: "Continue".to_owned(),
+            }),
+            ..CommandUpdate::default()
+        };
+
+        let first = receiver.try_recv().unwrap();
+        assert!(merge_command(&mut update, first));
+        while let Ok(command) = receiver.try_recv() {
+            assert!(merge_command(&mut update, command));
+        }
+
+        assert_eq!(update.watched_thread.as_deref(), Some("thread-2"));
+        assert!(update.refresh);
+        assert_eq!(update.turn.unwrap().thread_id, "thread-1");
+    }
+
+    #[tokio::test]
+    async fn accepts_and_coalesces_commands_while_an_operation_is_in_flight() {
+        let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+        let cancellation = CodexHistoryCancellation::new();
+        let (start_commands, commands_started) = oneshot::channel();
+        let (commands_sent, wait_for_commands) = oneshot::channel();
+        let producer = tokio::spawn(async move {
+            commands_started.await.unwrap();
+            sender
+                .send(ObserverCommand::Watch("thread-2".to_owned()))
+                .await
+                .unwrap();
+            sender.send(ObserverCommand::Refresh).await.unwrap();
+            commands_sent.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        let operation = async move {
+            start_commands.send(()).unwrap();
+            wait_for_commands.await.unwrap();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            42
+        };
+
+        let result = drive_operation(operation, &mut receiver, &cancellation).await;
+        producer.abort();
+
+        let OperationDrive::Completed { output, deferred } = result else {
+            panic!("the operation should complete");
+        };
+        assert_eq!(output, 42);
+        assert_eq!(
+            deferred,
+            Some(CommandUpdate {
+                watched_thread: Some("thread-2".to_owned()),
+                refresh: true,
                 ..CommandUpdate::default()
             })
         );

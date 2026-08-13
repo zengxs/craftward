@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::collections::VecDeque;
-use std::io::{BufRead, Write};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::CodexError;
 
@@ -32,8 +32,8 @@ pub(crate) enum ServerMessage {
 
 impl<R, W> Connection<R, W>
 where
-    R: BufRead,
-    W: Write,
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
 {
     pub(crate) fn new(reader: R, writer: W) -> Self {
         Self {
@@ -44,7 +44,7 @@ where
         }
     }
 
-    pub(crate) fn request<P, T>(
+    pub(crate) async fn request<P, T>(
         &mut self,
         method: &'static str,
         params: &P,
@@ -60,10 +60,10 @@ where
             method,
             params,
         };
-        self.write_message(&request)?;
+        self.write_message(&request).await?;
 
         loop {
-            let message = self.read_message(method)?;
+            let message = self.read_message(method).await?;
             if message.get("method").is_some() {
                 self.pending_server_messages
                     .push_back(server_message(message, method)?);
@@ -103,22 +103,26 @@ where
         }
     }
 
-    pub(crate) fn next_server_message(
+    pub(crate) async fn next_server_message(
         &mut self,
         operation: &'static str,
     ) -> Result<ServerMessage, CodexError> {
         if let Some(message) = self.pending_server_messages.pop_front() {
             return Ok(message);
         }
-        let message = self.read_message(operation)?;
+        let message = self.read_message(operation).await?;
         server_message(message, operation)
     }
 
-    pub(crate) fn respond_result(&mut self, id: Value, result: Value) -> Result<(), CodexError> {
-        self.write_message(&Response { id, result })
+    pub(crate) async fn respond_result(
+        &mut self,
+        id: Value,
+        result: Value,
+    ) -> Result<(), CodexError> {
+        self.write_message(&Response { id, result }).await
     }
 
-    pub(crate) fn respond_error(
+    pub(crate) async fn respond_error(
         &mut self,
         id: Value,
         code: i64,
@@ -128,33 +132,42 @@ where
             id,
             error: ResponseError { code, message },
         })
+        .await
     }
 
-    pub(crate) fn initialized(&mut self) -> Result<(), CodexError> {
+    pub(crate) async fn initialized(&mut self) -> Result<(), CodexError> {
         self.write_message(&InitializedNotification {
             method: "initialized",
         })
+        .await
     }
 
-    fn read_message(&mut self, operation: &'static str) -> Result<Value, CodexError> {
-        let mut line = String::new();
+    async fn read_message(&mut self, operation: &'static str) -> Result<Value, CodexError> {
+        let mut line = Vec::new();
         let byte_count = self
             .reader
-            .read_line(&mut line)
+            .read_until(b'\n', &mut line)
+            .await
             .map_err(|source| CodexError::io("read from", source))?;
         if byte_count == 0 {
             return Err(CodexError::UnexpectedEof(operation));
         }
-        serde_json::from_str(&line).map_err(CodexError::InvalidJson)
+        serde_json::from_slice(&line).map_err(CodexError::InvalidJson)
     }
 
-    fn write_message(&mut self, message: &impl Serialize) -> Result<(), CodexError> {
-        serde_json::to_writer(&mut self.writer, message).map_err(CodexError::Encode)?;
+    async fn write_message(&mut self, message: &impl Serialize) -> Result<(), CodexError> {
+        let encoded = serde_json::to_vec(message).map_err(CodexError::Encode)?;
+        self.writer
+            .write_all(&encoded)
+            .await
+            .map_err(|source| CodexError::io("write to", source))?;
         self.writer
             .write_all(b"\n")
+            .await
             .map_err(|source| CodexError::io("write to", source))?;
         self.writer
             .flush()
+            .await
             .map_err(|source| CodexError::io("flush", source))
     }
 
@@ -222,9 +235,10 @@ struct RpcError {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Cursor};
+    use std::io::Cursor;
 
     use serde::{Deserialize, Serialize};
+    use tokio::io::BufReader;
 
     use super::*;
 
@@ -238,8 +252,8 @@ mod tests {
         accepted: bool,
     }
 
-    #[test]
-    fn matches_a_response_and_preserves_an_interleaved_notification() {
+    #[tokio::test]
+    async fn matches_a_response_and_preserves_an_interleaved_notification() {
         let input = concat!(
             "{\"method\":\"thread/started\",\"params\":{}}\n",
             "{\"id\":1,\"result\":{\"accepted\":true}}\n"
@@ -249,11 +263,12 @@ mod tests {
 
         let response: TestResponse = connection
             .request("test/read", &TestParams { value: 7 })
+            .await
             .expect("the matching response should decode");
 
         assert_eq!(response, TestResponse { accepted: true });
         assert_eq!(
-            connection.next_server_message("test/stream").unwrap(),
+            connection.next_server_message("test/stream").await.unwrap(),
             ServerMessage::Notification {
                 method: "thread/started".to_owned(),
                 params: serde_json::json!({}),
@@ -265,8 +280,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn preserves_and_answers_an_interleaved_server_request() {
+    #[tokio::test]
+    async fn preserves_and_answers_an_interleaved_server_request() {
         let input = concat!(
             "{\"id\":\"approval-1\",\"method\":\"item/fileChange/requestApproval\",\"params\":{\"threadId\":\"thread-1\"}}\n",
             "{\"id\":1,\"result\":{\"accepted\":true}}\n"
@@ -276,9 +291,10 @@ mod tests {
 
         let _: TestResponse = connection
             .request("test/read", &TestParams { value: 7 })
+            .await
             .expect("the matching response should decode");
         assert_eq!(
-            connection.next_server_message("test/stream").unwrap(),
+            connection.next_server_message("test/stream").await.unwrap(),
             ServerMessage::Request {
                 id: serde_json::json!("approval-1"),
                 method: "item/fileChange/requestApproval".to_owned(),
@@ -291,6 +307,7 @@ mod tests {
                 serde_json::json!("approval-1"),
                 serde_json::json!({ "decision": "decline" }),
             )
+            .await
             .unwrap();
         assert_eq!(
             String::from_utf8(connection.writer).unwrap(),

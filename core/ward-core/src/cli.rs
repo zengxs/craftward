@@ -27,7 +27,7 @@ pub unsafe extern "C" fn ward_core_cli_try_run(
     argc: c_int,
     argv: *mut *mut c_char,
 ) -> WardCliResult {
-    if argc <= 0 || argv.is_null() {
+    if argc <= 1 || argv.is_null() {
         return WardCliResult {
             handled: false,
             exit_code: 0,
@@ -49,7 +49,18 @@ pub unsafe extern "C" fn ward_core_cli_try_run(
         arguments.push(os_string(unsafe { CStr::from_ptr(argument) }));
     }
 
-    match ward_cli::try_run(arguments) {
+    let runtime = match ward_runtime::WardRuntime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("error: failed to start the Ward async runtime: {error}");
+            return WardCliResult {
+                handled: true,
+                exit_code: 1,
+            };
+        }
+    };
+
+    match runtime.block_on(ward_cli::try_run(arguments)) {
         CliDisposition::NotRequested => WardCliResult {
             handled: false,
             exit_code: 0,

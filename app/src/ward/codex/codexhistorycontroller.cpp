@@ -8,7 +8,6 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QMetaObject>
-#include <QThread>
 #include <QtProtobuf/QProtobufSerializer>
 
 #include <memory>
@@ -57,7 +56,7 @@ codexExecutable()
 }
 }
 
-CodexHistoryController::CodexHistoryController(QObject* parent)
+CodexHistoryController::CodexHistoryController(const WardRuntime* runtime, QObject* parent)
   : QObject(parent)
   , threadModel_(this)
   , timelineModel_(this)
@@ -71,7 +70,7 @@ CodexHistoryController::CodexHistoryController(QObject* parent)
     WardError* rawError = nullptr;
     const QByteArray executable = codexExecutable();
     historyObserver_ = ward_core_codex_history_observer_open(
-      executable.constData(), handleHistoryEvent, callbackContext_.get(), &rawError);
+      runtime, executable.constData(), handleHistoryEvent, callbackContext_.get(), &rawError);
     if (historyObserver_ == nullptr) {
         callbackContext_.reset();
         loadingThreads_ = false;
@@ -410,11 +409,7 @@ CodexHistoryController::handleHistoryEvent(void* context, const WardBuffer* even
         if (controller->observerGeneration_ == generation)
             controller->applyHistoryEvent(std::move(historyEvent), decodingError);
     };
-    if (QThread::currentThread() == controller->thread()) {
-        apply();
-    } else {
-        QMetaObject::invokeMethod(controller, std::move(apply), Qt::QueuedConnection);
-    }
+    QMetaObject::invokeMethod(controller, std::move(apply), Qt::QueuedConnection);
 }
 
 void
