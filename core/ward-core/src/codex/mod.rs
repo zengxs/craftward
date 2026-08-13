@@ -3,7 +3,10 @@
 
 use std::ffi::{CStr, c_char};
 
-use ward_codex::{AgentMessagePhase, Thread, ThreadItem, ThreadPage, ThreadSummary, UserInput};
+use ward_codex::{
+    Activity, ActivityKind, ActivityStatus, AgentMessagePhase, CommandAction, CommandActionKind,
+    Thread, ThreadItem, ThreadPage, ThreadSummary, UserInput,
+};
 
 use crate::{WardError, write_error};
 
@@ -47,13 +50,28 @@ impl From<Thread> for wire::Conversation {
             .name
             .filter(|name| !name.trim().is_empty())
             .unwrap_or(thread.summary.preview);
-        let messages = thread
-            .turns
-            .into_iter()
-            .flat_map(|turn| turn.items)
-            .filter_map(message_from_item)
-            .collect();
-        Self { title, messages }
+        let mut timeline = Vec::new();
+        for turn in thread.turns {
+            for item in turn.items {
+                let body = match item {
+                    ThreadItem::Activity(activity) => Some(wire::timeline_item::Body::Activity(
+                        activity_to_wire(activity),
+                    )),
+                    item => message_from_item(item).map(wire::timeline_item::Body::Message),
+                };
+                if let Some(body) = body {
+                    timeline.push(wire::TimelineItem {
+                        turn_id: turn.id.clone(),
+                        body: Some(body),
+                    });
+                }
+            }
+        }
+        Self {
+            title,
+            timeline,
+            activity_history_is_partial: true,
+        }
     }
 }
 
@@ -81,8 +99,63 @@ fn message_from_item(item: ThreadItem) -> Option<wire::Message> {
             } as i32,
             text,
         }),
+        ThreadItem::Activity(_) => None,
         ThreadItem::Other { .. } => None,
         _ => None,
+    }
+}
+
+fn activity_to_wire(activity: Activity) -> wire::Activity {
+    wire::Activity {
+        activity_id: activity.id,
+        kind: match activity.kind {
+            ActivityKind::Plan => wire::ActivityKind::Plan,
+            ActivityKind::CommandExecution => wire::ActivityKind::CommandExecution,
+            ActivityKind::FileChange => wire::ActivityKind::FileChange,
+            ActivityKind::ToolCall => wire::ActivityKind::ToolCall,
+            ActivityKind::Collaboration => wire::ActivityKind::Collaboration,
+            ActivityKind::WebSearch => wire::ActivityKind::WebSearch,
+            ActivityKind::ImageView => wire::ActivityKind::ImageView,
+            ActivityKind::Wait => wire::ActivityKind::Wait,
+            ActivityKind::ImageGeneration => wire::ActivityKind::ImageGeneration,
+            ActivityKind::ReviewStarted => wire::ActivityKind::ReviewStarted,
+            ActivityKind::ReviewCompleted => wire::ActivityKind::ReviewCompleted,
+            ActivityKind::ContextCompaction => wire::ActivityKind::ContextCompaction,
+            _ => wire::ActivityKind::Unspecified,
+        } as i32,
+        status: match activity.status {
+            ActivityStatus::Unspecified => wire::ActivityStatus::Unspecified,
+            ActivityStatus::InProgress => wire::ActivityStatus::InProgress,
+            ActivityStatus::Completed => wire::ActivityStatus::Completed,
+            ActivityStatus::Failed => wire::ActivityStatus::Failed,
+            ActivityStatus::Declined => wire::ActivityStatus::Declined,
+            ActivityStatus::Unknown(_) => wire::ActivityStatus::Other,
+            _ => wire::ActivityStatus::Other,
+        } as i32,
+        summary: activity.summary,
+        detail: activity.detail,
+        context: activity.context,
+        command_actions: activity
+            .command_actions
+            .into_iter()
+            .map(command_action_to_wire)
+            .collect(),
+    }
+}
+
+fn command_action_to_wire(action: CommandAction) -> wire::CommandAction {
+    wire::CommandAction {
+        kind: match action.kind {
+            CommandActionKind::Read => wire::CommandActionKind::Read,
+            CommandActionKind::ListFiles => wire::CommandActionKind::ListFiles,
+            CommandActionKind::Search => wire::CommandActionKind::Search,
+            CommandActionKind::Unknown => wire::CommandActionKind::Other,
+            _ => wire::CommandActionKind::Other,
+        } as i32,
+        command: action.command,
+        name: action.name,
+        path: action.path.map(|path| path.to_string_lossy().into_owned()),
+        query: action.query,
     }
 }
 
@@ -161,7 +234,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn serializes_a_thread_as_displayable_messages() {
+    fn serializes_a_thread_as_an_ordered_timeline() {
         let conversation = wire::Conversation::from(Thread {
             summary: ThreadSummary {
                 id: "thread-1".to_owned(),
@@ -184,10 +257,30 @@ mod tests {
                             },
                         ],
                     },
+                    ThreadItem::AgentMessage {
+                        id: "commentary-1".to_owned(),
+                        text: "I will inspect the file.".to_owned(),
+                        phase: Some(AgentMessagePhase::Commentary),
+                    },
                     ThreadItem::Other {
                         id: "other-1".to_owned(),
-                        kind: "commandExecution".to_owned(),
+                        kind: "futureItem".to_owned(),
                     },
+                    ThreadItem::Activity(Activity {
+                        id: "activity-1".to_owned(),
+                        kind: ActivityKind::CommandExecution,
+                        status: ActivityStatus::Completed,
+                        summary: "sed -n 1,80p src/main.rs".to_owned(),
+                        detail: Some("fn main() {}".to_owned()),
+                        context: Some("/workspace".to_owned()),
+                        command_actions: vec![CommandAction {
+                            kind: CommandActionKind::Read,
+                            command: "sed -n 1,80p src/main.rs".to_owned(),
+                            name: Some("src/main.rs".to_owned()),
+                            path: Some(PathBuf::from("/workspace/src/main.rs")),
+                            query: None,
+                        }],
+                    }),
                     ThreadItem::AgentMessage {
                         id: "agent-1".to_owned(),
                         text: "Hi".to_owned(),
@@ -200,16 +293,52 @@ mod tests {
         let decoded = wire::Conversation::decode(encoded.as_slice()).unwrap();
 
         assert_eq!(decoded.title, "Example");
-        assert_eq!(decoded.messages.len(), 2);
-        assert_eq!(decoded.messages[0].message_id, "user-1");
-        assert_eq!(decoded.messages[0].role(), wire::MessageRole::User);
+        assert!(decoded.activity_history_is_partial);
+        assert_eq!(decoded.timeline.len(), 4);
+        assert!(decoded.timeline.iter().all(|item| item.turn_id == "turn-1"));
+
+        let wire::timeline_item::Body::Message(user) = decoded.timeline[0].body.as_ref().unwrap()
+        else {
+            panic!("the first timeline item should be the user message");
+        };
+        assert_eq!(user.message_id, "user-1");
+        assert_eq!(user.role(), wire::MessageRole::User);
+        assert_eq!(user.text, "Hello\n[image: /workspace/image.png]");
+
+        let wire::timeline_item::Body::Message(commentary) =
+            decoded.timeline[1].body.as_ref().unwrap()
+        else {
+            panic!("the second timeline item should be commentary");
+        };
+        assert_eq!(commentary.role(), wire::MessageRole::Agent);
+        assert_eq!(commentary.phase(), wire::MessagePhase::Commentary);
+        assert_eq!(commentary.text, "I will inspect the file.");
+
+        let wire::timeline_item::Body::Activity(activity) =
+            decoded.timeline[2].body.as_ref().unwrap()
+        else {
+            panic!("the third timeline item should be an activity");
+        };
+        assert_eq!(activity.activity_id, "activity-1");
+        assert_eq!(activity.kind(), wire::ActivityKind::CommandExecution);
+        assert_eq!(activity.command_actions.len(), 1);
         assert_eq!(
-            decoded.messages[0].text,
-            "Hello\n[image: /workspace/image.png]"
+            activity.command_actions[0].kind(),
+            wire::CommandActionKind::Read
         );
-        assert_eq!(decoded.messages[1].message_id, "agent-1");
-        assert_eq!(decoded.messages[1].role(), wire::MessageRole::Agent);
-        assert_eq!(decoded.messages[1].phase(), wire::MessagePhase::FinalAnswer);
-        assert_eq!(decoded.messages[1].text, "Hi");
+        assert_eq!(
+            activity.command_actions[0].path.as_deref(),
+            Some("/workspace/src/main.rs")
+        );
+
+        let wire::timeline_item::Body::Message(final_answer) =
+            decoded.timeline[3].body.as_ref().unwrap()
+        else {
+            panic!("the fourth timeline item should be the final answer");
+        };
+        assert_eq!(final_answer.message_id, "agent-1");
+        assert_eq!(final_answer.role(), wire::MessageRole::Agent);
+        assert_eq!(final_answer.phase(), wire::MessagePhase::FinalAnswer);
+        assert_eq!(final_answer.text, "Hi");
     }
 }

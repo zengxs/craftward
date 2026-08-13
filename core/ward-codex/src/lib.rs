@@ -17,6 +17,6 @@ pub use client::{CodexClient, ThreadListOptions};
 pub use error::CodexError;
 pub use history::{CodexHistoryCancellation, CodexHistorySession, ThreadPagePoll, ThreadPoll};
 pub use model::{
-    AgentMessagePhase, ServerInfo, Thread, ThreadItem, ThreadPage, ThreadSummary, Turn, TurnStatus,
-    UserInput,
+    Activity, ActivityKind, ActivityStatus, AgentMessagePhase, CommandAction, CommandActionKind,
+    ServerInfo, Thread, ThreadItem, ThreadPage, ThreadSummary, Turn, TurnStatus, UserInput,
 };

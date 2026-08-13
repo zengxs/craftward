@@ -69,10 +69,73 @@ pub enum ThreadItem {
         text: String,
         phase: Option<AgentMessagePhase>,
     },
+    Activity(Activity),
     Other {
         id: String,
         kind: String,
     },
+}
+
+/// One normalized activity retained in a persisted Codex turn.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Activity {
+    pub id: String,
+    pub kind: ActivityKind,
+    pub status: ActivityStatus,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub context: Option<String>,
+    pub command_actions: Vec<CommandAction>,
+}
+
+/// The user-facing category of a retained Codex activity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ActivityKind {
+    Plan,
+    CommandExecution,
+    FileChange,
+    ToolCall,
+    Collaboration,
+    WebSearch,
+    ImageView,
+    Wait,
+    ImageGeneration,
+    ReviewStarted,
+    ReviewCompleted,
+    ContextCompaction,
+}
+
+/// The lifecycle status retained for an activity, when supplied by Codex.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ActivityStatus {
+    Unspecified,
+    InProgress,
+    Completed,
+    Failed,
+    Declined,
+    Unknown(String),
+}
+
+/// A best-effort semantic action parsed from a shell command by Codex.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandAction {
+    pub kind: CommandActionKind,
+    pub command: String,
+    pub name: Option<String>,
+    pub path: Option<PathBuf>,
+    pub query: Option<String>,
+}
+
+/// The semantic category assigned to a parsed command action.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum CommandActionKind {
+    Read,
+    ListFiles,
+    Search,
+    Unknown,
 }
 
 /// Content attached to a persisted user message.

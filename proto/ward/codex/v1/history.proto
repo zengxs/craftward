@@ -24,7 +24,13 @@ message ThreadSummary {
 // The displayable content of one persisted Codex thread.
 message Conversation {
   string title = 1;
-  repeated Message messages = 2;
+  reserved 2, 3;
+
+  // Persisted Codex turns do not retain every runtime interaction.
+  bool activity_history_is_partial = 4;
+
+  // Displayable thread items in their original turn order.
+  repeated TimelineItem timeline = 5;
 }
 
 enum HistoryEventKind {
@@ -69,4 +75,69 @@ message Message {
   MessageRole role = 2;
   MessagePhase phase = 3;
   string text = 4;
+}
+
+// One displayable item at its original position in a Codex turn.
+message TimelineItem {
+  string turn_id = 1;
+
+  oneof body {
+    Message message = 2;
+    Activity activity = 3;
+  }
+}
+
+enum ActivityKind {
+  ACTIVITY_KIND_UNSPECIFIED = 0;
+  ACTIVITY_KIND_PLAN = 1;
+  reserved 2;
+  ACTIVITY_KIND_COMMAND_EXECUTION = 3;
+  ACTIVITY_KIND_FILE_CHANGE = 4;
+  ACTIVITY_KIND_TOOL_CALL = 5;
+  ACTIVITY_KIND_COLLABORATION = 6;
+  ACTIVITY_KIND_WEB_SEARCH = 7;
+  ACTIVITY_KIND_IMAGE_VIEW = 8;
+  ACTIVITY_KIND_WAIT = 9;
+  ACTIVITY_KIND_IMAGE_GENERATION = 10;
+  ACTIVITY_KIND_REVIEW_STARTED = 11;
+  ACTIVITY_KIND_REVIEW_COMPLETED = 12;
+  ACTIVITY_KIND_CONTEXT_COMPACTION = 13;
+}
+
+enum ActivityStatus {
+  ACTIVITY_STATUS_UNSPECIFIED = 0;
+  ACTIVITY_STATUS_IN_PROGRESS = 1;
+  ACTIVITY_STATUS_COMPLETED = 2;
+  ACTIVITY_STATUS_FAILED = 3;
+  ACTIVITY_STATUS_DECLINED = 4;
+  ACTIVITY_STATUS_OTHER = 5;
+}
+
+enum CommandActionKind {
+  COMMAND_ACTION_KIND_UNSPECIFIED = 0;
+  COMMAND_ACTION_KIND_READ = 1;
+  COMMAND_ACTION_KIND_LIST_FILES = 2;
+  COMMAND_ACTION_KIND_SEARCH = 3;
+  COMMAND_ACTION_KIND_OTHER = 4;
+}
+
+// One semantic action parsed from a command by Codex.
+message CommandAction {
+  CommandActionKind kind = 1;
+  string command = 2;
+  optional string name = 3;
+  optional string path = 4;
+  optional string query = 5;
+}
+
+// One folded activity item retained in persisted Codex history.
+message Activity {
+  string activity_id = 1;
+  reserved 2;
+  ActivityKind kind = 3;
+  ActivityStatus status = 4;
+  string summary = 5;
+  optional string detail = 6;
+  optional string context = 7;
+  repeated CommandAction command_actions = 8;
 }

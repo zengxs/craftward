@@ -210,15 +210,23 @@ Page {
                     }
                 }
 
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Some runtime activity may be unavailable in persisted history.")
+                    color: root.palette.placeholderText
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                    visible: root.controller.selectedThreadId.length > 0 && root.controller.activityHistoryPartial
+                }
+
                 ListView {
-                    id: messageList
+                    id: timelineList
 
                     readonly property bool conversationLoading: root.controller.loadingConversation
                     readonly property string selectedThreadId: root.controller.selectedThreadId
                     property bool initialPositionActive: false
                     property bool initialPositionScheduled: false
                     property string pendingInitialPositionThreadId
-
                     function cancelInitialPosition() {
                         initialPositionActive = false;
                         initialPositionScheduled = false;
@@ -245,7 +253,7 @@ Page {
                         if (conversationLoading || !pendingInitialPositionThreadId || pendingInitialPositionThreadId !== selectedThreadId || initialPositionScheduled)
                             return;
                         initialPositionScheduled = true;
-                        Qt.callLater(messageList.applyInitialPosition);
+                        Qt.callLater(timelineList.applyInitialPosition);
                     }
 
                     function finishInitialPosition() {
@@ -254,7 +262,7 @@ Page {
 
                         forceLayout();
                         positionViewAtEnd();
-                        Qt.callLater(messageList.completeInitialPosition);
+                        Qt.callLater(timelineList.completeInitialPosition);
                     }
 
                     function completeInitialPosition() {
@@ -275,8 +283,8 @@ Page {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    spacing: 14
-                    model: root.controller.messages
+                    spacing: 10
+                    model: root.controller.timeline
                     // Temporary mitigation for ListView's variable-height content estimate.
                     // Replace this with cached row heights and anchored scrolling.
                     cacheBuffer: Math.max(height * 4, 2048)
@@ -303,31 +311,41 @@ Page {
                         id: initialPositionStabilityTimer
 
                         interval: 100
-                        onTriggered: messageList.finishInitialPosition()
+                        onTriggered: timelineList.finishInitialPosition()
                     }
 
                     delegate: Item {
-                        id: messageDelegate
+                        id: timelineDelegate
 
+                        required property string entryId
+                        required property string turnId
+                        required property bool activityGroup
                         required property bool fromUser
                         required property bool commentary
+                        required property bool finalAnswer
                         required property string text
+                        required property string activityLabel
+                        required property int activityCount
+                        required property var activityItems
+                        required property bool failed
+                        required property bool running
+                        property bool groupExpanded: false
 
                         width: ListView.view.width
-                        implicitHeight: messageCard.implicitHeight
+                        implicitHeight: activityGroup ? activityCard.implicitHeight : messageCard.implicitHeight
 
                         Rectangle {
                             id: messageCard
 
-                            anchors.right: messageDelegate.fromUser ? parent.right : undefined
-                            anchors.left: messageDelegate.fromUser ? undefined : parent.left
-                            width: Math.min(implicitWidth, parent.width * 0.86)
+                            anchors.right: timelineDelegate.fromUser ? parent.right : undefined
+                            anchors.left: timelineDelegate.fromUser ? undefined : parent.left
+                            width: Math.min(implicitWidth, parent.width * (timelineDelegate.commentary ? 0.92 : 0.86))
                             implicitWidth: Math.max(220, messageContent.implicitWidth + 28)
-                            implicitHeight: messageContent.implicitHeight + 24
+                            implicitHeight: visible ? messageContent.implicitHeight + 24 : 0
                             radius: 12
-                            color: messageDelegate.fromUser ? root.palette.alternateBase : root.palette.base
-                            border.color: root.palette.mid
-                            opacity: messageDelegate.commentary ? 0.72 : 1
+                            color: timelineDelegate.commentary ? "transparent" : (timelineDelegate.fromUser ? root.palette.alternateBase : root.palette.base)
+                            border.color: timelineDelegate.commentary ? "transparent" : root.palette.mid
+                            visible: !timelineDelegate.activityGroup
 
                             ColumnLayout {
                                 id: messageContent
@@ -339,7 +357,7 @@ Page {
                                 spacing: 6
 
                                 Label {
-                                    text: messageDelegate.fromUser ? qsTr("You") : (messageDelegate.commentary ? qsTr("Codex · Commentary") : qsTr("Codex"))
+                                    text: timelineDelegate.fromUser ? qsTr("You") : (timelineDelegate.commentary ? qsTr("Codex · Commentary") : qsTr("Codex"))
                                     color: root.palette.placeholderText
                                     font.pixelSize: 11
                                     font.weight: Font.DemiBold
@@ -347,7 +365,7 @@ Page {
 
                                 TextEdit {
                                     Layout.fillWidth: true
-                                    text: messageDelegate.text
+                                    text: timelineDelegate.text
                                     color: root.palette.text
                                     font: root.font
                                     readOnly: true
@@ -357,16 +375,169 @@ Page {
                                 }
                             }
                         }
+
+                        Item {
+                            id: activityCard
+
+                            anchors.left: parent.left
+                            width: Math.min(parent.width * 0.92, 820)
+                            implicitHeight: visible ? activityColumn.implicitHeight : 0
+                            visible: timelineDelegate.activityGroup
+
+                            ColumnLayout {
+                                id: activityColumn
+
+                                width: parent.width
+                                spacing: 2
+
+                                ItemDelegate {
+                                    Layout.fillWidth: true
+                                    leftPadding: 6
+                                    rightPadding: 8
+                                    topPadding: 5
+                                    bottomPadding: 5
+                                    hoverEnabled: true
+                                    onClicked: timelineDelegate.groupExpanded = !timelineDelegate.groupExpanded
+
+                                    contentItem: RowLayout {
+                                        spacing: 8
+
+                                        Label {
+                                            text: timelineDelegate.groupExpanded ? "▾" : "›"
+                                            color: root.palette.placeholderText
+                                            font.pixelSize: 13
+                                        }
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 8
+                                            Layout.preferredHeight: 8
+                                            radius: width / 2
+                                            color: timelineDelegate.failed ? "#B4232A" : (timelineDelegate.running ? root.palette.highlight : root.palette.mid)
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: timelineDelegate.activityLabel
+                                            color: root.palette.placeholderText
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Label {
+                                            text: qsTr("× %1").arg(timelineDelegate.activityCount)
+                                            color: root.palette.placeholderText
+                                            font.pixelSize: 11
+                                            visible: timelineDelegate.activityCount > 1
+                                        }
+                                    }
+                                }
+
+                                Repeater {
+                                    model: timelineDelegate.groupExpanded ? timelineDelegate.activityItems : []
+
+                                    delegate: ItemDelegate {
+                                        id: activityItemDelegate
+
+                                        required property var modelData
+                                        property bool detailsExpanded: false
+
+                                        Layout.fillWidth: true
+                                        leftPadding: 28
+                                        rightPadding: 8
+                                        topPadding: 6
+                                        bottomPadding: 6
+                                        hoverEnabled: modelData.expandable
+                                        onClicked: {
+                                            if (modelData.expandable)
+                                                detailsExpanded = !detailsExpanded;
+                                        }
+
+                                        contentItem: ColumnLayout {
+                                            spacing: 4
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 7
+
+                                                Rectangle {
+                                                    Layout.preferredWidth: 7
+                                                    Layout.preferredHeight: 7
+                                                    radius: width / 2
+                                                    color: activityItemDelegate.modelData.failed ? "#B4232A" : (activityItemDelegate.modelData.running ? root.palette.highlight : root.palette.mid)
+                                                }
+
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    text: activityItemDelegate.modelData.summary
+                                                    textFormat: Text.PlainText
+                                                    color: root.palette.text
+                                                    wrapMode: Text.Wrap
+                                                    maximumLineCount: activityItemDelegate.detailsExpanded ? 1000 : 2
+                                                    elide: Text.ElideRight
+                                                }
+
+                                                Label {
+                                                    text: activityItemDelegate.modelData.statusLabel
+                                                    color: activityItemDelegate.modelData.failed ? "#B4232A" : root.palette.placeholderText
+                                                    font.pixelSize: 10
+                                                    visible: text.length > 0
+                                                }
+
+                                                Label {
+                                                    text: activityItemDelegate.detailsExpanded ? "▾" : "›"
+                                                    color: root.palette.placeholderText
+                                                    visible: activityItemDelegate.modelData.expandable
+                                                }
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: activityItemDelegate.modelData.context
+                                                color: root.palette.placeholderText
+                                                font.pixelSize: 11
+                                                elide: Text.ElideMiddle
+                                                visible: activityItemDelegate.detailsExpanded && text.length > 0
+                                            }
+
+                                            TextEdit {
+                                                Layout.fillWidth: true
+                                                text: activityItemDelegate.modelData.command
+                                                color: root.palette.placeholderText
+                                                font.family: Typography.monoFamily
+                                                font.pixelSize: 11
+                                                readOnly: true
+                                                selectByMouse: true
+                                                wrapMode: TextEdit.Wrap
+                                                textFormat: TextEdit.PlainText
+                                                visible: activityItemDelegate.detailsExpanded && text.length > 0
+                                            }
+
+                                            TextEdit {
+                                                Layout.fillWidth: true
+                                                text: activityItemDelegate.modelData.detail
+                                                color: root.palette.text
+                                                font.family: Typography.monoFamily
+                                                font.pixelSize: 11
+                                                readOnly: true
+                                                selectByMouse: true
+                                                wrapMode: TextEdit.Wrap
+                                                textFormat: TextEdit.PlainText
+                                                visible: activityItemDelegate.detailsExpanded && text.length > 0
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     Label {
                         anchors.centerIn: parent
                         width: Math.min(parent.width - 48, 360)
-                        text: root.controller.loadingConversation ? qsTr("Loading conversation…") : (root.controller.selectedThreadId ? qsTr("This conversation contains no displayable messages.") : qsTr("Select a conversation to read it."))
+                        text: root.controller.loadingConversation ? qsTr("Loading conversation…") : (root.controller.selectedThreadId ? qsTr("This conversation contains no displayable history.") : qsTr("Select a conversation to read it."))
                         color: root.palette.placeholderText
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
-                        visible: messageList.count === 0
+                        visible: timelineList.count === 0
                     }
                 }
             }

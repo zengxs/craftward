@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::{
-    AgentMessagePhase, ServerInfo, Thread, ThreadItem, ThreadSummary, Turn, TurnStatus, UserInput,
+    Activity, ActivityKind, ActivityStatus, AgentMessagePhase, CommandAction, CommandActionKind,
+    ServerInfo, Thread, ThreadItem, ThreadSummary, Turn, TurnStatus, UserInput,
 };
 
 #[derive(Serialize)]
@@ -234,6 +235,192 @@ impl WireThreadItem {
                     }),
                 })
             }
+            "plan" => {
+                let fields: PlanFields = serde_json::from_value(Value::Object(self.fields))?;
+                Ok(activity(
+                    self.id,
+                    ActivityKind::Plan,
+                    ActivityStatus::Unspecified,
+                    fields.text,
+                ))
+            }
+            "reasoning" => Ok(ThreadItem::Other {
+                id: self.id,
+                kind: self.kind,
+            }),
+            "commandExecution" => {
+                let fields: CommandExecutionFields =
+                    serde_json::from_value(Value::Object(self.fields))?;
+                Ok(ThreadItem::Activity(Activity {
+                    id: self.id,
+                    kind: ActivityKind::CommandExecution,
+                    status: activity_status(fields.status),
+                    summary: fields.command,
+                    detail: nonempty(fields.aggregated_output),
+                    context: Some(fields.cwd.to_string_lossy().into_owned()),
+                    command_actions: fields
+                        .command_actions
+                        .into_iter()
+                        .map(WireCommandAction::into_model)
+                        .collect(),
+                }))
+            }
+            "fileChange" => {
+                let fields: FileChangeFields = serde_json::from_value(Value::Object(self.fields))?;
+                let summary = fields
+                    .changes
+                    .iter()
+                    .map(|change| change.path.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let detail = fields
+                    .changes
+                    .iter()
+                    .filter(|change| !change.diff.trim().is_empty())
+                    .map(|change| {
+                        format!("{}\n{}", change.path.to_string_lossy(), change.diff.trim())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                Ok(ThreadItem::Activity(Activity {
+                    id: self.id,
+                    kind: ActivityKind::FileChange,
+                    status: activity_status(fields.status),
+                    summary,
+                    detail: nonempty(Some(detail)),
+                    context: None,
+                    command_actions: Vec::new(),
+                }))
+            }
+            "mcpToolCall" => {
+                let fields: McpToolCallFields = serde_json::from_value(Value::Object(self.fields))?;
+                Ok(ThreadItem::Activity(Activity {
+                    id: self.id,
+                    kind: ActivityKind::ToolCall,
+                    status: activity_status(fields.status),
+                    summary: format!("{} / {}", fields.server, fields.tool),
+                    detail: json_detail(fields.arguments),
+                    context: None,
+                    command_actions: Vec::new(),
+                }))
+            }
+            "dynamicToolCall" => {
+                let fields: DynamicToolCallFields =
+                    serde_json::from_value(Value::Object(self.fields))?;
+                let summary = match fields.namespace {
+                    Some(namespace) if !namespace.trim().is_empty() => {
+                        format!("{namespace} / {}", fields.tool)
+                    }
+                    _ => fields.tool,
+                };
+                Ok(ThreadItem::Activity(Activity {
+                    id: self.id,
+                    kind: ActivityKind::ToolCall,
+                    status: activity_status(fields.status),
+                    summary,
+                    detail: json_detail(fields.arguments),
+                    context: None,
+                    command_actions: Vec::new(),
+                }))
+            }
+            "collabAgentToolCall" => {
+                let fields: CollabAgentToolCallFields =
+                    serde_json::from_value(Value::Object(self.fields))?;
+                Ok(ThreadItem::Activity(Activity {
+                    id: self.id,
+                    kind: ActivityKind::Collaboration,
+                    status: activity_status(fields.status),
+                    summary: fields.tool,
+                    detail: nonempty(fields.prompt),
+                    context: nonempty(fields.model),
+                    command_actions: Vec::new(),
+                }))
+            }
+            "subAgentActivity" => {
+                let fields: SubAgentActivityFields =
+                    serde_json::from_value(Value::Object(self.fields))?;
+                Ok(ThreadItem::Activity(Activity {
+                    id: self.id,
+                    kind: ActivityKind::Collaboration,
+                    status: ActivityStatus::Unspecified,
+                    summary: fields.agent_path,
+                    detail: nonempty(Some(fields.kind)),
+                    context: nonempty(Some(fields.agent_thread_id)),
+                    command_actions: Vec::new(),
+                }))
+            }
+            "webSearch" => {
+                let fields: WebSearchFields = serde_json::from_value(Value::Object(self.fields))?;
+                Ok(activity(
+                    self.id,
+                    ActivityKind::WebSearch,
+                    ActivityStatus::Unspecified,
+                    fields.query,
+                ))
+            }
+            "imageView" => {
+                let fields: ImageViewFields = serde_json::from_value(Value::Object(self.fields))?;
+                Ok(activity(
+                    self.id,
+                    ActivityKind::ImageView,
+                    ActivityStatus::Unspecified,
+                    fields.path.to_string_lossy().into_owned(),
+                ))
+            }
+            "sleep" => {
+                let fields: SleepFields = serde_json::from_value(Value::Object(self.fields))?;
+                Ok(activity(
+                    self.id,
+                    ActivityKind::Wait,
+                    ActivityStatus::Completed,
+                    format!("{} ms", fields.duration_ms),
+                ))
+            }
+            "imageGeneration" => {
+                let fields: ImageGenerationFields =
+                    serde_json::from_value(Value::Object(self.fields))?;
+                let saved_path = fields
+                    .saved_path
+                    .map(|path| path.to_string_lossy().into_owned());
+                let summary = fields
+                    .revised_prompt
+                    .filter(|prompt| !prompt.trim().is_empty())
+                    .or_else(|| saved_path.clone())
+                    .unwrap_or_else(|| fields.result.clone());
+                Ok(ThreadItem::Activity(Activity {
+                    id: self.id,
+                    kind: ActivityKind::ImageGeneration,
+                    status: activity_status(fields.status),
+                    summary,
+                    detail: nonempty(Some(fields.result)),
+                    context: saved_path,
+                    command_actions: Vec::new(),
+                }))
+            }
+            "enteredReviewMode" => {
+                let fields: ReviewFields = serde_json::from_value(Value::Object(self.fields))?;
+                Ok(activity(
+                    self.id,
+                    ActivityKind::ReviewStarted,
+                    ActivityStatus::Completed,
+                    fields.review,
+                ))
+            }
+            "exitedReviewMode" => {
+                let fields: ReviewFields = serde_json::from_value(Value::Object(self.fields))?;
+                Ok(activity(
+                    self.id,
+                    ActivityKind::ReviewCompleted,
+                    ActivityStatus::Completed,
+                    fields.review,
+                ))
+            }
+            "contextCompaction" => Ok(activity(
+                self.id,
+                ActivityKind::ContextCompaction,
+                ActivityStatus::Completed,
+                String::new(),
+            )),
             _ => Ok(ThreadItem::Other {
                 id: self.id,
                 kind: self.kind,
@@ -252,6 +439,167 @@ struct AgentMessageFields {
     text: String,
     #[serde(default)]
     phase: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PlanFields {
+    text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandExecutionFields {
+    command: String,
+    command_actions: Vec<WireCommandAction>,
+    cwd: PathBuf,
+    status: String,
+    #[serde(default)]
+    aggregated_output: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WireCommandAction {
+    command: String,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    path: Option<PathBuf>,
+    #[serde(default)]
+    query: Option<String>,
+}
+
+impl WireCommandAction {
+    fn into_model(self) -> CommandAction {
+        CommandAction {
+            kind: match self.kind.as_str() {
+                "read" => CommandActionKind::Read,
+                "listFiles" => CommandActionKind::ListFiles,
+                "search" => CommandActionKind::Search,
+                _ => CommandActionKind::Unknown,
+            },
+            command: self.command,
+            name: self.name,
+            path: self.path,
+            query: self.query,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct FileChangeFields {
+    changes: Vec<FileUpdateChange>,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct FileUpdateChange {
+    path: PathBuf,
+    diff: String,
+}
+
+#[derive(Deserialize)]
+struct McpToolCallFields {
+    arguments: Value,
+    server: String,
+    status: String,
+    tool: String,
+}
+
+#[derive(Deserialize)]
+struct DynamicToolCallFields {
+    arguments: Value,
+    #[serde(default)]
+    namespace: Option<String>,
+    status: String,
+    tool: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CollabAgentToolCallFields {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
+    status: String,
+    tool: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubAgentActivityFields {
+    agent_path: String,
+    agent_thread_id: String,
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct WebSearchFields {
+    query: String,
+}
+
+#[derive(Deserialize)]
+struct ImageViewFields {
+    path: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SleepFields {
+    duration_ms: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageGenerationFields {
+    result: String,
+    #[serde(default)]
+    revised_prompt: Option<String>,
+    #[serde(default)]
+    saved_path: Option<PathBuf>,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct ReviewFields {
+    review: String,
+}
+
+fn activity(id: String, kind: ActivityKind, status: ActivityStatus, summary: String) -> ThreadItem {
+    ThreadItem::Activity(Activity {
+        id,
+        kind,
+        status,
+        summary,
+        detail: None,
+        context: None,
+        command_actions: Vec::new(),
+    })
+}
+
+fn activity_status(status: String) -> ActivityStatus {
+    match status.as_str() {
+        "inProgress" => ActivityStatus::InProgress,
+        "completed" => ActivityStatus::Completed,
+        "failed" => ActivityStatus::Failed,
+        "declined" => ActivityStatus::Declined,
+        _ => ActivityStatus::Unknown(status),
+    }
+}
+
+fn nonempty(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
+fn json_detail(value: Value) -> Option<String> {
+    match &value {
+        Value::Null => None,
+        Value::Object(fields) if fields.is_empty() => None,
+        Value::Array(items) if items.is_empty() => None,
+        _ => Some(serde_json::to_string_pretty(&value).expect("JSON values always serialize")),
+    }
 }
 
 #[derive(Deserialize)]
@@ -357,6 +705,28 @@ mod tests {
                         "phase": "final_answer"
                     }, {
                         "id": "item-3",
+                        "type": "reasoning",
+                        "summary": ["Inspect the relevant files."],
+                        "content": []
+                    }, {
+                        "id": "item-4",
+                        "type": "commandExecution",
+                        "command": "sed -n 1,80p src/main.rs",
+                        "commandActions": [{
+                            "type": "read",
+                            "command": "sed -n 1,80p src/main.rs",
+                            "name": "src/main.rs",
+                            "path": "/workspace/src/main.rs"
+                        }],
+                        "cwd": "/workspace",
+                        "status": "completed",
+                        "aggregatedOutput": "fn main() {}"
+                    }, {
+                        "id": "item-5",
+                        "type": "webSearch",
+                        "query": "Codex app-server protocol"
+                    }, {
+                        "id": "item-6",
                         "type": "futureItem",
                         "value": 2
                     }]
@@ -391,6 +761,34 @@ mod tests {
                 },
                 ThreadItem::Other {
                     id: "item-3".to_owned(),
+                    kind: "reasoning".to_owned()
+                },
+                ThreadItem::Activity(Activity {
+                    id: "item-4".to_owned(),
+                    kind: ActivityKind::CommandExecution,
+                    status: ActivityStatus::Completed,
+                    summary: "sed -n 1,80p src/main.rs".to_owned(),
+                    detail: Some("fn main() {}".to_owned()),
+                    context: Some("/workspace".to_owned()),
+                    command_actions: vec![CommandAction {
+                        kind: CommandActionKind::Read,
+                        command: "sed -n 1,80p src/main.rs".to_owned(),
+                        name: Some("src/main.rs".to_owned()),
+                        path: Some(PathBuf::from("/workspace/src/main.rs")),
+                        query: None,
+                    }],
+                }),
+                ThreadItem::Activity(Activity {
+                    id: "item-5".to_owned(),
+                    kind: ActivityKind::WebSearch,
+                    status: ActivityStatus::Unspecified,
+                    summary: "Codex app-server protocol".to_owned(),
+                    detail: None,
+                    context: None,
+                    command_actions: vec![],
+                }),
+                ThreadItem::Other {
+                    id: "item-6".to_owned(),
                     kind: "futureItem".to_owned()
                 }
             ]

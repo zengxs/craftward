@@ -60,7 +60,7 @@ codexExecutable()
 CodexHistoryController::CodexHistoryController(QObject* parent)
   : QObject(parent)
   , threadModel_(this)
-  , messageModel_(this)
+  , timelineModel_(this)
 {
     ++observerGeneration_;
     callbackContext_ = std::make_unique<CodexHistoryCallbackContext>(CodexHistoryCallbackContext{
@@ -96,10 +96,10 @@ CodexHistoryController::threads()
     return &threadModel_;
 }
 
-CodexMessageModel*
-CodexHistoryController::messages()
+CodexTimelineModel*
+CodexHistoryController::timeline()
 {
-    return &messageModel_;
+    return &timelineModel_;
 }
 
 QString
@@ -130,6 +130,12 @@ bool
 CodexHistoryController::loadingConversation() const
 {
     return loadingConversation_;
+}
+
+bool
+CodexHistoryController::activityHistoryPartial() const
+{
+    return activityHistoryPartial_;
 }
 
 void
@@ -177,7 +183,8 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     const QByteArray encodedThreadId = threadId.toUtf8();
     selectedThreadId_ = threadId;
     selectedThreadTitle_ = title;
-    messageModel_.clear();
+    timelineModel_.clear();
+    setActivityHistoryPartial(false);
     setConversationErrorMessage({});
     loadingConversation_ = true;
     emit selectionChanged();
@@ -230,6 +237,15 @@ CodexHistoryController::setConversationErrorMessage(const QString& message)
         return;
     conversationErrorMessage_ = message;
     updateErrorMessage();
+}
+
+void
+CodexHistoryController::setActivityHistoryPartial(bool partial)
+{
+    if (activityHistoryPartial_ == partial)
+        return;
+    activityHistoryPartial_ = partial;
+    emit activityHistoryPartialChanged();
 }
 
 void
@@ -328,8 +344,9 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 selectedThreadTitle_ = conversation.title();
                 emit selectionChanged();
             }
-            auto messages = conversation.messages();
-            messageModel_.reconcileMessages(std::move(messages));
+            auto timeline = conversation.timeline();
+            timelineModel_.reconcileTimeline(std::move(timeline));
+            setActivityHistoryPartial(conversation.activityHistoryIsPartial());
             finishConversationLoading({});
             break;
         }

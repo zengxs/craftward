@@ -4,10 +4,10 @@ qt_add_qml_module(CraftwardCodex
     SOURCES
         codexhistorycontroller.cpp
         codexhistorycontroller.h
-        codexmessagemodel.cpp
-        codexmessagemodel.h
         codexthreadmodel.cpp
         codexthreadmodel.h
+        codextimelinemodel.cpp
+        codextimelinemodel.h
 )
 
 qt_add_protobuf(CraftwardCodex

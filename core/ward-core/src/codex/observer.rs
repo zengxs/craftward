@@ -619,7 +619,14 @@ mod tests {
             panic!("the event must contain a conversation");
         };
         assert_eq!(conversation.title, "Example");
-        assert_eq!(conversation.messages[0].message_id, "agent-1");
+        assert_eq!(conversation.timeline.len(), 1);
+        assert_eq!(conversation.timeline[0].turn_id, "turn-1");
+        let Some(wire::timeline_item::Body::Message(message)) =
+            conversation.timeline[0].body.as_ref()
+        else {
+            panic!("the timeline item must contain a message");
+        };
+        assert_eq!(message.message_id, "agent-1");
     }
 
     #[test]
