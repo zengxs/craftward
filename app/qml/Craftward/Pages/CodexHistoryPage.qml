@@ -16,19 +16,19 @@ Page {
 
     background: Rectangle {
         color: root.palette.window
+    }
 
-        WindowMoveHandler {
-            targetWindow: root.ApplicationWindow.window
-        }
+    WindowMoveHandler {
+        targetWindow: root.ApplicationWindow.window
     }
 
     SplitView {
         anchors {
             fill: parent
-            topMargin: 20
-            leftMargin: 24
-            rightMargin: 24
-            bottomMargin: 24
+            topMargin: root.SafeArea.margins.top + 20
+            leftMargin: Math.max(24, root.SafeArea.margins.left)
+            rightMargin: Math.max(24, root.SafeArea.margins.right)
+            bottomMargin: Math.max(24, root.SafeArea.margins.bottom)
         }
         orientation: Qt.Horizontal
 

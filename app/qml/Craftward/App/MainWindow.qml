@@ -29,6 +29,10 @@ ApplicationWindow {
     flags: Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
     visible: true
     title: qsTr("Craftward")
+    topPadding: 0
+    leftPadding: 0
+    rightPadding: 0
+    bottomPadding: 0
 
     menuBar: MenuBar {
         Menu {

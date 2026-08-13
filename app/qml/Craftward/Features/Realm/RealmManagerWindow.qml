@@ -32,6 +32,10 @@ ApplicationWindow {
     visible: false
     flags: Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
     title: qsTr("Realm Manager")
+    topPadding: 0
+    leftPadding: 0
+    rightPadding: 0
+    bottomPadding: 0
 
     RealmPage {
         anchors.fill: parent

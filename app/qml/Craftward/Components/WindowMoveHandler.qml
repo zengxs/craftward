@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Xiangsong Zeng
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import QtQuick
 
 DragHandler {
@@ -6,11 +9,10 @@ DragHandler {
     target: null
     acceptedButtons: Qt.LeftButton
     grabPermissions: PointerHandler.ApprovesTakeOverByAnything
-    // QTBUG-141220: The Qt Cocoa backend can make startSystemMove() fail
-    // intermittently because NSApp.currentEvent may not be a mouse event when
-    // this callback runs. Upgrade Qt as soon as a release containing the fix is
-    // available:
+    // QTBUG-141220: Qt 6.11.1 can observe an unrelated NSApp.currentEvent here.
+    // Remove the native workaround after upgrading to a Qt release containing
+    // the upstream fix:
     // https://qt-project.atlassian.net/browse/QTBUG-141220
     onActiveChanged: if (active)
-        targetWindow.startSystemMove()
+        WindowMoveHelper.startSystemMove(targetWindow)
 }

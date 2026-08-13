@@ -3,7 +3,9 @@ qt_add_qml_module(CraftwardComponents
     URI Craftward.Components
     SOURCES
         "${PROJECT_SOURCE_DIR}/src/components/macos/typography.mm"
+        "${PROJECT_SOURCE_DIR}/src/components/macos/windowmovehelper.mm"
         "${PROJECT_SOURCE_DIR}/src/components/typography.h"
+        "${PROJECT_SOURCE_DIR}/src/components/windowmovehelper.h"
     QML_FILES
         ConfirmationDialog.qml
         IconButton.qml
@@ -20,6 +22,7 @@ target_include_directories(CraftwardComponents
 
 target_link_libraries(CraftwardComponents
     PRIVATE
+        "${CRAFTWARD_APPKIT_FRAMEWORK}"
         "${CRAFTWARD_CORE_TEXT_FRAMEWORK}"
         "${CRAFTWARD_FOUNDATION_FRAMEWORK}"
         Qt6::Gui

@@ -17,10 +17,10 @@ Page {
 
     background: Rectangle {
         color: root.palette.window
+    }
 
-        WindowMoveHandler {
-            targetWindow: root.ApplicationWindow.window
-        }
+    WindowMoveHandler {
+        targetWindow: root.ApplicationWindow.window
     }
 
     FolderDialog {
