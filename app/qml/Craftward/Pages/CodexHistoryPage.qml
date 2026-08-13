@@ -213,6 +213,65 @@ Page {
                 ListView {
                     id: messageList
 
+                    readonly property bool conversationLoading: root.controller.loadingConversation
+                    readonly property string selectedThreadId: root.controller.selectedThreadId
+                    property bool initialPositionActive: false
+                    property bool initialPositionScheduled: false
+                    property string pendingInitialPositionThreadId
+
+                    function cancelInitialPosition() {
+                        initialPositionActive = false;
+                        initialPositionScheduled = false;
+                        pendingInitialPositionThreadId = "";
+                        initialPositionStabilityTimer.stop();
+                    }
+
+                    function applyInitialPosition() {
+                        initialPositionScheduled = false;
+                        if (conversationLoading || pendingInitialPositionThreadId !== selectedThreadId)
+                            return;
+                        if (count === 0) {
+                            cancelInitialPosition();
+                            return;
+                        }
+
+                        initialPositionActive = true;
+                        forceLayout();
+                        positionViewAtEnd();
+                        initialPositionStabilityTimer.restart();
+                    }
+
+                    function scheduleInitialPosition() {
+                        if (conversationLoading || !pendingInitialPositionThreadId || pendingInitialPositionThreadId !== selectedThreadId || initialPositionScheduled)
+                            return;
+                        initialPositionScheduled = true;
+                        Qt.callLater(messageList.applyInitialPosition);
+                    }
+
+                    function finishInitialPosition() {
+                        if (!initialPositionActive || conversationLoading || pendingInitialPositionThreadId !== selectedThreadId)
+                            return;
+
+                        forceLayout();
+                        positionViewAtEnd();
+                        Qt.callLater(messageList.completeInitialPosition);
+                    }
+
+                    function completeInitialPosition() {
+                        if (!initialPositionActive || conversationLoading || pendingInitialPositionThreadId !== selectedThreadId)
+                            return;
+                        if (initialPositionStabilityTimer.running)
+                            return;
+
+                        forceLayout();
+                        positionViewAtEnd();
+                        if (initialPositionStabilityTimer.running)
+                            return;
+
+                        initialPositionActive = false;
+                        pendingInitialPositionThreadId = "";
+                    }
+
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
@@ -222,6 +281,30 @@ Page {
                     // Replace this with cached row heights and anchored scrolling.
                     cacheBuffer: Math.max(height * 4, 2048)
                     ScrollBar.vertical: OverlayScrollBar {}
+
+                    onContentHeightChanged: {
+                        if (!initialPositionActive)
+                            return;
+                        initialPositionStabilityTimer.restart();
+                        scheduleInitialPosition();
+                    }
+                    onConversationLoadingChanged: scheduleInitialPosition()
+                    onDraggingChanged: {
+                        if (dragging)
+                            cancelInitialPosition();
+                    }
+                    onSelectedThreadIdChanged: {
+                        cancelInitialPosition();
+                        pendingInitialPositionThreadId = selectedThreadId;
+                        scheduleInitialPosition();
+                    }
+
+                    Timer {
+                        id: initialPositionStabilityTimer
+
+                        interval: 100
+                        onTriggered: messageList.finishInitialPosition()
+                    }
 
                     delegate: Item {
                         id: messageDelegate
