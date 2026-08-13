@@ -14,6 +14,51 @@ Page {
 
     required property CodexHistoryController controller
 
+    function submitPrompt() {
+        const prompt = promptEditor.text;
+        if (root.controller.startTurn(prompt)) {
+            timelineList.followLiveTail = true;
+            Qt.callLater(timelineList.positionViewAtEnd);
+        }
+    }
+
+    CodexComposerState {
+        id: composerState
+
+        threadId: root.controller.selectedThreadId
+        onDraftChanged: {
+            if (promptEditor.text !== draft)
+                promptEditor.text = draft;
+        }
+        onEditorShouldLoseFocus: promptEditor.focus = false
+    }
+
+    function releaseWriteAccessWhenHidden() {
+        const window = root.ApplicationWindow.window;
+        if (window && !window.visible && !root.controller.turnRunning)
+            root.controller.releaseWriteAccess();
+    }
+
+    Connections {
+        target: root.ApplicationWindow.window
+
+        function onVisibleChanged() {
+            root.releaseWriteAccessWhenHidden();
+        }
+    }
+
+    Connections {
+        target: root.controller
+
+        function onTurnStateChanged() {
+            root.releaseWriteAccessWhenHidden();
+        }
+
+        function onTurnStarted() {
+            composerState.confirmTurnStarted();
+        }
+    }
+
     background: Rectangle {
         color: root.palette.window
     }
@@ -52,7 +97,7 @@ Page {
 
                     Label {
                         Layout.fillWidth: true
-                        text: qsTr("Codex History")
+                        text: qsTr("Codex")
                         font.pixelSize: 20
                         font.weight: Font.DemiBold
                     }
@@ -66,14 +111,14 @@ Page {
 
                     Button {
                         text: qsTr("Refresh")
-                        enabled: !root.controller.loadingThreads
+                        enabled: !root.controller.loadingThreads && !root.controller.turnRunning
                         onClicked: root.controller.refresh()
                     }
                 }
 
                 Label {
                     Layout.fillWidth: true
-                    text: qsTr("Persisted conversations from the local Codex app-server.")
+                    text: qsTr("Continue persisted conversations through the local Codex app-server.")
                     color: root.palette.placeholderText
                     wrapMode: Text.WordWrap
                 }
@@ -100,6 +145,7 @@ Page {
                         width: ListView.view.width
                         checkable: true
                         checked: root.controller.selectedThreadId === threadId
+                        enabled: !root.controller.turnRunning
                         hoverEnabled: true
                         leftPadding: 12
                         rightPadding: 12
@@ -174,7 +220,7 @@ Page {
                     BusyIndicator {
                         Layout.preferredWidth: 22
                         Layout.preferredHeight: 22
-                        running: root.controller.loadingConversation
+                        running: root.controller.loadingConversation || root.controller.turnRunning
                         visible: running
                     }
                 }
@@ -227,6 +273,7 @@ Page {
                     property bool initialPositionActive: false
                     property bool initialPositionScheduled: false
                     property string pendingInitialPositionThreadId
+                    property bool followLiveTail: true
                     function cancelInitialPosition() {
                         initialPositionActive = false;
                         initialPositionScheduled = false;
@@ -291,18 +338,24 @@ Page {
                     ScrollBar.vertical: OverlayScrollBar {}
 
                     onContentHeightChanged: {
-                        if (!initialPositionActive)
-                            return;
-                        initialPositionStabilityTimer.restart();
-                        scheduleInitialPosition();
+                        if (initialPositionActive) {
+                            initialPositionStabilityTimer.restart();
+                            scheduleInitialPosition();
+                        } else if (followLiveTail) {
+                            Qt.callLater(timelineList.positionViewAtEnd);
+                        }
                     }
                     onConversationLoadingChanged: scheduleInitialPosition()
                     onDraggingChanged: {
-                        if (dragging)
+                        if (dragging) {
                             cancelInitialPosition();
+                            followLiveTail = false;
+                        }
                     }
+                    onMovementEnded: followLiveTail = atYEnd
                     onSelectedThreadIdChanged: {
                         cancelInitialPosition();
+                        followLiveTail = true;
                         pendingInitialPositionThreadId = selectedThreadId;
                         scheduleInitialPosition();
                     }
@@ -538,6 +591,102 @@ Page {
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                         visible: timelineList.count === 0
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: composerLayout.implicitHeight + 20
+                    radius: 10
+                    color: root.palette.base
+                    border.color: root.palette.mid
+                    visible: root.controller.selectedThreadId.length > 0
+
+                    ColumnLayout {
+                        id: composerLayout
+
+                        anchors {
+                            fill: parent
+                            margins: 10
+                        }
+                        spacing: 6
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            TextArea {
+                                id: promptEditor
+
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.min(Math.max(contentHeight + topPadding + bottomPadding, 44), 120)
+                                placeholderText: qsTr("Ask Codex to continue this conversation…")
+                                enabled: !root.controller.turnRunning
+                                wrapMode: TextEdit.Wrap
+                                selectByMouse: true
+                                onTextChanged: composerState.saveDraft(text)
+                                onActiveFocusChanged: {
+                                    if (activeFocus)
+                                        root.controller.acquireWriteAccess();
+                                }
+                                Keys.onPressed: event => {
+                                    const submitModifier = event.modifiers & (Qt.ControlModifier | Qt.MetaModifier);
+                                    if (submitModifier && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+                                        root.submitPrompt();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
+                            Button {
+                                text: root.controller.turnRunning ? qsTr("Working…") : qsTr("Send")
+                                enabled: !root.controller.turnRunning && root.controller.writeAvailability === CodexHistoryController.Writable && promptEditor.text.trim().length > 0
+                                onClicked: root.submitPrompt()
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: root.controller.writeAvailability === CodexHistoryController.Checking || root.controller.writeAvailability === CodexHistoryController.Busy || root.controller.writeAvailability === CodexHistoryController.Unavailable
+                            spacing: 6
+
+                            BusyIndicator {
+                                Layout.preferredWidth: 16
+                                Layout.preferredHeight: 16
+                                running: root.controller.writeAvailability === CodexHistoryController.Checking
+                                visible: running
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: {
+                                    if (root.controller.writeAvailability === CodexHistoryController.Checking)
+                                        return qsTr("Checking whether this conversation is available for writing…");
+                                    if (root.controller.writeAvailabilityMessage.length > 0)
+                                        return root.controller.writeAvailabilityMessage;
+                                    if (root.controller.writeAvailability === CodexHistoryController.Busy)
+                                        return qsTr("This conversation is open in another Codex client. Your draft is kept here.");
+                                    return qsTr("Writing is currently unavailable for this conversation.");
+                                }
+                                color: root.controller.writeAvailability === CodexHistoryController.Busy ? root.palette.placeholderText : root.palette.text
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Button {
+                                text: qsTr("Retry")
+                                visible: root.controller.writeAvailability === CodexHistoryController.Busy || root.controller.writeAvailability === CodexHistoryController.Unavailable
+                                onClicked: root.controller.acquireWriteAccess()
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Command and file-change approval requests are declined until approval controls are available.")
+                            color: root.palette.placeholderText
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
             }

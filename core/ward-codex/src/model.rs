@@ -45,6 +45,56 @@ pub struct Turn {
     pub items: Vec<ThreadItem>,
 }
 
+/// One streamed update emitted while Craftward owns an active Codex turn.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TurnStreamEvent {
+    TurnStarted {
+        thread_id: String,
+        turn: Turn,
+    },
+    ItemStarted {
+        thread_id: String,
+        turn_id: String,
+        item: ThreadItem,
+    },
+    ItemCompleted {
+        thread_id: String,
+        turn_id: String,
+        item: ThreadItem,
+    },
+    AgentMessageDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
+    ActivityOutputDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
+    RuntimeError {
+        thread_id: String,
+        turn_id: String,
+        message: String,
+        will_retry: bool,
+    },
+    TurnCompleted {
+        thread_id: String,
+        turn: Turn,
+    },
+    ApprovalDeclined {
+        thread_id: Option<String>,
+        method: String,
+    },
+    UnsupportedServerRequest {
+        thread_id: Option<String>,
+        method: String,
+    },
+}
+
 /// The lifecycle status recorded for a turn.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]

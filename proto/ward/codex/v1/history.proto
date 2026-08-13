@@ -41,9 +41,29 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_CONVERSATION_RECOVERED = 4;
   HISTORY_EVENT_KIND_THREADS_ERROR = 5;
   HISTORY_EVENT_KIND_CONVERSATION_ERROR = 6;
+  HISTORY_EVENT_KIND_TURN_STARTED = 7;
+  HISTORY_EVENT_KIND_TURN_COMPLETED = 8;
+  HISTORY_EVENT_KIND_TURN_ERROR = 9;
+  HISTORY_EVENT_KIND_TURN_NOTICE = 10;
+  HISTORY_EVENT_KIND_THREAD_WRITE_STATE_CHANGED = 11;
 }
 
-// One event emitted by a persisted Codex history observer.
+// The selected thread's writer availability for this Craftward observer.
+enum ThreadWriteStatus {
+  THREAD_WRITE_STATUS_UNSPECIFIED = 0;
+  THREAD_WRITE_STATUS_IDLE = 1;
+  THREAD_WRITE_STATUS_CHECKING = 2;
+  THREAD_WRITE_STATUS_WRITABLE = 3;
+  THREAD_WRITE_STATUS_BUSY = 4;
+  THREAD_WRITE_STATUS_UNAVAILABLE = 5;
+}
+
+message ThreadWriteState {
+  ThreadWriteStatus status = 1;
+  optional string message = 2;
+}
+
+// One event emitted by a Codex history and live-turn observer.
 message HistoryEvent {
   HistoryEventKind kind = 1;
   optional string thread_id = 2;
@@ -52,6 +72,7 @@ message HistoryEvent {
     ThreadPage thread_page = 3;
     Conversation conversation = 4;
     string error_message = 5;
+    ThreadWriteState thread_write_state = 6;
   }
 }
 

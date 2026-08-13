@@ -5,12 +5,12 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use crate::client::ProcessInterrupt;
-use crate::{CodexClient, CodexError, Thread, ThreadListOptions, ThreadPage};
+use crate::{CodexClient, CodexError, Thread, ThreadListOptions, ThreadPage, TurnStreamEvent};
 
-/// A cloneable handle that interrupts an in-flight history session operation.
+/// A cloneable handle that interrupts in-flight Codex session operations.
 ///
-/// Cancellation is permanent for the associated session. It terminates the
-/// currently owned app-server child process so a blocked stream read returns.
+/// Cancellation is permanent for the associated session. It terminates every
+/// currently owned app-server child process so blocked stream reads return.
 #[derive(Clone, Default)]
 pub struct CodexHistoryCancellation {
     process: ProcessInterrupt,
@@ -60,18 +60,29 @@ pub enum ThreadPagePoll {
     Unchanged,
 }
 
-/// A reusable, read-only observer for persisted Codex thread history.
+/// A reusable observer for persisted Codex history.
 ///
-/// The session owns one app-server child process and retains the last
+/// The session owns one read-only app-server child process and retains the last
 /// successful page and conversation snapshots. If the app-server stream is
 /// lost, an idempotent request is retried once through a newly initialized
-/// child process.
+/// child process. Thread writers use separate child processes.
 pub struct CodexHistorySession {
     executable: PathBuf,
     cancellation: CodexHistoryCancellation,
     client: CodexClient,
     thread_tracker: ThreadTracker,
     page_tracker: ThreadPageTracker,
+}
+
+/// An exclusive writer lease for one resumed Codex thread.
+///
+/// The underlying app-server child remains alive until this value is dropped,
+/// so a successful availability check and the following turns use the same
+/// writer. Dropping the value terminates that child and releases the writer.
+pub struct CodexThreadWriter {
+    thread_id: String,
+    cancellation: CodexHistoryCancellation,
+    client: CodexClient,
 }
 
 #[derive(Default)]
@@ -195,6 +206,62 @@ impl CodexHistorySession {
                 }
             }
             Err(error) => Err(error),
+        }
+    }
+}
+
+impl CodexThreadWriter {
+    /// Acquires the writer for a persisted thread on a dedicated app-server
+    /// child controlled by the supplied cancellation handle.
+    pub fn acquire_with_cancellation(
+        executable: impl AsRef<OsStr>,
+        cancellation: CodexHistoryCancellation,
+        thread_id: &str,
+    ) -> Result<(Self, Thread), CodexError> {
+        let executable = PathBuf::from(executable.as_ref());
+        let mut client = CodexClient::spawn_interruptible(&executable, &cancellation.process)?;
+        let thread = match client.resume_thread(thread_id) {
+            Err(error) if error.is_connection_lost() && !cancellation.is_cancelled() => {
+                client = CodexClient::spawn_interruptible(&executable, &cancellation.process)?;
+                client.resume_thread(thread_id)?
+            }
+            result => result?,
+        };
+        if cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        Ok((
+            Self {
+                thread_id: thread_id.to_owned(),
+                cancellation,
+                client,
+            },
+            thread,
+        ))
+    }
+
+    #[must_use]
+    pub fn thread_id(&self) -> &str {
+        &self.thread_id
+    }
+
+    /// Starts a text turn without resuming again, preserving the writer lease
+    /// acquired on this same connection.
+    pub fn start_text_turn(
+        &mut self,
+        text: &str,
+        mut on_event: impl FnMut(TurnStreamEvent),
+    ) -> Result<(), CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        let result = self
+            .client
+            .start_text_turn(&self.thread_id, text, &mut on_event);
+        if self.cancellation.is_cancelled() {
+            Err(CodexError::Interrupted)
+        } else {
+            result
         }
     }
 }

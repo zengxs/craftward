@@ -27,9 +27,22 @@ tasks:
         --no-recurse-submodules
         --
         ":(glob)qml/**/*.qml"
+        ":(glob)tests/**/*.qml"
         | xargs -0 sh -c
         'formatter=$1; shift; for path do test ! -f "$path" || "$formatter" -i "$path" || exit; done'
         sh "$QT6_ROOT/bin/qmlformat"
+
+  test:qml:
+    desc: Run QML regression tests
+    requires:
+      vars: [QT6_ROOT]
+    preconditions:
+      - sh: test -x "$QT6_ROOT/bin/qmltestrunner"
+        msg: qmltestrunner was not found under QT6_ROOT
+    env:
+      QT_QPA_PLATFORM: offscreen
+    cmds:
+      - '"$QT6_ROOT/bin/qmltestrunner" -input tests/qml'
 
   configure:
     label: "app:configure:{{.BUILD_TYPE}}"

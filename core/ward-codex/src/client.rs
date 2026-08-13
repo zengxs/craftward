@@ -2,16 +2,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::ffi::OsStr;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex, Weak};
 
+use serde_json::{Value, json};
+
 use crate::protocol::{
-    Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, THREAD_LIST_METHOD,
-    THREAD_READ_METHOD, ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse,
+    Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
+    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, TURN_START_METHOD,
+    ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
+    ThreadResumeResponse, TurnStartParams, TurnStartResponse, turn_stream_event,
 };
-use crate::{CodexError, ServerInfo, Thread, ThreadPage};
+use crate::{CodexError, ServerInfo, Thread, ThreadPage, TurnStreamEvent};
 
 type AppServerConnection = Connection<BufReader<ChildStdout>, BufWriter<ChildStdin>>;
 
@@ -23,7 +27,7 @@ pub(crate) struct ProcessInterrupt {
 #[derive(Default)]
 struct ProcessInterruptState {
     interrupted: std::sync::atomic::AtomicBool,
-    child: Mutex<Option<Weak<Mutex<Child>>>>,
+    children: Mutex<Vec<Weak<Mutex<Child>>>>,
 }
 
 impl ProcessInterrupt {
@@ -31,14 +35,15 @@ impl ProcessInterrupt {
         self.inner
             .interrupted
             .store(true, std::sync::atomic::Ordering::Release);
-        let child = self
+        let children = self
             .inner
-            .child
+            .children
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .and_then(Weak::upgrade);
-        if let Some(child) = child {
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect::<Vec<_>>();
+        for child in children {
             terminate_child(&child);
         }
     }
@@ -50,14 +55,15 @@ impl ProcessInterrupt {
     }
 
     fn register(&self, child: &Arc<Mutex<Child>>) -> bool {
-        let mut active_child = self
+        let mut active_children = self
             .inner
-            .child
+            .children
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *active_child = Some(Arc::downgrade(child));
+        active_children.retain(|child| child.strong_count() > 0);
+        active_children.push(Arc::downgrade(child));
         let interrupted = self.is_interrupted();
-        drop(active_child);
+        drop(active_children);
         if interrupted {
             terminate_child(child);
         }
@@ -85,7 +91,7 @@ pub struct ThreadListOptions {
     pub archived: Option<bool>,
 }
 
-/// A synchronous, read-only client for one Codex app-server child process.
+/// A synchronous client for one Codex app-server child process.
 ///
 /// Calls block until the corresponding app-server response arrives. GUI callers
 /// should own the client on a worker thread rather than invoke it on the UI
@@ -220,6 +226,118 @@ impl CodexClient {
                 source,
             })
     }
+
+    /// Resumes a persisted thread and subscribes this connection to its events.
+    pub fn resume_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
+        let response: ThreadResumeResponse = self
+            .connection
+            .as_mut()
+            .expect("the connection exists while CodexClient is alive")
+            .request(THREAD_RESUME_METHOD, &ThreadResumeParams { thread_id })?;
+        response
+            .thread
+            .into_thread()
+            .map_err(|source| CodexError::InvalidResponse {
+                method: THREAD_RESUME_METHOD,
+                source,
+            })
+    }
+
+    /// Starts one text turn and streams events until that turn completes.
+    ///
+    /// Server approval requests are declined because Craftward does not expose
+    /// approval controls yet. Other server requests receive an unsupported
+    /// response so the app-server stream cannot remain blocked indefinitely.
+    pub fn start_text_turn(
+        &mut self,
+        thread_id: &str,
+        text: &str,
+        mut on_event: impl FnMut(TurnStreamEvent),
+    ) -> Result<(), CodexError> {
+        let connection = self
+            .connection
+            .as_mut()
+            .expect("the connection exists while CodexClient is alive");
+        start_text_turn_on_connection(connection, thread_id, text, &mut on_event)
+    }
+}
+
+fn start_text_turn_on_connection<R, W>(
+    connection: &mut Connection<R, W>,
+    thread_id: &str,
+    text: &str,
+    mut on_event: impl FnMut(TurnStreamEvent),
+) -> Result<(), CodexError>
+where
+    R: BufRead,
+    W: Write,
+{
+    let response: TurnStartResponse =
+        connection.request(TURN_START_METHOD, &TurnStartParams::text(thread_id, text))?;
+    let turn = response
+        .into_turn()
+        .map_err(|source| CodexError::InvalidResponse {
+            method: TURN_START_METHOD,
+            source,
+        })?;
+    let turn_id = turn.id.clone();
+    on_event(TurnStreamEvent::TurnStarted {
+        thread_id: thread_id.to_owned(),
+        turn,
+    });
+
+    loop {
+        match connection.next_server_message(TURN_START_METHOD)? {
+            ServerMessage::Notification { method, params } => {
+                let event = turn_stream_event(&method, params).map_err(|source| {
+                    CodexError::InvalidResponse {
+                        method: TURN_START_METHOD,
+                        source,
+                    }
+                })?;
+                let Some(event) = event else {
+                    continue;
+                };
+                let completed = matches!(
+                    &event,
+                    TurnStreamEvent::TurnCompleted {
+                        thread_id: completed_thread_id,
+                        turn,
+                    } if completed_thread_id == thread_id && turn.id == turn_id
+                );
+                on_event(event);
+                if completed {
+                    return Ok(());
+                }
+            }
+            ServerMessage::Request { id, method, params } => {
+                let request_thread_id = params
+                    .get("threadId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                if matches!(
+                    method.as_str(),
+                    "item/commandExecution/requestApproval" | "item/fileChange/requestApproval"
+                ) {
+                    connection.respond_result(id, json!({ "decision": "decline" }))?;
+                    on_event(TurnStreamEvent::ApprovalDeclined {
+                        thread_id: request_thread_id,
+                        method,
+                    });
+                } else {
+                    connection.respond_error(
+                        id,
+                        -32601,
+                        format!("Craftward does not support the server request {method}"),
+                    )?;
+                    on_event(TurnStreamEvent::UnsupportedServerRequest {
+                        thread_id: request_thread_id,
+                        method,
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl Drop for CodexClient {
@@ -234,7 +352,7 @@ impl Drop for CodexClient {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::io::{BufRead as _, BufReader, Cursor, Write as _};
     use std::time::Duration;
 
     use super::*;
@@ -308,5 +426,119 @@ mod tests {
                 .try_wait(),
             Ok(Some(_))
         ));
+    }
+
+    #[test]
+    fn interrupt_terminates_every_registered_child() {
+        let first = running_helper();
+        let second = running_helper();
+        let interrupt = ProcessInterrupt::default();
+        assert!(!interrupt.register(&first));
+        assert!(!interrupt.register(&second));
+
+        interrupt.interrupt();
+
+        for child in [first, second] {
+            assert!(matches!(
+                child
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .try_wait(),
+                Ok(Some(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn streams_a_complete_turn_in_protocol_order() {
+        let input = concat!(
+            "{\"id\":1,\"result\":{\"turn\":{\"id\":\"turn-2\",\"status\":\"inProgress\",\"items\":[]}}}\n",
+            "{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"startedAtMs\":0,\"item\":{\"id\":\"user-1\",\"type\":\"userMessage\",\"content\":[{\"type\":\"text\",\"text\":\"Continue\"}]}}}\n",
+            "{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"completedAtMs\":0,\"item\":{\"id\":\"user-1\",\"type\":\"userMessage\",\"content\":[{\"type\":\"text\",\"text\":\"Continue\"}]}}}\n",
+            "{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"startedAtMs\":1,\"item\":{\"id\":\"commentary-1\",\"type\":\"agentMessage\",\"text\":\"\",\"phase\":\"commentary\"}}}\n",
+            "{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"commentary-1\",\"delta\":\"Inspecting.\"}}\n",
+            "{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"completedAtMs\":2,\"item\":{\"id\":\"commentary-1\",\"type\":\"agentMessage\",\"text\":\"Inspecting.\",\"phase\":\"commentary\"}}}\n",
+            "{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"startedAtMs\":3,\"item\":{\"id\":\"command-1\",\"type\":\"commandExecution\",\"command\":\"pwd\",\"commandActions\":[],\"cwd\":\"/workspace\",\"status\":\"inProgress\"}}}\n",
+            "{\"id\":\"approval-1\",\"method\":\"item/commandExecution/requestApproval\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"command-1\"}}\n",
+            "{\"method\":\"item/commandExecution/outputDelta\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"command-1\",\"delta\":\"/workspace\\n\"}}\n",
+            "{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"completedAtMs\":4,\"item\":{\"id\":\"command-1\",\"type\":\"commandExecution\",\"command\":\"pwd\",\"commandActions\":[],\"cwd\":\"/workspace\",\"status\":\"completed\",\"aggregatedOutput\":\"/workspace\\n\"}}}\n",
+            "{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"startedAtMs\":5,\"item\":{\"id\":\"change-1\",\"type\":\"fileChange\",\"changes\":[{\"path\":\"/workspace/a.txt\",\"diff\":\"+hello\"}],\"status\":\"inProgress\"}}}\n",
+            "{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"completedAtMs\":6,\"item\":{\"id\":\"change-1\",\"type\":\"fileChange\",\"changes\":[{\"path\":\"/workspace/a.txt\",\"diff\":\"+hello\"}],\"status\":\"completed\"}}}\n",
+            "{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"startedAtMs\":7,\"item\":{\"id\":\"final-1\",\"type\":\"agentMessage\",\"text\":\"\",\"phase\":\"final_answer\"}}}\n",
+            "{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"final-1\",\"delta\":\"Done.\"}}\n",
+            "{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"completedAtMs\":8,\"item\":{\"id\":\"final-1\",\"type\":\"agentMessage\",\"text\":\"Done.\",\"phase\":\"final_answer\"}}}\n",
+            "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-1\",\"turn\":{\"id\":\"turn-2\",\"status\":\"completed\",\"items\":[]}}}\n"
+        );
+        let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
+        let mut events = Vec::new();
+
+        start_text_turn_on_connection(&mut connection, "thread-1", "Continue", |event| {
+            events.push(event);
+        })
+        .expect("the streamed turn should complete");
+
+        assert!(matches!(events[0], TurnStreamEvent::TurnStarted { .. }));
+        assert!(matches!(
+            events[1],
+            TurnStreamEvent::ItemStarted {
+                item: crate::ThreadItem::UserMessage { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[3],
+            TurnStreamEvent::ItemStarted {
+                item: crate::ThreadItem::AgentMessage {
+                    phase: Some(crate::AgentMessagePhase::Commentary),
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[6],
+            TurnStreamEvent::ItemStarted {
+                item: crate::ThreadItem::Activity(crate::Activity {
+                    kind: crate::ActivityKind::CommandExecution,
+                    ..
+                }),
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[7],
+            TurnStreamEvent::ApprovalDeclined { .. }
+        ));
+        assert!(matches!(
+            events[10],
+            TurnStreamEvent::ItemStarted {
+                item: crate::ThreadItem::Activity(crate::Activity {
+                    kind: crate::ActivityKind::FileChange,
+                    ..
+                }),
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[events.len() - 2],
+            TurnStreamEvent::ItemCompleted {
+                item: crate::ThreadItem::AgentMessage {
+                    phase: Some(crate::AgentMessagePhase::FinalAnswer),
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(TurnStreamEvent::TurnCompleted { .. })
+        ));
+        assert_eq!(
+            String::from_utf8(connection.writer().clone()).unwrap(),
+            concat!(
+                "{\"id\":1,\"method\":\"turn/start\",\"params\":{\"threadId\":\"thread-1\",\"input\":[{\"type\":\"text\",\"text\":\"Continue\"}]}}\n",
+                "{\"id\":\"approval-1\",\"result\":{\"decision\":\"decline\"}}\n"
+            )
+        );
     }
 }

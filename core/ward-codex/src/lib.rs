@@ -4,7 +4,7 @@
 //! Codex app-server integration for Craftward.
 //!
 //! The crate owns app-server process management, protocol initialization, and
-//! JSONL request framing. Callers receive a compact read-only model instead of
+//! JSONL request framing. Callers receive a compact normalized model instead of
 //! depending on the generated wire schema.
 
 mod client;
@@ -15,8 +15,11 @@ mod protocol;
 
 pub use client::{CodexClient, ThreadListOptions};
 pub use error::CodexError;
-pub use history::{CodexHistoryCancellation, CodexHistorySession, ThreadPagePoll, ThreadPoll};
+pub use history::{
+    CodexHistoryCancellation, CodexHistorySession, CodexThreadWriter, ThreadPagePoll, ThreadPoll,
+};
 pub use model::{
     Activity, ActivityKind, ActivityStatus, AgentMessagePhase, CommandAction, CommandActionKind,
-    ServerInfo, Thread, ThreadItem, ThreadPage, ThreadSummary, Turn, TurnStatus, UserInput,
+    ServerInfo, Thread, ThreadItem, ThreadPage, ThreadSummary, Turn, TurnStatus, TurnStreamEvent,
+    UserInput,
 };

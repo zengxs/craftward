@@ -138,9 +138,29 @@ CodexHistoryController::activityHistoryPartial() const
     return activityHistoryPartial_;
 }
 
+bool
+CodexHistoryController::turnRunning() const
+{
+    return turnRunning_;
+}
+
+CodexHistoryController::WriteAvailability
+CodexHistoryController::writeAvailability() const
+{
+    return writeAvailability_;
+}
+
+QString
+CodexHistoryController::writeAvailabilityMessage() const
+{
+    return writeAvailabilityMessage_;
+}
+
 void
 CodexHistoryController::refresh()
 {
+    if (turnRunning_)
+        return;
     if (historyObserver_ == nullptr) {
         setThreadErrorMessage(tr("The Codex history observer is unavailable."));
         if (!selectedThreadId_.isEmpty())
@@ -172,6 +192,8 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
 {
     if (threadId.isEmpty())
         return;
+    if (turnRunning_ && threadId != selectedThreadId_)
+        return;
     if (threadId == selectedThreadId_) {
         if (title != selectedThreadTitle_) {
             selectedThreadTitle_ = title;
@@ -185,6 +207,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     selectedThreadTitle_ = title;
     timelineModel_.clear();
     setActivityHistoryPartial(false);
+    setWriteAvailability(WriteAvailability::Idle);
     setConversationErrorMessage({});
     loadingConversation_ = true;
     emit selectionChanged();
@@ -202,6 +225,81 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
             message = tr("The Codex conversation could not be observed.");
         finishConversationLoading(message);
     }
+}
+
+void
+CodexHistoryController::acquireWriteAccess()
+{
+    if (selectedThreadId_.isEmpty() || turnRunning_ || writeAvailability_ == WriteAvailability::Checking ||
+        writeAvailability_ == WriteAvailability::Writable)
+        return;
+    if (historyObserver_ == nullptr) {
+        setWriteAvailability(WriteAvailability::Unavailable, tr("The Codex history observer is unavailable."));
+        return;
+    }
+
+    const QByteArray threadId = selectedThreadId_.toUtf8();
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_acquire_write(historyObserver_, threadId.constData(), &rawError)) {
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("Writing access could not be checked for this conversation.");
+        setWriteAvailability(WriteAvailability::Unavailable, message);
+        return;
+    }
+
+    setWriteAvailability(WriteAvailability::Checking);
+}
+
+void
+CodexHistoryController::releaseWriteAccess()
+{
+    if (selectedThreadId_.isEmpty() || turnRunning_ || writeAvailability_ == WriteAvailability::Idle)
+        return;
+    if (historyObserver_ == nullptr) {
+        setWriteAvailability(WriteAvailability::Idle);
+        return;
+    }
+
+    const QByteArray threadId = selectedThreadId_.toUtf8();
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_release_write(historyObserver_, threadId.constData(), &rawError)) {
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("Writing access could not be released for this conversation.");
+        setWriteAvailability(WriteAvailability::Unavailable, message);
+        return;
+    }
+
+    setWriteAvailability(WriteAvailability::Idle);
+}
+
+bool
+CodexHistoryController::startTurn(const QString& prompt)
+{
+    if (prompt.trimmed().isEmpty() || selectedThreadId_.isEmpty() || turnRunning_ ||
+        writeAvailability_ != WriteAvailability::Writable)
+        return false;
+    if (historyObserver_ == nullptr) {
+        setConversationErrorMessage(tr("The Codex history observer is unavailable."));
+        return false;
+    }
+
+    const QByteArray threadId = selectedThreadId_.toUtf8();
+    const QByteArray encodedPrompt = prompt.toUtf8();
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_start_turn(
+          historyObserver_, threadId.constData(), encodedPrompt.constData(), &rawError)) {
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("The Codex turn could not be started.");
+        setConversationErrorMessage(message);
+        return false;
+    }
+
+    setConversationErrorMessage({});
+    setTurnRunning(true);
+    return true;
 }
 
 void
@@ -246,6 +344,25 @@ CodexHistoryController::setActivityHistoryPartial(bool partial)
         return;
     activityHistoryPartial_ = partial;
     emit activityHistoryPartialChanged();
+}
+
+void
+CodexHistoryController::setTurnRunning(bool running)
+{
+    if (turnRunning_ == running)
+        return;
+    turnRunning_ = running;
+    emit turnStateChanged();
+}
+
+void
+CodexHistoryController::setWriteAvailability(WriteAvailability availability, const QString& message)
+{
+    if (writeAvailability_ == availability && writeAvailabilityMessage_ == message)
+        return;
+    writeAvailability_ = availability;
+    writeAvailabilityMessage_ = message;
+    emit writeAvailabilityChanged();
 }
 
 void
@@ -361,6 +478,68 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             finishConversationLoading(message.isEmpty() ? tr("The Codex conversation could not be observed.")
                                                         : message);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STARTED:
+            if (threadId != selectedThreadId_)
+                return;
+            setTurnRunning(true);
+            emit turnStarted();
+            break;
+        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_COMPLETED:
+            if (threadId != selectedThreadId_)
+                return;
+            setTurnRunning(false);
+            break;
+        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_ERROR: {
+            if (threadId != selectedThreadId_)
+                return;
+            setTurnRunning(false);
+            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
+            setConversationErrorMessage(message.isEmpty() ? tr("The Codex turn failed.") : message);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_NOTICE: {
+            if (threadId != selectedThreadId_)
+                return;
+            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
+            if (!message.isEmpty())
+                setConversationErrorMessage(message);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_WRITE_STATE_CHANGED: {
+            if (threadId != selectedThreadId_)
+                return;
+            if (!event.hasThreadWriteState()) {
+                setWriteAvailability(WriteAvailability::Unavailable,
+                                     tr("Ward Core returned a write-state update without a state."));
+                break;
+            }
+            const auto& state = event.threadWriteState();
+            const QString message = state.hasMessage() ? state.message() : QString();
+            using ThreadWriteStatus = ward::codex::v1::ThreadWriteStatusGadget::ThreadWriteStatus;
+            switch (state.status()) {
+                case ThreadWriteStatus::THREAD_WRITE_STATUS_IDLE:
+                    setWriteAvailability(WriteAvailability::Idle);
+                    break;
+                case ThreadWriteStatus::THREAD_WRITE_STATUS_CHECKING:
+                    setWriteAvailability(WriteAvailability::Checking, message);
+                    break;
+                case ThreadWriteStatus::THREAD_WRITE_STATUS_WRITABLE:
+                    setWriteAvailability(WriteAvailability::Writable, message);
+                    break;
+                case ThreadWriteStatus::THREAD_WRITE_STATUS_BUSY:
+                    setWriteAvailability(WriteAvailability::Busy, message);
+                    break;
+                case ThreadWriteStatus::THREAD_WRITE_STATUS_UNAVAILABLE:
+                    setWriteAvailability(WriteAvailability::Unavailable, message);
+                    break;
+                case ThreadWriteStatus::THREAD_WRITE_STATUS_UNSPECIFIED:
+                default:
+                    setWriteAvailability(WriteAvailability::Unavailable,
+                                         tr("Ward Core returned an unsupported write state."));
+                    break;
+            }
             break;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_UNSPECIFIED:

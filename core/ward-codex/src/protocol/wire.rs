@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 
 use crate::{
     Activity, ActivityKind, ActivityStatus, AgentMessagePhase, CommandAction, CommandActionKind,
-    ServerInfo, Thread, ThreadItem, ThreadSummary, Turn, TurnStatus, UserInput,
+    ServerInfo, Thread, ThreadItem, ThreadSummary, Turn, TurnStatus, TurnStreamEvent, UserInput,
 };
 
 #[derive(Serialize)]
@@ -110,6 +110,51 @@ pub(crate) struct ThreadReadResponse {
     pub(crate) thread: WireThread,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadResumeParams<'a> {
+    pub(crate) thread_id: &'a str,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ThreadResumeResponse {
+    pub(crate) thread: WireThread,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TurnStartParams<'a> {
+    pub(crate) thread_id: &'a str,
+    input: Vec<TextTurnInput<'a>>,
+}
+
+impl<'a> TurnStartParams<'a> {
+    pub(crate) fn text(thread_id: &'a str, text: &'a str) -> Self {
+        Self {
+            thread_id,
+            input: vec![TextTurnInput { kind: "text", text }],
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct TextTurnInput<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: &'a str,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TurnStartResponse {
+    turn: WireTurn,
+}
+
+impl TurnStartResponse {
+    pub(crate) fn into_turn(self) -> Result<Turn, serde_json::Error> {
+        self.turn.into_model()
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WireThread {
@@ -178,7 +223,7 @@ struct WireTurn {
 }
 
 impl WireTurn {
-    fn into_model(self) -> Result<Turn, serde_json::Error> {
+    pub(crate) fn into_model(self) -> Result<Turn, serde_json::Error> {
         let items = self
             .items
             .into_iter()
@@ -208,7 +253,7 @@ struct WireThreadItem {
 }
 
 impl WireThreadItem {
-    fn into_model(self) -> Result<ThreadItem, serde_json::Error> {
+    pub(crate) fn into_model(self) -> Result<ThreadItem, serde_json::Error> {
         match self.kind.as_str() {
             "userMessage" => {
                 let fields: UserMessageFields = serde_json::from_value(Value::Object(self.fields))?;
@@ -426,6 +471,111 @@ impl WireThreadItem {
                 kind: self.kind,
             }),
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnNotification {
+    thread_id: String,
+    turn: WireTurn,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ItemNotification {
+    thread_id: String,
+    turn_id: String,
+    item: WireThreadItem,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeltaNotification {
+    thread_id: String,
+    turn_id: String,
+    item_id: String,
+    delta: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ErrorNotification {
+    thread_id: String,
+    turn_id: String,
+    error: TurnErrorFields,
+    will_retry: bool,
+}
+
+#[derive(Deserialize)]
+struct TurnErrorFields {
+    message: String,
+}
+
+pub(crate) fn turn_stream_event(
+    method: &str,
+    params: Value,
+) -> Result<Option<TurnStreamEvent>, serde_json::Error> {
+    match method {
+        "turn/started" => {
+            let notification: TurnNotification = serde_json::from_value(params)?;
+            Ok(Some(TurnStreamEvent::TurnStarted {
+                thread_id: notification.thread_id,
+                turn: notification.turn.into_model()?,
+            }))
+        }
+        "item/started" | "item/completed" => {
+            let notification: ItemNotification = serde_json::from_value(params)?;
+            let event = if method == "item/started" {
+                TurnStreamEvent::ItemStarted {
+                    thread_id: notification.thread_id,
+                    turn_id: notification.turn_id,
+                    item: notification.item.into_model()?,
+                }
+            } else {
+                TurnStreamEvent::ItemCompleted {
+                    thread_id: notification.thread_id,
+                    turn_id: notification.turn_id,
+                    item: notification.item.into_model()?,
+                }
+            };
+            Ok(Some(event))
+        }
+        "item/agentMessage/delta" => {
+            let notification: DeltaNotification = serde_json::from_value(params)?;
+            Ok(Some(TurnStreamEvent::AgentMessageDelta {
+                thread_id: notification.thread_id,
+                turn_id: notification.turn_id,
+                item_id: notification.item_id,
+                delta: notification.delta,
+            }))
+        }
+        "item/commandExecution/outputDelta" | "item/fileChange/outputDelta" => {
+            let notification: DeltaNotification = serde_json::from_value(params)?;
+            Ok(Some(TurnStreamEvent::ActivityOutputDelta {
+                thread_id: notification.thread_id,
+                turn_id: notification.turn_id,
+                item_id: notification.item_id,
+                delta: notification.delta,
+            }))
+        }
+        "error" => {
+            let notification: ErrorNotification = serde_json::from_value(params)?;
+            Ok(Some(TurnStreamEvent::RuntimeError {
+                thread_id: notification.thread_id,
+                turn_id: notification.turn_id,
+                message: notification.error.message,
+                will_retry: notification.will_retry,
+            }))
+        }
+        "turn/completed" => {
+            let notification: TurnNotification = serde_json::from_value(params)?;
+            Ok(Some(TurnStreamEvent::TurnCompleted {
+                thread_id: notification.thread_id,
+                turn: notification.turn.into_model()?,
+            }))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -792,6 +942,96 @@ mod tests {
                     kind: "futureItem".to_owned()
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn maps_live_item_and_delta_notifications() {
+        let started = turn_stream_event(
+            "item/started",
+            serde_json::json!({
+                "threadId": "thread-1",
+                "turnId": "turn-2",
+                "startedAtMs": 10,
+                "item": {
+                    "id": "command-1",
+                    "type": "commandExecution",
+                    "command": "sed -n 1,20p src/main.rs",
+                    "commandActions": [{
+                        "type": "read",
+                        "command": "sed -n 1,20p src/main.rs",
+                        "path": "/workspace/src/main.rs"
+                    }],
+                    "cwd": "/workspace",
+                    "status": "inProgress"
+                }
+            }),
+        )
+        .unwrap()
+        .expect("the item notification should be displayable");
+        let TurnStreamEvent::ItemStarted {
+            thread_id,
+            turn_id,
+            item: ThreadItem::Activity(activity),
+        } = started
+        else {
+            panic!("the notification should start one activity");
+        };
+        assert_eq!(thread_id, "thread-1");
+        assert_eq!(turn_id, "turn-2");
+        assert_eq!(activity.status, ActivityStatus::InProgress);
+        assert_eq!(activity.command_actions[0].kind, CommandActionKind::Read);
+
+        assert_eq!(
+            turn_stream_event(
+                "item/commandExecution/outputDelta",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "itemId": "command-1",
+                    "delta": "fn main() {}"
+                }),
+            )
+            .unwrap(),
+            Some(TurnStreamEvent::ActivityOutputDelta {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-2".to_owned(),
+                item_id: "command-1".to_owned(),
+                delta: "fn main() {}".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn serializes_a_text_turn_start_request() {
+        assert_eq!(
+            serde_json::to_value(TurnStartParams::text("thread-1", "Continue")).unwrap(),
+            serde_json::json!({
+                "threadId": "thread-1",
+                "input": [{ "type": "text", "text": "Continue" }]
+            })
+        );
+    }
+
+    #[test]
+    fn maps_a_runtime_error_notification() {
+        assert_eq!(
+            turn_stream_event(
+                "error",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "willRetry": false,
+                    "error": { "message": "Connection failed" }
+                }),
+            )
+            .unwrap(),
+            Some(TurnStreamEvent::RuntimeError {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-2".to_owned(),
+                message: "Connection failed".to_owned(),
+                will_retry: false,
+            })
         );
     }
 }

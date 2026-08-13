@@ -59,6 +59,20 @@ impl CodexError {
     pub(crate) fn is_connection_lost(&self) -> bool {
         matches!(self, Self::Io { .. } | Self::UnexpectedEof(_))
     }
+
+    /// Returns whether a thread resume failed because another app-server owns
+    /// the persisted thread writer.
+    #[must_use]
+    pub fn is_thread_writer_conflict(&self) -> bool {
+        matches!(
+            self,
+            Self::Server {
+                method: "thread/resume",
+                code: -32600,
+                message,
+            } if message.contains("already has an active writer")
+        )
+    }
 }
 
 #[cfg(test)]
@@ -77,6 +91,34 @@ mod tests {
                 message: "missing".to_owned(),
             }
             .is_connection_lost()
+        );
+    }
+
+    #[test]
+    fn recognizes_only_the_thread_resume_writer_conflict() {
+        assert!(
+            CodexError::Server {
+                method: "thread/resume",
+                code: -32600,
+                message: "thread thread-1 already has an active writer".to_owned(),
+            }
+            .is_thread_writer_conflict()
+        );
+        assert!(
+            !CodexError::Server {
+                method: "thread/read",
+                code: -32600,
+                message: "thread thread-1 already has an active writer".to_owned(),
+            }
+            .is_thread_writer_conflict()
+        );
+        assert!(
+            !CodexError::Server {
+                method: "thread/resume",
+                code: -32600,
+                message: "the thread is unavailable".to_owned(),
+            }
+            .is_thread_writer_conflict()
         );
     }
 }
