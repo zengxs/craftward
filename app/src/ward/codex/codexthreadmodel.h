@@ -34,7 +34,7 @@ class CodexThreadModel : public QAbstractListModel
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
-    void replaceThreads(QList<CodexThreadSummary> threads);
+    void reconcileThreads(QList<CodexThreadSummary> threads);
 
   private:
     QList<CodexThreadSummary> threads_;

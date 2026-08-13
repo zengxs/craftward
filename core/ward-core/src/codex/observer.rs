@@ -5,36 +5,24 @@ use std::ffi::{c_char, c_void};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use prost::Message as _;
-use ward_codex::{CodexError, CodexHistoryCancellation, CodexHistorySession, Thread, ThreadPoll};
+use ward_codex::{
+    CodexError, CodexHistoryCancellation, CodexHistorySession, Thread, ThreadListOptions,
+    ThreadPage, ThreadPagePoll, ThreadPoll,
+};
 
 use super::{WardBuffer, clear_error, required_string, wire};
-use crate::{WardError, c_string, write_error};
+use crate::{WardError, write_error};
 
-const HISTORY_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const THREAD_PAGE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const CONVERSATION_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const HISTORY_ERROR_RETRY_INTERVAL: Duration = Duration::from_secs(2);
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(C)]
-pub enum WardCodexHistoryEventKind {
-    Updated = 0,
-    Recovered = 1,
-    Error = 2,
-}
-
-/// A borrowed history event passed through Ward Core's private C interface.
-#[repr(C)]
-pub struct WardCodexHistoryEvent {
-    kind: WardCodexHistoryEventKind,
-    thread_id: *const c_char,
-    conversation: *const WardBuffer,
-    error_message: *const c_char,
-}
+const THREAD_PAGE_LIMIT: u32 = 100;
 
 type WardCodexHistoryEventCallback =
-    unsafe extern "C" fn(context: *mut c_void, event: *const WardCodexHistoryEvent);
+    unsafe extern "C" fn(context: *mut c_void, event: *const WardBuffer);
 
 struct HistoryEventSink {
     callback: WardCodexHistoryEventCallback,
@@ -47,66 +35,148 @@ struct HistoryEventSink {
 unsafe impl Send for HistoryEventSink {}
 
 impl HistoryEventSink {
-    fn emit_updated(&self, thread_id: &str, thread: Thread) {
-        let message = wire::Conversation::from(thread);
+    fn emit_threads_updated(&self, page: ThreadPage) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadsUpdated as i32,
+            thread_id: None,
+            body: Some(wire::history_event::Body::ThreadPage(page.into())),
+        });
+    }
+
+    fn emit_conversation_updated(&self, thread_id: &str, thread: Thread) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ConversationUpdated as i32,
+            thread_id: Some(thread_id.to_owned()),
+            body: Some(wire::history_event::Body::Conversation(thread.into())),
+        });
+    }
+
+    fn emit_threads_recovered(&self) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadsRecovered as i32,
+            thread_id: None,
+            body: None,
+        });
+    }
+
+    fn emit_conversation_recovered(&self, thread_id: &str) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ConversationRecovered as i32,
+            thread_id: Some(thread_id.to_owned()),
+            body: None,
+        });
+    }
+
+    fn emit_threads_error(&self, message: &str) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadsError as i32,
+            thread_id: None,
+            body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
+        });
+    }
+
+    fn emit_conversation_error(&self, thread_id: &str, message: &str) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ConversationError as i32,
+            thread_id: Some(thread_id.to_owned()),
+            body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
+        });
+    }
+
+    fn emit(&self, event: wire::HistoryEvent) {
         let buffer = WardBuffer {
-            bytes: message.encode_to_vec().into_boxed_slice(),
-        };
-        self.emit(
-            thread_id,
-            WardCodexHistoryEventKind::Updated,
-            Some(&buffer),
-            None,
-        );
-    }
-
-    fn emit_recovered(&self, thread_id: &str) {
-        self.emit(thread_id, WardCodexHistoryEventKind::Recovered, None, None);
-    }
-
-    fn emit_error(&self, thread_id: &str, message: &str) {
-        self.emit(
-            thread_id,
-            WardCodexHistoryEventKind::Error,
-            None,
-            Some(message),
-        );
-    }
-
-    fn emit(
-        &self,
-        thread_id: &str,
-        kind: WardCodexHistoryEventKind,
-        conversation: Option<&WardBuffer>,
-        error_message: Option<&str>,
-    ) {
-        let thread_id = c_string(thread_id);
-        let error_message = error_message.map(c_string);
-        let event = WardCodexHistoryEvent {
-            kind,
-            thread_id: thread_id.as_ptr(),
-            conversation: conversation.map_or(std::ptr::null(), std::ptr::from_ref),
-            error_message: error_message
-                .as_ref()
-                .map_or(std::ptr::null(), |message| message.as_ptr()),
+            bytes: event.encode_to_vec().into_boxed_slice(),
         };
 
-        // SAFETY: All borrowed event fields remain valid for this callback.
-        // The C consumer owns its context for the observer's lifetime.
-        unsafe { (self.callback)(self.context, std::ptr::from_ref(&event)) };
+        // SAFETY: The borrowed event buffer remains valid for this callback. The
+        // C consumer owns its context for the observer's lifetime.
+        unsafe { (self.callback)(self.context, std::ptr::from_ref(&buffer)) };
     }
 }
 
+#[derive(Debug)]
 enum ObserverCommand {
     Watch(String),
+    Refresh,
     Stop,
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+struct CommandUpdate {
+    watched_thread: Option<String>,
+    refresh: bool,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum DrainedCommands {
+    Update(CommandUpdate),
+    Stop,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PollSample<T> {
+    Updated(T),
+    Unchanged,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PollEffect<T> {
+    Updated(T),
+    Recovered,
+    Unchanged,
+    Error(String),
+    RepeatedError,
+    Cancelled,
+}
+
+impl<T> PollEffect<T> {
+    fn is_successful(&self) -> bool {
+        matches!(self, Self::Updated(_) | Self::Recovered | Self::Unchanged)
+    }
+}
+
+#[derive(Default)]
+struct PollHealth {
+    last_error: Option<String>,
+}
+
+impl PollHealth {
+    fn observe<T>(
+        &mut self,
+        result: Result<PollSample<T>, CodexError>,
+        cancelled: bool,
+    ) -> PollEffect<T> {
+        match result {
+            Ok(PollSample::Updated(value)) => {
+                self.last_error = None;
+                PollEffect::Updated(value)
+            }
+            Ok(PollSample::Unchanged) if self.last_error.take().is_some() => PollEffect::Recovered,
+            Ok(PollSample::Unchanged) => PollEffect::Unchanged,
+            Err(_) if cancelled => PollEffect::Cancelled,
+            Err(error) => {
+                let message = error.to_string();
+                if self.last_error.as_deref() == Some(message.as_str()) {
+                    PollEffect::RepeatedError
+                } else {
+                    self.last_error = Some(message.clone());
+                    PollEffect::Error(message)
+                }
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.last_error = None;
+    }
 }
 
 struct ObserverState {
     executable: PathBuf,
     cancellation: CodexHistoryCancellation,
     session: Option<CodexHistorySession>,
-    last_error: Option<String>,
+    thread_page_health: PollHealth,
+    conversation_health: PollHealth,
 }
 
 impl ObserverState {
@@ -115,55 +185,89 @@ impl ObserverState {
             executable,
             cancellation,
             session: None,
-            last_error: None,
+            thread_page_health: PollHealth::default(),
+            conversation_health: PollHealth::default(),
         }
     }
 
     fn select_thread(&mut self) {
-        self.last_error = None;
+        self.conversation_health.reset();
         if let Some(session) = self.session.as_mut() {
-            session.reset_baseline();
+            session.reset_thread_baseline();
         }
     }
 
-    fn poll(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
-        match self.poll_thread(thread_id) {
-            Ok(ThreadPoll::Baseline(thread) | ThreadPoll::Changed(thread)) => {
-                self.last_error = None;
-                sink.emit_updated(thread_id, thread);
-                true
-            }
-            Ok(ThreadPoll::Unchanged) | Ok(_) => {
-                if self.last_error.take().is_some() {
-                    sink.emit_recovered(thread_id);
-                }
-                true
-            }
-            Err(error) => {
-                if self.cancellation.is_cancelled() {
-                    return false;
-                }
-                let message = error.to_string();
-                if self.last_error.as_deref() != Some(message.as_str()) {
-                    sink.emit_error(thread_id, &message);
-                }
-                self.last_error = Some(message);
-                false
-            }
+    fn refresh(&mut self) {
+        self.thread_page_health.reset();
+        self.conversation_health.reset();
+        if let Some(session) = self.session.as_mut() {
+            session.reset_thread_page_baseline();
+            session.reset_thread_baseline();
         }
+    }
+
+    fn poll_threads(&mut self, sink: &HistoryEventSink) -> bool {
+        let result = self.poll_thread_page().map(|poll| match poll {
+            ThreadPagePoll::Baseline(page) | ThreadPagePoll::Changed(page) => {
+                PollSample::Updated(page)
+            }
+            _ => PollSample::Unchanged,
+        });
+        let effect = self
+            .thread_page_health
+            .observe(result, self.cancellation.is_cancelled());
+        let succeeded = effect.is_successful();
+        match effect {
+            PollEffect::Updated(page) => sink.emit_threads_updated(page),
+            PollEffect::Recovered => sink.emit_threads_recovered(),
+            PollEffect::Error(message) => sink.emit_threads_error(&message),
+            PollEffect::Unchanged | PollEffect::RepeatedError | PollEffect::Cancelled => {}
+        }
+        succeeded
+    }
+
+    fn poll_conversation(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
+        let result = self.poll_thread(thread_id).map(|poll| match poll {
+            ThreadPoll::Baseline(thread) | ThreadPoll::Changed(thread) => {
+                PollSample::Updated(thread)
+            }
+            _ => PollSample::Unchanged,
+        });
+        let effect = self
+            .conversation_health
+            .observe(result, self.cancellation.is_cancelled());
+        let succeeded = effect.is_successful();
+        match effect {
+            PollEffect::Updated(thread) => sink.emit_conversation_updated(thread_id, thread),
+            PollEffect::Recovered => sink.emit_conversation_recovered(thread_id),
+            PollEffect::Error(message) => sink.emit_conversation_error(thread_id, &message),
+            PollEffect::Unchanged | PollEffect::RepeatedError | PollEffect::Cancelled => {}
+        }
+        succeeded
+    }
+
+    fn poll_thread_page(&mut self) -> Result<ThreadPagePoll, CodexError> {
+        self.session()?.poll_thread_page(&ThreadListOptions {
+            limit: Some(THREAD_PAGE_LIMIT),
+            ..ThreadListOptions::default()
+        })
     }
 
     fn poll_thread(&mut self, thread_id: &str) -> Result<ThreadPoll, CodexError> {
+        self.session()?.poll_thread(thread_id)
+    }
+
+    fn session(&mut self) -> Result<&mut CodexHistorySession, CodexError> {
         if self.session.is_none() {
             self.session = Some(CodexHistorySession::spawn_with_cancellation(
                 &self.executable,
                 self.cancellation.clone(),
             )?);
         }
-        self.session
+        Ok(self
+            .session
             .as_mut()
-            .expect("the history session was initialized above")
-            .poll_thread(thread_id)
+            .expect("the history session was initialized above"))
     }
 }
 
@@ -185,11 +289,11 @@ impl Drop for WardCodexHistoryObserver {
     }
 }
 
-/// Starts a background observer without starting a Codex app-server yet.
+/// Starts a background observer for persisted Codex history.
 ///
-/// The callback receives borrowed event data from the observer thread. Its
-/// context must remain valid until [`ward_core_codex_history_observer_destroy`]
-/// returns.
+/// The callback receives a borrowed serialized event buffer from the observer
+/// thread. Its context must remain valid until
+/// [`ward_core_codex_history_observer_destroy`] returns.
 ///
 /// # Safety
 ///
@@ -226,15 +330,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
         .name("ward-codex-history".to_owned())
         .spawn({
             let cancellation = cancellation.clone();
-            move || {
-                run_observer(
-                    PathBuf::from(executable),
-                    HISTORY_POLL_INTERVAL,
-                    receiver,
-                    sink,
-                    cancellation,
-                )
-            }
+            move || run_observer(PathBuf::from(executable), receiver, sink, cancellation)
         });
 
     match worker {
@@ -285,11 +381,38 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_watch(
         return false;
     };
 
-    if observer
-        .commands
-        .send(ObserverCommand::Watch(thread_id))
-        .is_err()
-    {
+    send_command(observer, ObserverCommand::Watch(thread_id), output_error)
+}
+
+/// Requests an immediate history refresh while preserving the observer.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `output_error`, when non-null,
+/// must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_refresh(
+    observer: *mut WardCodexHistoryObserver,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+
+    send_command(observer, ObserverCommand::Refresh, output_error)
+}
+
+fn send_command(
+    observer: &WardCodexHistoryObserver,
+    command: ObserverCommand,
+    output_error: *mut *mut WardError,
+) -> bool {
+    if observer.commands.send(command).is_err() {
         // SAFETY: The caller supplied the optional error output pointer.
         unsafe { write_error(output_error, "the Codex history observer has stopped") };
         return false;
@@ -319,59 +442,88 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_destroy(
 
 fn run_observer(
     executable: PathBuf,
-    interval: Duration,
     receiver: Receiver<ObserverCommand>,
     sink: HistoryEventSink,
     cancellation: CodexHistoryCancellation,
 ) {
-    let mut state = ObserverState::new(executable, cancellation);
+    let mut state = ObserverState::new(executable, cancellation.clone());
     let mut watched_thread: Option<String> = None;
+    let mut threads_due = Instant::now();
+    let mut conversation_due: Option<Instant> = None;
 
     loop {
-        let thread_id = match watched_thread.as_ref() {
-            Some(thread_id) => thread_id.clone(),
-            None => match receiver.recv() {
-                Ok(ObserverCommand::Watch(thread_id)) => {
-                    let Some(thread_id) = latest_watch(&receiver, thread_id) else {
-                        break;
-                    };
-                    state.select_thread();
-                    watched_thread = Some(thread_id.clone());
-                    thread_id
-                }
-                Ok(ObserverCommand::Stop) | Err(_) => break,
-            },
-        };
-
-        let poll_succeeded = state.poll(&thread_id, &sink);
-        // Persistent startup or state-database failures should not churn child
-        // processes at the normal conversation refresh rate.
-        let next_poll = if poll_succeeded {
-            interval
-        } else {
-            HISTORY_ERROR_RETRY_INTERVAL
-        };
-
-        match receiver.recv_timeout(next_poll) {
-            Ok(ObserverCommand::Watch(thread_id)) => {
-                let Some(thread_id) = latest_watch(&receiver, thread_id) else {
-                    break;
-                };
-                state.select_thread();
-                watched_thread = Some(thread_id);
+        let now = Instant::now();
+        if now >= threads_due {
+            let succeeded = state.poll_threads(&sink);
+            if cancellation.is_cancelled() {
+                break;
             }
-            Ok(ObserverCommand::Stop) | Err(RecvTimeoutError::Disconnected) => break,
+            threads_due = Instant::now()
+                + if succeeded {
+                    THREAD_PAGE_POLL_INTERVAL
+                } else {
+                    HISTORY_ERROR_RETRY_INTERVAL
+                };
+        }
+
+        if let (Some(thread_id), Some(due)) = (watched_thread.as_deref(), conversation_due)
+            && Instant::now() >= due
+        {
+            let succeeded = state.poll_conversation(thread_id, &sink);
+            if cancellation.is_cancelled() {
+                break;
+            }
+            conversation_due = Some(
+                Instant::now()
+                    + if succeeded {
+                        CONVERSATION_POLL_INTERVAL
+                    } else {
+                        HISTORY_ERROR_RETRY_INTERVAL
+                    },
+            );
+        }
+
+        let next_due = conversation_due.map_or(threads_due, |due| due.min(threads_due));
+        let timeout = next_due.saturating_duration_since(Instant::now());
+        match receiver.recv_timeout(timeout) {
+            Ok(command) => match drain_commands(command, &receiver) {
+                DrainedCommands::Stop => break,
+                DrainedCommands::Update(update) => {
+                    let now = Instant::now();
+                    if let Some(thread_id) = update.watched_thread {
+                        state.select_thread();
+                        watched_thread = Some(thread_id);
+                        conversation_due = Some(now);
+                    }
+                    if update.refresh {
+                        state.refresh();
+                        threads_due = now;
+                        if watched_thread.is_some() {
+                            conversation_due = Some(now);
+                        }
+                    }
+                }
+            },
             Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
 }
 
-fn latest_watch(receiver: &Receiver<ObserverCommand>, mut thread_id: String) -> Option<String> {
+fn drain_commands(first: ObserverCommand, receiver: &Receiver<ObserverCommand>) -> DrainedCommands {
+    let mut update = CommandUpdate::default();
+    let mut command = first;
     loop {
+        match command {
+            ObserverCommand::Watch(thread_id) => update.watched_thread = Some(thread_id),
+            ObserverCommand::Refresh => update.refresh = true,
+            ObserverCommand::Stop => return DrainedCommands::Stop,
+        }
+
         match receiver.try_recv() {
-            Ok(ObserverCommand::Watch(next_thread_id)) => thread_id = next_thread_id,
-            Ok(ObserverCommand::Stop) | Err(TryRecvError::Disconnected) => return None,
-            Err(TryRecvError::Empty) => return Some(thread_id),
+            Ok(next) => command = next,
+            Err(TryRecvError::Empty) => return DrainedCommands::Update(update),
+            Err(TryRecvError::Disconnected) => return DrainedCommands::Stop,
         }
     }
 }
@@ -380,46 +532,24 @@ fn latest_watch(receiver: &Receiver<ObserverCommand>, mut thread_id: String) -> 
 mod tests {
     use std::sync::Mutex;
 
+    use prost::Message as _;
     use ward_codex::{AgentMessagePhase, ThreadItem, ThreadSummary, Turn, TurnStatus};
 
     use super::*;
 
     #[derive(Default)]
     struct CapturedEvent {
-        event_count: usize,
-        kind: Option<WardCodexHistoryEventKind>,
-        thread_id: String,
-        payload: Vec<u8>,
-        error_message: String,
+        events: Vec<wire::HistoryEvent>,
     }
 
-    unsafe extern "C" fn capture_event(context: *mut c_void, event: *const WardCodexHistoryEvent) {
-        // SAFETY: This callback is used only with the live mutex and event
+    unsafe extern "C" fn capture_event(context: *mut c_void, event: *const WardBuffer) {
+        // SAFETY: This callback is used only with the live mutex and buffer
         // supplied by `HistoryEventSink::emit` below.
         let captured = unsafe { &*(context.cast::<Mutex<CapturedEvent>>()) };
-        // SAFETY: The event pointer and its borrowed fields are valid for this
-        // callback.
+        // SAFETY: The event buffer is valid for this callback.
         let event = unsafe { &*event };
-        // SAFETY: The sink always supplies a valid NUL-terminated thread ID.
-        let thread_id = unsafe { std::ffi::CStr::from_ptr(event.thread_id) }
-            .to_string_lossy()
-            .into_owned();
-        let payload = unsafe { event.conversation.as_ref() }
-            .map_or_else(Vec::new, |buffer| buffer.bytes.to_vec());
-        let error_message = if event.error_message.is_null() {
-            String::new()
-        } else {
-            // SAFETY: The sink supplies a valid NUL-terminated error string.
-            unsafe { std::ffi::CStr::from_ptr(event.error_message) }
-                .to_string_lossy()
-                .into_owned()
-        };
-        let mut captured = captured.lock().unwrap();
-        captured.event_count += 1;
-        captured.kind = Some(event.kind);
-        captured.thread_id = thread_id;
-        captured.payload = payload;
-        captured.error_message = error_message;
+        let event = wire::HistoryEvent::decode(event.bytes.as_ref()).unwrap();
+        captured.lock().unwrap().events.push(event);
     }
 
     fn event_sink(captured: &Mutex<CapturedEvent>) -> HistoryEventSink {
@@ -429,62 +559,147 @@ mod tests {
         }
     }
 
-    #[test]
-    fn serializes_updated_threads_only_for_the_callback_duration() {
-        let captured = Mutex::new(CapturedEvent::default());
-        event_sink(&captured).emit_updated(
-            "thread-1",
-            Thread {
-                summary: ThreadSummary {
-                    id: "thread-1".to_owned(),
-                    name: Some("Example".to_owned()),
-                    preview: "Preview".to_owned(),
-                    cwd: PathBuf::from("/workspace"),
-                    created_at_unix_seconds: 10,
-                    updated_at_unix_seconds: 20,
-                },
-                turns: vec![Turn {
-                    id: "turn-1".to_owned(),
-                    status: TurnStatus::Completed,
-                    items: vec![ThreadItem::AgentMessage {
-                        id: "agent-1".to_owned(),
-                        text: "Done".to_owned(),
-                        phase: Some(AgentMessagePhase::FinalAnswer),
-                    }],
-                }],
+    fn thread() -> Thread {
+        Thread {
+            summary: ThreadSummary {
+                id: "thread-1".to_owned(),
+                name: Some("Example".to_owned()),
+                preview: "Preview".to_owned(),
+                cwd: PathBuf::from("/workspace"),
+                created_at_unix_seconds: 10,
+                updated_at_unix_seconds: 20,
             },
-        );
+            turns: vec![Turn {
+                id: "turn-1".to_owned(),
+                status: TurnStatus::Completed,
+                items: vec![ThreadItem::AgentMessage {
+                    id: "agent-1".to_owned(),
+                    text: "Done".to_owned(),
+                    phase: Some(AgentMessagePhase::FinalAnswer),
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn serializes_thread_pages_for_the_callback_duration() {
+        let captured = Mutex::new(CapturedEvent::default());
+        event_sink(&captured).emit_threads_updated(ThreadPage {
+            threads: vec![thread().summary],
+            next_cursor: Some("next".to_owned()),
+        });
 
         let captured = captured.lock().unwrap();
-        assert_eq!(captured.kind, Some(WardCodexHistoryEventKind::Updated));
-        assert_eq!(captured.thread_id, "thread-1");
-        let conversation = wire::Conversation::decode(captured.payload.as_slice()).unwrap();
+        assert_eq!(captured.events.len(), 1);
+        let event = &captured.events[0];
+        assert_eq!(event.kind, wire::HistoryEventKind::ThreadsUpdated as i32);
+        assert_eq!(event.thread_id, None);
+        let Some(wire::history_event::Body::ThreadPage(page)) = event.body.as_ref() else {
+            panic!("the event must contain a thread page");
+        };
+        assert_eq!(page.threads[0].thread_id, "thread-1");
+        assert_eq!(page.next_cursor.as_deref(), Some("next"));
+    }
+
+    #[test]
+    fn serializes_conversations_for_the_callback_duration() {
+        let captured = Mutex::new(CapturedEvent::default());
+        event_sink(&captured).emit_conversation_updated("thread-1", thread());
+
+        let captured = captured.lock().unwrap();
+        assert_eq!(captured.events.len(), 1);
+        let event = &captured.events[0];
+        assert_eq!(
+            event.kind,
+            wire::HistoryEventKind::ConversationUpdated as i32
+        );
+        assert_eq!(event.thread_id.as_deref(), Some("thread-1"));
+        let Some(wire::history_event::Body::Conversation(conversation)) = event.body.as_ref()
+        else {
+            panic!("the event must contain a conversation");
+        };
         assert_eq!(conversation.title, "Example");
         assert_eq!(conversation.messages[0].message_id, "agent-1");
     }
 
     #[test]
-    fn emits_recovery_and_error_states_without_payloads() {
+    fn emits_targeted_recovery_and_error_states_without_payloads() {
         let captured = Mutex::new(CapturedEvent::default());
         let sink = event_sink(&captured);
 
-        sink.emit_error("thread-1", "disconnected");
+        sink.emit_threads_error("disconnected");
         {
             let captured = captured.lock().unwrap();
-            assert_eq!(captured.kind, Some(WardCodexHistoryEventKind::Error));
-            assert_eq!(captured.error_message, "disconnected");
-            assert!(captured.payload.is_empty());
+            assert_eq!(captured.events.len(), 1);
+            let event = &captured.events[0];
+            assert_eq!(event.kind, wire::HistoryEventKind::ThreadsError as i32);
+            assert_eq!(event.thread_id, None);
+            assert_eq!(
+                event.body,
+                Some(wire::history_event::Body::ErrorMessage(
+                    "disconnected".to_owned()
+                ))
+            );
         }
 
-        sink.emit_recovered("thread-1");
+        sink.emit_conversation_recovered("thread-1");
         let captured = captured.lock().unwrap();
-        assert_eq!(captured.kind, Some(WardCodexHistoryEventKind::Recovered));
-        assert!(captured.error_message.is_empty());
-        assert!(captured.payload.is_empty());
+        assert_eq!(captured.events.len(), 2);
+        let event = &captured.events[1];
+        assert_eq!(
+            event.kind,
+            wire::HistoryEventKind::ConversationRecovered as i32
+        );
+        assert_eq!(event.thread_id.as_deref(), Some("thread-1"));
+        assert_eq!(event.body, None);
     }
 
     #[test]
-    fn suppresses_repeated_identical_polling_errors() {
+    fn classifies_poll_health_transitions() {
+        let mut health = PollHealth::default();
+        let error = |message: &str| CodexError::Server {
+            method: "thread/read",
+            code: -1,
+            message: message.to_owned(),
+        };
+
+        assert_eq!(
+            health.observe(Ok(PollSample::<()>::Unchanged), false),
+            PollEffect::Unchanged
+        );
+        assert!(matches!(
+            health.observe::<()>(Err(error("offline")), false),
+            PollEffect::Error(message) if message.ends_with("offline")
+        ));
+        assert_eq!(
+            health.observe::<()>(Err(error("offline")), false),
+            PollEffect::RepeatedError
+        );
+        health.reset();
+        assert!(matches!(
+            health.observe::<()>(Err(error("offline")), false),
+            PollEffect::Error(message) if message.ends_with("offline")
+        ));
+        assert_eq!(
+            health.observe(Ok(PollSample::<()>::Unchanged), false),
+            PollEffect::Recovered
+        );
+        assert!(matches!(
+            health.observe::<()>(Err(error("unavailable")), false),
+            PollEffect::Error(message) if message.ends_with("unavailable")
+        ));
+        assert_eq!(
+            health.observe(Ok(PollSample::Updated(7)), false),
+            PollEffect::Updated(7)
+        );
+        assert_eq!(
+            health.observe::<()>(Err(error("offline")), true),
+            PollEffect::Cancelled
+        );
+    }
+
+    #[test]
+    fn suppresses_repeated_identical_errors_for_each_target() {
         let captured = Mutex::new(CapturedEvent::default());
         let sink = event_sink(&captured);
         let mut state = ObserverState::new(
@@ -492,26 +707,39 @@ mod tests {
             CodexHistoryCancellation::new(),
         );
 
-        assert!(!state.poll("thread-1", &sink));
-        assert!(!state.poll("thread-1", &sink));
+        assert!(!state.poll_threads(&sink));
+        assert!(!state.poll_threads(&sink));
+        state.select_thread();
+        assert!(!state.poll_conversation("thread-1", &sink));
+        assert!(!state.poll_conversation("thread-1", &sink));
 
         let captured = captured.lock().unwrap();
-        assert_eq!(captured.event_count, 1);
-        assert_eq!(captured.kind, Some(WardCodexHistoryEventKind::Error));
+        assert_eq!(captured.events.len(), 2);
+        assert_eq!(
+            captured.events.last().unwrap().kind,
+            wire::HistoryEventKind::ConversationError as i32
+        );
     }
 
     #[test]
-    fn coalesces_pending_thread_selections_and_prioritizes_stop() {
+    fn coalesces_commands_and_prioritizes_stop() {
         let (sender, receiver) = mpsc::channel();
         sender
             .send(ObserverCommand::Watch("thread-2".to_owned()))
             .unwrap();
+        sender.send(ObserverCommand::Refresh).unwrap();
         assert_eq!(
-            latest_watch(&receiver, "thread-1".to_owned()),
-            Some("thread-2".to_owned())
+            drain_commands(ObserverCommand::Watch("thread-1".to_owned()), &receiver),
+            DrainedCommands::Update(CommandUpdate {
+                watched_thread: Some("thread-2".to_owned()),
+                refresh: true,
+            })
         );
 
         sender.send(ObserverCommand::Stop).unwrap();
-        assert_eq!(latest_watch(&receiver, "thread-3".to_owned()), None);
+        assert_eq!(
+            drain_commands(ObserverCommand::Refresh, &receiver),
+            DrainedCommands::Stop
+        );
     }
 }

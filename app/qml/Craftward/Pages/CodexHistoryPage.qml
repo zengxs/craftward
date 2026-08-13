@@ -14,8 +14,6 @@ Page {
 
     required property CodexHistoryController controller
 
-    Component.onCompleted: controller.refresh()
-
     background: Rectangle {
         color: root.palette.window
 

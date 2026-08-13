@@ -53,7 +53,6 @@ target_include_directories(CraftwardCodex
 
 target_link_libraries(CraftwardCodex
     PRIVATE
-        Qt6::Concurrent
         Qt6::Protobuf
         Qt6::Qml
         Ward::Core

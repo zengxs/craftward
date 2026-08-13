@@ -14,16 +14,12 @@
 #include <memory>
 
 struct CodexHistoryCallbackContext;
-struct WardCodexHistoryEvent;
+struct WardBuffer;
 struct WardCodexHistoryObserver;
 
-enum class CodexHistoryEventKind
-{
-    Updated,
-    Recovered,
-    Error,
-    Unsupported,
-};
+namespace ward::codex::v1 {
+class HistoryEvent;
+}
 
 class CodexHistoryController : public QObject
 {
@@ -60,15 +56,15 @@ class CodexHistoryController : public QObject
     void loadingChanged();
 
   private:
-    static void handleHistoryEvent(void* context, const WardCodexHistoryEvent* event);
+    static void handleHistoryEvent(void* context, const WardBuffer* event);
 
     void setErrorMessage(const QString& message);
-    void applyThreads(std::uint64_t generation, QList<CodexThreadSummary> threads, const QString& errorMessage);
-    void applyHistoryEvent(CodexHistoryEventKind kind,
-                           const QString& threadId,
-                           const QString& title,
-                           QList<CodexMessage> messages,
-                           const QString& errorMessage);
+    void setThreadErrorMessage(const QString& message);
+    void setConversationErrorMessage(const QString& message);
+    void updateErrorMessage();
+    void finishThreadLoading(const QString& errorMessage);
+    void finishConversationLoading(const QString& errorMessage);
+    void applyHistoryEvent(ward::codex::v1::HistoryEvent event, const QString& decodingError);
 
     CodexThreadModel threadModel_;
     CodexMessageModel messageModel_;
@@ -77,8 +73,9 @@ class CodexHistoryController : public QObject
     QString selectedThreadId_;
     QString selectedThreadTitle_;
     QString errorMessage_;
-    std::uint64_t threadGeneration_ = 0;
+    QString threadErrorMessage_;
+    QString conversationErrorMessage_;
     std::uint64_t observerGeneration_ = 0;
-    bool loadingThreads_ = false;
+    bool loadingThreads_ = true;
     bool loadingConversation_ = false;
 };

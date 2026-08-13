@@ -27,6 +27,28 @@ message Conversation {
   repeated Message messages = 2;
 }
 
+enum HistoryEventKind {
+  HISTORY_EVENT_KIND_UNSPECIFIED = 0;
+  HISTORY_EVENT_KIND_THREADS_UPDATED = 1;
+  HISTORY_EVENT_KIND_CONVERSATION_UPDATED = 2;
+  HISTORY_EVENT_KIND_THREADS_RECOVERED = 3;
+  HISTORY_EVENT_KIND_CONVERSATION_RECOVERED = 4;
+  HISTORY_EVENT_KIND_THREADS_ERROR = 5;
+  HISTORY_EVENT_KIND_CONVERSATION_ERROR = 6;
+}
+
+// One event emitted by a persisted Codex history observer.
+message HistoryEvent {
+  HistoryEventKind kind = 1;
+  optional string thread_id = 2;
+
+  oneof body {
+    ThreadPage thread_page = 3;
+    Conversation conversation = 4;
+    string error_message = 5;
+  }
+}
+
 enum MessageRole {
   MESSAGE_ROLE_UNSPECIFIED = 0;
   MESSAGE_ROLE_USER = 1;

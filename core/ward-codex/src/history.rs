@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use crate::client::ProcessInterrupt;
-use crate::{CodexClient, CodexError, Thread};
+use crate::{CodexClient, CodexError, Thread, ThreadListOptions, ThreadPage};
 
 /// A cloneable handle that interrupts an in-flight history session operation.
 ///
@@ -48,21 +48,40 @@ pub enum ThreadPoll {
     Unchanged,
 }
 
+/// The result of polling one page of persisted Codex thread summaries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ThreadPagePoll {
+    /// The first page snapshot observed by this session.
+    Baseline(ThreadPage),
+    /// A complete page snapshot that differs from the previous successful poll.
+    Changed(ThreadPage),
+    /// The persisted page snapshot has not changed.
+    Unchanged,
+}
+
 /// A reusable, read-only observer for persisted Codex thread history.
 ///
 /// The session owns one app-server child process and retains the last
-/// successful snapshot. If the app-server stream is lost, an idempotent read is
-/// retried once through a newly initialized child process.
+/// successful page and conversation snapshots. If the app-server stream is
+/// lost, an idempotent request is retried once through a newly initialized
+/// child process.
 pub struct CodexHistorySession {
     executable: PathBuf,
     cancellation: CodexHistoryCancellation,
     client: CodexClient,
-    tracker: ThreadTracker,
+    thread_tracker: ThreadTracker,
+    page_tracker: ThreadPageTracker,
 }
 
 #[derive(Default)]
 struct ThreadTracker {
     previous: Option<Thread>,
+}
+
+#[derive(Default)]
+struct ThreadPageTracker {
+    previous: Option<ThreadPage>,
 }
 
 impl ThreadTracker {
@@ -75,6 +94,22 @@ impl ThreadTracker {
             Some(_) | None => ThreadPoll::Baseline(thread.clone()),
         };
         self.previous = Some(thread);
+        poll
+    }
+
+    fn reset(&mut self) {
+        self.previous = None;
+    }
+}
+
+impl ThreadPageTracker {
+    fn record(&mut self, page: ThreadPage) -> ThreadPagePoll {
+        let poll = match self.previous.as_ref() {
+            Some(previous) if previous == &page => ThreadPagePoll::Unchanged,
+            Some(_) => ThreadPagePoll::Changed(page.clone()),
+            None => ThreadPagePoll::Baseline(page.clone()),
+        };
+        self.previous = Some(page);
         poll
     }
 
@@ -101,8 +136,18 @@ impl CodexHistorySession {
             executable,
             cancellation,
             client,
-            tracker: ThreadTracker::default(),
+            thread_tracker: ThreadTracker::default(),
+            page_tracker: ThreadPageTracker::default(),
         })
+    }
+
+    /// Lists persisted threads and reports whether the complete page changed.
+    pub fn poll_thread_page(
+        &mut self,
+        options: &ThreadListOptions,
+    ) -> Result<ThreadPagePoll, CodexError> {
+        let page = self.request(|client| client.list_threads(options))?;
+        Ok(self.page_tracker.record(page))
     }
 
     /// Reads one thread and reports whether its complete snapshot changed.
@@ -110,8 +155,8 @@ impl CodexHistorySession {
     /// Polling a different thread establishes a new baseline. Failed polls do
     /// not replace the last successful snapshot.
     pub fn poll_thread(&mut self, thread_id: &str) -> Result<ThreadPoll, CodexError> {
-        let thread = self.read_thread(thread_id)?;
-        Ok(self.tracker.record(thread))
+        let thread = self.request(|client| client.read_thread(thread_id))?;
+        Ok(self.thread_tracker.record(thread))
     }
 
     /// Makes the next successful poll establish a new baseline.
@@ -119,22 +164,30 @@ impl CodexHistorySession {
     /// The app-server connection remains alive. This is useful when a caller
     /// has discarded its rendered snapshot and needs the complete thread
     /// again, even if persistence has not changed.
-    pub fn reset_baseline(&mut self) {
-        self.tracker.reset();
+    pub fn reset_thread_baseline(&mut self) {
+        self.thread_tracker.reset();
     }
 
-    fn read_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
+    /// Makes the next successful thread-page poll establish a new baseline.
+    pub fn reset_thread_page_baseline(&mut self) {
+        self.page_tracker.reset();
+    }
+
+    fn request<T>(
+        &mut self,
+        mut operation: impl FnMut(&mut CodexClient) -> Result<T, CodexError>,
+    ) -> Result<T, CodexError> {
         if self.cancellation.is_cancelled() {
             return Err(CodexError::Interrupted);
         }
 
-        match self.client.read_thread(thread_id) {
+        match operation(&mut self.client) {
             _ if self.cancellation.is_cancelled() => Err(CodexError::Interrupted),
-            Ok(thread) => Ok(thread),
+            Ok(value) => Ok(value),
             Err(error) if error.is_connection_lost() => {
                 self.client =
                     CodexClient::spawn_interruptible(&self.executable, &self.cancellation.process)?;
-                let result = self.client.read_thread(thread_id);
+                let result = operation(&mut self.client);
                 if self.cancellation.is_cancelled() {
                     Err(CodexError::Interrupted)
                 } else {
@@ -233,5 +286,33 @@ mod tests {
         assert_eq!(tracker.record(first.clone()), ThreadPoll::Unchanged);
         tracker.reset();
         assert_eq!(tracker.record(first.clone()), ThreadPoll::Baseline(first));
+    }
+
+    #[test]
+    fn classifies_thread_page_snapshots_and_reset_baselines() {
+        let first = ThreadPage {
+            threads: vec![thread("thread-1", "Working").summary],
+            next_cursor: Some("next".to_owned()),
+        };
+        let changed = ThreadPage {
+            threads: vec![thread("thread-2", "Other").summary],
+            next_cursor: None,
+        };
+        let mut tracker = ThreadPageTracker::default();
+
+        assert_eq!(
+            tracker.record(first.clone()),
+            ThreadPagePoll::Baseline(first.clone())
+        );
+        assert_eq!(tracker.record(first.clone()), ThreadPagePoll::Unchanged);
+        assert_eq!(
+            tracker.record(changed.clone()),
+            ThreadPagePoll::Changed(changed)
+        );
+        tracker.reset();
+        assert_eq!(
+            tracker.record(first.clone()),
+            ThreadPagePoll::Baseline(first)
+        );
     }
 }

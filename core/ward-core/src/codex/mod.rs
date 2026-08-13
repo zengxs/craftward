@@ -2,12 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::ffi::{CStr, c_char};
-use std::path::PathBuf;
 
-use prost::Message as ProstMessage;
-use ward_codex::{
-    AgentMessagePhase, CodexClient, Thread, ThreadItem, ThreadListOptions, ThreadSummary, UserInput,
-};
+use ward_codex::{AgentMessagePhase, Thread, ThreadItem, ThreadPage, ThreadSummary, UserInput};
 
 use crate::{WardError, write_error};
 
@@ -31,6 +27,15 @@ impl From<ThreadSummary> for wire::ThreadSummary {
             working_directory: thread.cwd.to_string_lossy().into_owned(),
             created_at_unix_seconds: thread.created_at_unix_seconds,
             updated_at_unix_seconds: thread.updated_at_unix_seconds,
+        }
+    }
+}
+
+impl From<ThreadPage> for wire::ThreadPage {
+    fn from(page: ThreadPage) -> Self {
+        Self {
+            threads: page.threads.into_iter().map(Into::into).collect(),
+            next_cursor: page.next_cursor,
         }
     }
 }
@@ -97,12 +102,6 @@ fn user_input_text(input: UserInput) -> String {
     }
 }
 
-fn serialized_buffer(message: &impl ProstMessage) -> *mut WardBuffer {
-    Box::into_raw(Box::new(WardBuffer {
-        bytes: message.encode_to_vec().into_boxed_slice(),
-    }))
-}
-
 unsafe fn clear_error(output_error: *mut *mut WardError) {
     if !output_error.is_null() {
         // SAFETY: The C caller supplied a writable error output pointer.
@@ -128,57 +127,16 @@ unsafe fn required_string(
     )
 }
 
-/// Loads and serializes one page of active Codex thread summaries.
-///
-/// # Safety
-///
-/// `executable` must point to a NUL-terminated string. `output_error`, when
-/// non-null, must be writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_list_threads(
-    executable: *const c_char,
-    limit: u32,
-    output_error: *mut *mut WardError,
-) -> *mut WardBuffer {
-    // SAFETY: The caller supplied the optional error output pointer.
-    unsafe { clear_error(output_error) };
-    // SAFETY: The private C interface requires the documented string pointer.
-    let Some(executable) =
-        (unsafe { required_string(executable, "the Codex executable", output_error) })
-    else {
-        return std::ptr::null_mut();
-    };
-
-    let result = CodexClient::spawn(PathBuf::from(executable)).and_then(|mut client| {
-        client.list_threads(&ThreadListOptions {
-            limit: Some(limit),
-            ..ThreadListOptions::default()
-        })
-    });
-    match result {
-        Ok(page) => serialized_buffer(&wire::ThreadPage {
-            threads: page.threads.into_iter().map(Into::into).collect(),
-            next_cursor: page.next_cursor,
-        }),
-        Err(error) => {
-            // SAFETY: The caller supplied the optional error output pointer.
-            unsafe { write_error(output_error, error.to_string()) };
-            std::ptr::null_mut()
-        }
-    }
-}
-
 /// Returns the borrowed bytes in a serialized Ward buffer.
 ///
-/// The returned pointer remains valid until [`ward_core_buffer_destroy`] is
-/// called for the same handle.
+/// The returned pointer remains valid for the lifetime of the borrowed buffer.
 ///
 /// # Safety
 ///
-/// `buffer` must be null or a live handle returned by Ward Core.
+/// `buffer` must be null or a valid borrowed handle supplied by Ward Core.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_buffer_data(buffer: *const WardBuffer) -> *const u8 {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
+    // SAFETY: A non-null pointer names a valid borrowed handle.
     unsafe { buffer.as_ref() }.map_or(std::ptr::null(), |buffer| buffer.bytes.as_ptr())
 }
 
@@ -186,29 +144,18 @@ pub unsafe extern "C" fn ward_core_buffer_data(buffer: *const WardBuffer) -> *co
 ///
 /// # Safety
 ///
-/// `buffer` must be null or a live handle returned by Ward Core.
+/// `buffer` must be null or a valid borrowed handle supplied by Ward Core.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_buffer_size(buffer: *const WardBuffer) -> usize {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
+    // SAFETY: A non-null pointer names a valid borrowed handle.
     unsafe { buffer.as_ref() }.map_or(0, |buffer| buffer.bytes.len())
-}
-
-/// Destroys a serialized Ward buffer.
-///
-/// # Safety
-///
-/// `buffer` must be null or a live handle returned by Ward Core, and ownership
-/// may be transferred once.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_buffer_destroy(buffer: *mut WardBuffer) {
-    if !buffer.is_null() {
-        // SAFETY: The caller transfers the live handle exactly once.
-        drop(unsafe { Box::from_raw(buffer) });
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use prost::Message as _;
     use ward_codex::{ThreadSummary, Turn, TurnStatus};
 
     use super::*;

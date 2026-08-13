@@ -15,7 +15,7 @@ mod protocol;
 
 pub use client::{CodexClient, ThreadListOptions};
 pub use error::CodexError;
-pub use history::{CodexHistoryCancellation, CodexHistorySession, ThreadPoll};
+pub use history::{CodexHistoryCancellation, CodexHistorySession, ThreadPagePoll, ThreadPoll};
 pub use model::{
     AgentMessagePhase, ServerInfo, Thread, ThreadItem, ThreadPage, ThreadSummary, Turn, TurnStatus,
     UserInput,
