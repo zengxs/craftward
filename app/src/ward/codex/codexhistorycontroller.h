@@ -58,7 +58,7 @@ class CodexHistoryController : public QObject
 
     enum class WriteAvailability
     {
-        Idle,
+        NotRequested,
         Checking,
         Writable,
         Busy,
@@ -141,6 +141,6 @@ class CodexHistoryController : public QObject
     bool loadingConversation_ = false;
     bool activityHistoryPartial_ = false;
     TurnRuntimeState turnRuntimeState_;
-    WriteAvailability writeAvailability_ = WriteAvailability::Idle;
+    WriteAvailability writeAvailability_ = WriteAvailability::NotRequested;
     QString writeAvailabilityMessage_;
 };

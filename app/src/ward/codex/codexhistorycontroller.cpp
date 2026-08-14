@@ -237,7 +237,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     timelineModel_.clear();
     setActivityHistoryPartial(false);
     setTurnState(TurnState::Detached);
-    setWriteAvailability(WriteAvailability::Idle);
+    setWriteAvailability(WriteAvailability::NotRequested);
     setConversationErrorMessage({});
     loadingConversation_ = true;
     emit selectionChanged();
@@ -284,10 +284,10 @@ CodexHistoryController::acquireWriteAccess()
 void
 CodexHistoryController::releaseWriteAccess()
 {
-    if (selectedThreadId_.isEmpty() || turnInFlight() || writeAvailability_ == WriteAvailability::Idle)
+    if (selectedThreadId_.isEmpty() || turnInFlight() || writeAvailability_ == WriteAvailability::NotRequested)
         return;
     if (historyObserver_ == nullptr) {
-        setWriteAvailability(WriteAvailability::Idle);
+        setWriteAvailability(WriteAvailability::NotRequested);
         return;
     }
 
@@ -301,7 +301,7 @@ CodexHistoryController::releaseWriteAccess()
         return;
     }
 
-    setWriteAvailability(WriteAvailability::Idle);
+    setWriteAvailability(WriteAvailability::NotRequested);
 }
 
 bool
@@ -553,7 +553,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             using ThreadWriteStatus = ward::codex::v1::ThreadWriteStatusGadget::ThreadWriteStatus;
             switch (state.status()) {
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_IDLE:
-                    setWriteAvailability(WriteAvailability::Idle);
+                    setWriteAvailability(WriteAvailability::NotRequested);
                     break;
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_CHECKING:
                     setWriteAvailability(WriteAvailability::Checking, message);
