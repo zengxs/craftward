@@ -3,6 +3,8 @@ version: "3"
 tasks:
   cli:
     desc: Run the Ward CLI
+    deps:
+      - task: :xtask:version:check
     preconditions:
       - sh: command -v cargo
         msg: cargo is not available in PATH
@@ -13,6 +15,8 @@ tasks:
     label: "core:build:{{.BUILD_TYPE}}"
     desc: Build the Ward Core Universal2 static library
     platforms: [darwin]
+    deps:
+      - task: :xtask:version:check
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
       CARGO_PROFILE: '{{if eq .BUILD_TYPE "Debug"}}dev{{else}}release{{end}}'

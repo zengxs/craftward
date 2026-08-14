@@ -1,0 +1,7 @@
+# Single source of truth for the Craftward product version.
+
+# User-visible release version in major.minor.patch format.
+version = "0.1.0"
+
+# Monotonically increasing build number used by Sparkle.
+build = 1

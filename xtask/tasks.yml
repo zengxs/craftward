@@ -7,6 +7,18 @@ tasks:
     cmds:
       - cargo fmt
 
+  version:sync:
+    desc: Synchronize product versions from version.toml
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - cargo run --manifest-path xtask/Cargo.toml --locked -- version sync
+
+  version:check:
+    desc: Check synchronized product versions
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - cargo run --manifest-path xtask/Cargo.toml --locked -- version check
+
   licenses:fetch:
     desc: Fetch pinned third-party license texts
     dir: "{{.ROOT_DIR}}"

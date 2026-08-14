@@ -8,7 +8,8 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING
     "Minimum supported macOS version"
 )
 
-project(Craftward VERSION 0.1.0 LANGUAGES CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/version.cmake")
+project(Craftward VERSION "${CRAFTWARD_VERSION}" LANGUAGES CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -84,7 +85,6 @@ set_target_properties(Ward::Core PROPERTIES
         "${CMAKE_CURRENT_SOURCE_DIR}/../core/dist/${CMAKE_BUILD_TYPE}/libward_core.a"
 )
 
-set(CRAFTWARD_BUILD_NUMBER "1" CACHE STRING "Build number for the Craftward application")
 set(CRAFTWARD_COMMIT_HASH "" CACHE STRING "Source commit for the Craftward application")
 
 if(CRAFTWARD_COMMIT_HASH STREQUAL "")

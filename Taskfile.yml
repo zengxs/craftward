@@ -28,6 +28,7 @@ tasks:
   format:
     desc: Format source code
     cmds:
+      - task: xtask:version:sync
       - task: format:clang
       - task: core:format:cargo
       - task: app:format:qml

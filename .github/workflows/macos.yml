@@ -27,6 +27,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Check synchronized product version
+        run: cargo run --manifest-path xtask/Cargo.toml --locked -- version check
+
       - name: Test core
         working-directory: core
         run: cargo test --workspace --all-targets --locked
