@@ -356,6 +356,43 @@ fn decode_turn_options(
     })
 }
 
+/// Requests interruption of the selected thread's active Codex turn.
+///
+/// The interruption is asynchronous. Runtime and turn-completion events report
+/// the eventual state.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
+/// NUL-terminated string. `output_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_interrupt_turn(
+    observer: *mut WardCodexHistoryObserver,
+    thread_id: *const c_char,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointer.
+    let Some(thread_id) =
+        (unsafe { required_string(thread_id, "the Codex thread identifier", output_error) })
+    else {
+        return false;
+    };
+
+    send_command(
+        observer,
+        ObserverCommand::InterruptTurn(thread_id),
+        output_error,
+    )
+}
+
 /// Sends one structured response to a pending Codex interaction.
 ///
 /// # Safety

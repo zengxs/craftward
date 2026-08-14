@@ -204,9 +204,11 @@ Pane {
         id: turnControlState
 
         turnInFlight: root.controller.turnInFlight
+        interruptPending: root.controller.interruptRequested
         writable: root.controller.writeAvailability === CodexHistoryController.Writable
         promptReady: promptEditor.text.trim().length > 0
         onSendRequested: root.submitPrompt()
+        onStopRequested: root.controller.interruptTurn()
     }
 
     Connections {

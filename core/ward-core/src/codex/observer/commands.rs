@@ -14,12 +14,14 @@ pub(super) enum ObserverCommand {
     AcquireWrite(String),
     ReleaseWrite(String),
     StartTurn(TurnRequest),
+    InterruptTurn(String),
     ResolveInteraction(InteractionResponse),
     Stop,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum ThreadControlRequest {
+    Interrupt(String),
     ResolveInteraction(InteractionResponse),
 }
 
@@ -120,6 +122,11 @@ pub(super) fn merge_command(update: &mut CommandUpdate, command: ObserverCommand
             update.turn = Some(request);
         }
         ObserverCommand::StartTurn(_) => {}
+        ObserverCommand::InterruptTurn(thread_id) => {
+            update
+                .controls
+                .push(ThreadControlRequest::Interrupt(thread_id));
+        }
         ObserverCommand::ResolveInteraction(response) => {
             update
                 .controls

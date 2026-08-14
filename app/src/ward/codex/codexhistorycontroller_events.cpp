@@ -87,6 +87,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_NOTICE: {
             if (threadId != selectedThreadId_)
                 return;
+            setInterruptRequested(false);
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             if (!message.isEmpty())
                 setConversationErrorMessage(message);

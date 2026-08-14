@@ -262,6 +262,16 @@ pub(crate) struct TurnStartResponse {
     turn: WireTurn,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TurnInterruptParams<'a> {
+    pub(crate) thread_id: &'a str,
+    pub(crate) turn_id: &'a str,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TurnInterruptResponse {}
+
 impl TurnStartResponse {
     pub(crate) fn into_turn(self) -> Result<Turn, serde_json::Error> {
         self.turn.into_model()

@@ -422,16 +422,48 @@ impl ObserverState {
         control: ThreadControlRequest,
         sink: &HistoryEventSink,
     ) {
-        let ThreadControlRequest::ResolveInteraction(response) = control;
-        let Some(writer) = self.writer.as_mut() else {
-            return;
-        };
-        let thread_id = writer.thread_id().to_owned();
-        match writer.resolve_interaction(response).await {
-            Ok(event) => self.accept_writer_event(&thread_id, event, sink),
-            Err(error) => {
-                sink.emit_turn_notice(&thread_id, &error.to_string());
-                sink.emit_pending_interactions(&thread_id, writer.pending_interactions());
+        match control {
+            ThreadControlRequest::Interrupt(thread_id) => {
+                let turn_id = match self.live.runtime() {
+                    LiveRuntimeState::Active {
+                        turn_id: Some(turn_id),
+                        ..
+                    } => turn_id,
+                    _ => {
+                        sink.emit_turn_notice(
+                            &thread_id,
+                            "The Codex turn is no longer available to stop.",
+                        );
+                        return;
+                    }
+                };
+                let Some(writer) = self
+                    .writer
+                    .as_mut()
+                    .filter(|writer| writer.thread_id() == thread_id)
+                else {
+                    sink.emit_turn_notice(
+                        &thread_id,
+                        "Writing access is no longer available for this conversation.",
+                    );
+                    return;
+                };
+                if let Err(error) = writer.interrupt_turn(&turn_id).await {
+                    sink.emit_turn_notice(&thread_id, &error.to_string());
+                }
+            }
+            ThreadControlRequest::ResolveInteraction(response) => {
+                let Some(writer) = self.writer.as_mut() else {
+                    return;
+                };
+                let thread_id = writer.thread_id().to_owned();
+                match writer.resolve_interaction(response).await {
+                    Ok(event) => self.accept_writer_event(&thread_id, event, sink),
+                    Err(error) => {
+                        sink.emit_turn_notice(&thread_id, &error.to_string());
+                        sink.emit_pending_interactions(&thread_id, writer.pending_interactions());
+                    }
+                }
             }
         }
     }

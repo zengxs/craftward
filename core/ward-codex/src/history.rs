@@ -323,6 +323,14 @@ impl CodexThreadWriter {
         self.client.pending_interactions(&self.thread_id)
     }
 
+    /// Requests interruption of the active turn.
+    pub async fn interrupt_turn(&mut self, turn_id: &str) -> Result<(), CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        self.client.interrupt_turn(&self.thread_id, turn_id).await
+    }
+
     /// Terminates and reaps the writer's app-server child.
     pub async fn shutdown(self) {
         self.client.shutdown().await;

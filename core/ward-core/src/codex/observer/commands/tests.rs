@@ -81,18 +81,12 @@ fn preserves_immediate_turn_controls_in_arrival_order() {
 
     assert_eq!(
         drain_commands(
-            ObserverCommand::ResolveInteraction(InteractionResponse {
-                interaction_id: InteractionId::new(7).unwrap(),
-                body: InteractionResponseBody::Decision(InteractionDecision::Decline),
-            }),
+            ObserverCommand::InterruptTurn("thread-1".to_owned()),
             &mut receiver,
         ),
         DrainedCommands::Update(CommandUpdate {
             controls: vec![
-                ThreadControlRequest::ResolveInteraction(InteractionResponse {
-                    interaction_id: InteractionId::new(7).unwrap(),
-                    body: InteractionResponseBody::Decision(InteractionDecision::Decline),
-                }),
+                ThreadControlRequest::Interrupt("thread-1".to_owned()),
                 ThreadControlRequest::ResolveInteraction(InteractionResponse {
                     interaction_id: InteractionId::new(8).unwrap(),
                     body: InteractionResponseBody::Decision(InteractionDecision::Decline),

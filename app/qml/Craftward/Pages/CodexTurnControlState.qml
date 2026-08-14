@@ -7,15 +7,21 @@ QtObject {
     id: root
 
     property bool turnInFlight: false
+    property bool interruptPending: false
     property bool writable: false
     property bool promptReady: false
-    readonly property bool enabled: !turnInFlight && writable && promptReady
-    readonly property string label: qsTr("Send")
+    readonly property bool enabled: turnInFlight ? !interruptPending : writable && promptReady
+    readonly property string label: turnInFlight ? (interruptPending ? qsTr("Stopping…") : qsTr("Stop")) : qsTr("Send")
 
     signal sendRequested
+    signal stopRequested
 
     function activate() {
-        if (enabled)
+        if (!enabled)
+            return;
+        if (turnInFlight)
+            stopRequested();
+        else
             sendRequested();
     }
 }

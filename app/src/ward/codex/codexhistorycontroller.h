@@ -44,6 +44,7 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(QString activeTurnId READ activeTurnId NOTIFY turnStateChanged)
     Q_PROPERTY(bool waitingOnApproval READ waitingOnApproval NOTIFY turnStateChanged)
     Q_PROPERTY(bool waitingOnUserInput READ waitingOnUserInput NOTIFY turnStateChanged)
+    Q_PROPERTY(bool interruptRequested READ interruptRequested NOTIFY interruptRequestedChanged)
     Q_PROPERTY(TurnMode turnMode READ turnMode WRITE setTurnMode NOTIFY turnOptionsChanged)
     Q_PROPERTY(
       PermissionPreset permissionPreset READ permissionPreset WRITE setPermissionPreset NOTIFY turnOptionsChanged)
@@ -130,6 +131,7 @@ class CodexHistoryController : public QObject
     [[nodiscard]] QString activeTurnId() const;
     [[nodiscard]] bool waitingOnApproval() const;
     [[nodiscard]] bool waitingOnUserInput() const;
+    [[nodiscard]] bool interruptRequested() const;
     [[nodiscard]] TurnMode turnMode() const;
     void setTurnMode(TurnMode mode);
     [[nodiscard]] PermissionPreset permissionPreset() const;
@@ -142,6 +144,7 @@ class CodexHistoryController : public QObject
     Q_INVOKABLE void acquireWriteAccess();
     Q_INVOKABLE void releaseWriteAccess();
     Q_INVOKABLE bool startTurn(const QString& prompt);
+    Q_INVOKABLE bool interruptTurn();
     Q_INVOKABLE bool respondToApproval(const QString& interactionId, InteractionDecision decision);
     Q_INVOKABLE bool respondToUserInput(const QString& interactionId, const QVariantMap& answers);
     Q_INVOKABLE void clearError();
@@ -152,6 +155,7 @@ class CodexHistoryController : public QObject
     void loadingChanged();
     void activityHistoryPartialChanged();
     void turnStateChanged();
+    void interruptRequestedChanged();
     void turnOptionsChanged();
     void turnStarted();
     void writeAvailabilityChanged();
@@ -176,6 +180,7 @@ class CodexHistoryController : public QObject
                       bool waitingOnApproval = false,
                       bool waitingOnUserInput = false);
     void setWriteAvailability(WriteAvailability availability, const QString& message = {});
+    void setInterruptRequested(bool requested);
     bool sendInteractionResponse(const QString& interactionId,
                                  const ward::codex::v1::PendingInteractionResponse& response);
     void updateErrorMessage();
@@ -198,6 +203,7 @@ class CodexHistoryController : public QObject
     bool loadingConversation_ = false;
     bool activityHistoryPartial_ = false;
     TurnRuntimeState turnRuntimeState_;
+    bool interruptRequested_ = false;
     TurnMode turnMode_ = TurnMode::DefaultMode;
     PermissionPreset permissionPreset_ = PermissionPreset::InheritPermissions;
     WriteAvailability writeAvailability_ = WriteAvailability::NotRequested;

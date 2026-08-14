@@ -189,6 +189,12 @@ CodexHistoryController::waitingOnUserInput() const
     return turnRuntimeState_.waitingOnUserInput;
 }
 
+bool
+CodexHistoryController::interruptRequested() const
+{
+    return interruptRequested_;
+}
+
 CodexHistoryController::TurnMode
 CodexHistoryController::turnMode() const
 {
@@ -286,6 +292,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::NotRequested);
     setConversationErrorMessage({});
+    setInterruptRequested(false);
     loadingConversation_ = true;
     emit selectionChanged();
     emit loadingChanged();
@@ -380,7 +387,29 @@ CodexHistoryController::startTurn(const QString& prompt)
     }
 
     setConversationErrorMessage({});
+    setInterruptRequested(false);
     setTurnState(TurnState::Starting);
+    return true;
+}
+
+bool
+CodexHistoryController::interruptTurn()
+{
+    if (!turnInFlight() || selectedThreadId_.isEmpty() || interruptRequested_ || historyObserver_ == nullptr)
+        return false;
+
+    const QByteArray threadId = selectedThreadId_.toUtf8();
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_interrupt_turn(historyObserver_, threadId.constData(), &rawError)) {
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("The Codex turn could not be stopped.");
+        setConversationErrorMessage(message);
+        return false;
+    }
+
+    setConversationErrorMessage({});
+    setInterruptRequested(true);
     return true;
 }
 
@@ -501,6 +530,8 @@ CodexHistoryController::setTurnState(TurnState state,
                                      bool waitingOnApproval,
                                      bool waitingOnUserInput)
 {
+    if (state != TurnState::Starting && state != TurnState::Running)
+        setInterruptRequested(false);
     if (turnRuntimeState_.status == state && turnRuntimeState_.activeTurnId == activeTurnId &&
         turnRuntimeState_.waitingOnApproval == waitingOnApproval &&
         turnRuntimeState_.waitingOnUserInput == waitingOnUserInput)
@@ -522,6 +553,15 @@ CodexHistoryController::setWriteAvailability(WriteAvailability availability, con
     writeAvailability_ = availability;
     writeAvailabilityMessage_ = message;
     emit writeAvailabilityChanged();
+}
+
+void
+CodexHistoryController::setInterruptRequested(bool requested)
+{
+    if (interruptRequested_ == requested)
+        return;
+    interruptRequested_ = requested;
+    emit interruptRequestedChanged();
 }
 
 bool

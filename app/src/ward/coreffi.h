@@ -72,6 +72,9 @@ extern "C"
                                                      WardCodexTurnMode turn_mode,
                                                      WardCodexPermissionPreset permission_preset,
                                                      WardError** error);
+    bool ward_core_codex_history_observer_interrupt_turn(WardCodexHistoryObserver* observer,
+                                                         const char* thread_id,
+                                                         WardError** error);
     bool ward_core_codex_history_observer_resolve_interaction(WardCodexHistoryObserver* observer,
                                                               const uint8_t* response_data,
                                                               size_t response_size,

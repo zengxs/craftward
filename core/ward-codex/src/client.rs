@@ -17,10 +17,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
-    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, TURN_START_METHOD,
-    ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
-    ThreadResumeResponse, TurnStartParams, TurnStartResponse, interaction_result,
-    pending_interaction, resolved_server_request, turn_stream_event,
+    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, TURN_INTERRUPT_METHOD,
+    TURN_START_METHOD, ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse,
+    ThreadResumeParams, ThreadResumeResponse, TurnInterruptParams, TurnInterruptResponse,
+    TurnStartParams, TurnStartResponse, interaction_result, pending_interaction,
+    resolved_server_request, turn_stream_event,
 };
 use crate::{
     CodexError, InteractionId, InteractionResponse, PendingInteraction, ServerInfo, Thread,
@@ -414,6 +415,21 @@ impl CodexClient {
         self.subscription_state.pending_for(thread_id)
     }
 
+    /// Requests interruption of the active turn on this subscribed thread.
+    pub async fn interrupt_turn(
+        &mut self,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<(), CodexError> {
+        let _: TurnInterruptResponse = self
+            .request(
+                TURN_INTERRUPT_METHOD,
+                &TurnInterruptParams { thread_id, turn_id },
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Terminates and reaps the app-server child process.
     pub async fn shutdown(mut self) {
         self.connection.take();
@@ -760,5 +776,27 @@ mod tests {
             ThreadStreamEvent::PendingInteractionsUpdated { interactions, .. }
                 if interactions.is_empty()
         ));
+    }
+
+    #[tokio::test]
+    async fn serializes_the_active_turn_interrupt_request() {
+        let input = "{\"id\":1,\"result\":{}}\n";
+        let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
+
+        let _: TurnInterruptResponse = connection
+            .request(
+                TURN_INTERRUPT_METHOD,
+                &TurnInterruptParams {
+                    thread_id: "thread-1",
+                    turn_id: "turn-2",
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            String::from_utf8(connection.writer().clone()).unwrap(),
+            "{\"id\":1,\"method\":\"turn/interrupt\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\"}}\n"
+        );
     }
 }
