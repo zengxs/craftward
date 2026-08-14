@@ -129,6 +129,8 @@ CodexTimelineModel::presentationKind(const CodexActivity& activity) const
     using CommandActionKind = ward::codex::v1::CommandActionKindGadget::CommandActionKind;
 
     switch (activity.kind()) {
+        case ActivityKind::ACTIVITY_KIND_REASONING:
+            return ActivityPresentationKind::Reasoning;
         case ActivityKind::ACTIVITY_KIND_PLAN:
             return ActivityPresentationKind::Plan;
         case ActivityKind::ACTIVITY_KIND_COMMAND_EXECUTION: {
@@ -188,6 +190,8 @@ QString
 CodexTimelineModel::activityGroupLabel(ActivityPresentationKind kind) const
 {
     switch (kind) {
+        case ActivityPresentationKind::Reasoning:
+            return tr("Reasoning");
         case ActivityPresentationKind::Plan:
             return tr("Planned");
         case ActivityPresentationKind::ReadFiles:
@@ -245,6 +249,13 @@ CodexTimelineModel::activityItem(const CodexActivity& activity) const
     const QString command = !actionSummary.isEmpty() && actionSummary != rawSummary ? rawSummary : QString();
     const QString detail = activity.hasDetail() ? activity.detail() : QString();
     const QString context = activity.hasContext() ? activity.context() : QString();
+    const bool reasoning =
+      activity.kind() == ward::codex::v1::ActivityKindGadget::ActivityKind::ACTIVITY_KIND_REASONING;
+    const qint64 startedAtUnixMilliseconds =
+      activity.hasStartedAtUnixMilliseconds() ? static_cast<qint64>(activity.startedAtUnixMilliseconds()) : qint64{ 0 };
+    const qint64 completedAtUnixMilliseconds = activity.hasCompletedAtUnixMilliseconds()
+                                                 ? static_cast<qint64>(activity.completedAtUnixMilliseconds())
+                                                 : qint64{ 0 };
 
     return {
         { QStringLiteral("activityId"), activity.activityId() },
@@ -255,7 +266,10 @@ CodexTimelineModel::activityItem(const CodexActivity& activity) const
         { QStringLiteral("statusLabel"), activityStatusLabel(activity) },
         { QStringLiteral("failed"), activityFailed(activity) },
         { QStringLiteral("running"), activityRunning(activity) },
-        { QStringLiteral("expandable"), !command.isEmpty() || !detail.isEmpty() || !context.isEmpty() },
+        { QStringLiteral("reasoning"), reasoning },
+        { QStringLiteral("startedAtUnixMilliseconds"), startedAtUnixMilliseconds },
+        { QStringLiteral("completedAtUnixMilliseconds"), completedAtUnixMilliseconds },
+        { QStringLiteral("expandable"), reasoning || !command.isEmpty() || !detail.isEmpty() || !context.isEmpty() },
     };
 }
 

@@ -51,6 +51,7 @@ class CodexTimelineModel : public QAbstractListModel
     enum class ActivityPresentationKind
     {
         Activity,
+        Reasoning,
         Plan,
         ReadFiles,
         ListFiles,

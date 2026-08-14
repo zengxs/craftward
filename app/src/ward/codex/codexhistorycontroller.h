@@ -35,11 +35,27 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(bool loadingThreads READ loadingThreads NOTIFY loadingChanged)
     Q_PROPERTY(bool loadingConversation READ loadingConversation NOTIFY loadingChanged)
     Q_PROPERTY(bool activityHistoryPartial READ activityHistoryPartial NOTIFY activityHistoryPartialChanged)
+    Q_PROPERTY(TurnState turnState READ turnState NOTIFY turnStateChanged)
+    Q_PROPERTY(bool turnInFlight READ turnInFlight NOTIFY turnStateChanged)
     Q_PROPERTY(bool turnRunning READ turnRunning NOTIFY turnStateChanged)
+    Q_PROPERTY(QString activeTurnId READ activeTurnId NOTIFY turnStateChanged)
+    Q_PROPERTY(bool waitingOnApproval READ waitingOnApproval NOTIFY turnStateChanged)
+    Q_PROPERTY(bool waitingOnUserInput READ waitingOnUserInput NOTIFY turnStateChanged)
     Q_PROPERTY(WriteAvailability writeAvailability READ writeAvailability NOTIFY writeAvailabilityChanged)
     Q_PROPERTY(QString writeAvailabilityMessage READ writeAvailabilityMessage NOTIFY writeAvailabilityChanged)
 
   public:
+    enum class TurnState
+    {
+        Detached,
+        Starting,
+        Idle,
+        Running,
+        SystemError,
+        Unknown,
+    };
+    Q_ENUM(TurnState)
+
     enum class WriteAvailability
     {
         Idle,
@@ -61,7 +77,12 @@ class CodexHistoryController : public QObject
     [[nodiscard]] bool loadingThreads() const;
     [[nodiscard]] bool loadingConversation() const;
     [[nodiscard]] bool activityHistoryPartial() const;
+    [[nodiscard]] TurnState turnState() const;
+    [[nodiscard]] bool turnInFlight() const;
     [[nodiscard]] bool turnRunning() const;
+    [[nodiscard]] QString activeTurnId() const;
+    [[nodiscard]] bool waitingOnApproval() const;
+    [[nodiscard]] bool waitingOnUserInput() const;
     [[nodiscard]] WriteAvailability writeAvailability() const;
     [[nodiscard]] QString writeAvailabilityMessage() const;
 
@@ -82,13 +103,24 @@ class CodexHistoryController : public QObject
     void writeAvailabilityChanged();
 
   private:
+    struct TurnRuntimeState
+    {
+        TurnState status = TurnState::Detached;
+        QString activeTurnId;
+        bool waitingOnApproval = false;
+        bool waitingOnUserInput = false;
+    };
+
     static void handleHistoryEvent(void* context, const WardBuffer* event);
 
     void setErrorMessage(const QString& message);
     void setThreadErrorMessage(const QString& message);
     void setConversationErrorMessage(const QString& message);
     void setActivityHistoryPartial(bool partial);
-    void setTurnRunning(bool running);
+    void setTurnState(TurnState state,
+                      const QString& activeTurnId = {},
+                      bool waitingOnApproval = false,
+                      bool waitingOnUserInput = false);
     void setWriteAvailability(WriteAvailability availability, const QString& message = {});
     void updateErrorMessage();
     void finishThreadLoading(const QString& errorMessage);
@@ -108,7 +140,7 @@ class CodexHistoryController : public QObject
     bool loadingThreads_ = true;
     bool loadingConversation_ = false;
     bool activityHistoryPartial_ = false;
-    bool turnRunning_ = false;
+    TurnRuntimeState turnRuntimeState_;
     WriteAvailability writeAvailability_ = WriteAvailability::Idle;
     QString writeAvailabilityMessage_;
 };

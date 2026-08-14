@@ -137,10 +137,40 @@ CodexHistoryController::activityHistoryPartial() const
     return activityHistoryPartial_;
 }
 
+CodexHistoryController::TurnState
+CodexHistoryController::turnState() const
+{
+    return turnRuntimeState_.status;
+}
+
+bool
+CodexHistoryController::turnInFlight() const
+{
+    return turnRuntimeState_.status == TurnState::Starting || turnRuntimeState_.status == TurnState::Running;
+}
+
 bool
 CodexHistoryController::turnRunning() const
 {
-    return turnRunning_;
+    return turnRuntimeState_.status == TurnState::Running;
+}
+
+QString
+CodexHistoryController::activeTurnId() const
+{
+    return turnRuntimeState_.activeTurnId;
+}
+
+bool
+CodexHistoryController::waitingOnApproval() const
+{
+    return turnRuntimeState_.waitingOnApproval;
+}
+
+bool
+CodexHistoryController::waitingOnUserInput() const
+{
+    return turnRuntimeState_.waitingOnUserInput;
 }
 
 CodexHistoryController::WriteAvailability
@@ -158,7 +188,7 @@ CodexHistoryController::writeAvailabilityMessage() const
 void
 CodexHistoryController::refresh()
 {
-    if (turnRunning_)
+    if (turnInFlight())
         return;
     if (historyObserver_ == nullptr) {
         setThreadErrorMessage(tr("The Codex history observer is unavailable."));
@@ -191,7 +221,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
 {
     if (threadId.isEmpty())
         return;
-    if (turnRunning_ && threadId != selectedThreadId_)
+    if (turnInFlight() && threadId != selectedThreadId_)
         return;
     if (threadId == selectedThreadId_) {
         if (title != selectedThreadTitle_) {
@@ -206,6 +236,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     selectedThreadTitle_ = title;
     timelineModel_.clear();
     setActivityHistoryPartial(false);
+    setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::Idle);
     setConversationErrorMessage({});
     loadingConversation_ = true;
@@ -229,7 +260,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
 void
 CodexHistoryController::acquireWriteAccess()
 {
-    if (selectedThreadId_.isEmpty() || turnRunning_ || writeAvailability_ == WriteAvailability::Checking ||
+    if (selectedThreadId_.isEmpty() || turnInFlight() || writeAvailability_ == WriteAvailability::Checking ||
         writeAvailability_ == WriteAvailability::Writable)
         return;
     if (historyObserver_ == nullptr) {
@@ -253,7 +284,7 @@ CodexHistoryController::acquireWriteAccess()
 void
 CodexHistoryController::releaseWriteAccess()
 {
-    if (selectedThreadId_.isEmpty() || turnRunning_ || writeAvailability_ == WriteAvailability::Idle)
+    if (selectedThreadId_.isEmpty() || turnInFlight() || writeAvailability_ == WriteAvailability::Idle)
         return;
     if (historyObserver_ == nullptr) {
         setWriteAvailability(WriteAvailability::Idle);
@@ -276,7 +307,7 @@ CodexHistoryController::releaseWriteAccess()
 bool
 CodexHistoryController::startTurn(const QString& prompt)
 {
-    if (prompt.trimmed().isEmpty() || selectedThreadId_.isEmpty() || turnRunning_ ||
+    if (prompt.trimmed().isEmpty() || selectedThreadId_.isEmpty() || turnInFlight() ||
         writeAvailability_ != WriteAvailability::Writable)
         return false;
     if (historyObserver_ == nullptr) {
@@ -297,7 +328,7 @@ CodexHistoryController::startTurn(const QString& prompt)
     }
 
     setConversationErrorMessage({});
-    setTurnRunning(true);
+    setTurnState(TurnState::Starting);
     return true;
 }
 
@@ -346,11 +377,21 @@ CodexHistoryController::setActivityHistoryPartial(bool partial)
 }
 
 void
-CodexHistoryController::setTurnRunning(bool running)
+CodexHistoryController::setTurnState(TurnState state,
+                                     const QString& activeTurnId,
+                                     bool waitingOnApproval,
+                                     bool waitingOnUserInput)
 {
-    if (turnRunning_ == running)
+    if (turnRuntimeState_.status == state && turnRuntimeState_.activeTurnId == activeTurnId &&
+        turnRuntimeState_.waitingOnApproval == waitingOnApproval &&
+        turnRuntimeState_.waitingOnUserInput == waitingOnUserInput)
         return;
-    turnRunning_ = running;
+    turnRuntimeState_ = {
+        .status = state,
+        .activeTurnId = activeTurnId,
+        .waitingOnApproval = waitingOnApproval,
+        .waitingOnUserInput = waitingOnUserInput,
+    };
     emit turnStateChanged();
 }
 
@@ -478,18 +519,15 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STARTED:
             if (threadId != selectedThreadId_)
                 return;
-            setTurnRunning(true);
             emit turnStarted();
             break;
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_COMPLETED:
             if (threadId != selectedThreadId_)
                 return;
-            setTurnRunning(false);
             break;
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_ERROR: {
             if (threadId != selectedThreadId_)
                 return;
-            setTurnRunning(false);
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             setConversationErrorMessage(message.isEmpty() ? tr("The Codex turn failed.") : message);
             break;
@@ -533,6 +571,58 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 default:
                     setWriteAvailability(WriteAvailability::Unavailable,
                                          tr("Ward Core returned an unsupported write state."));
+                    break;
+            }
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_RUNTIME_STATE_CHANGED: {
+            if (threadId != selectedThreadId_)
+                return;
+            if (!event.hasThreadRuntimeState()) {
+                setTurnState(TurnState::Unknown);
+                setConversationErrorMessage(tr("Ward Core returned a runtime update without a state."));
+                break;
+            }
+            const auto& state = event.threadRuntimeState();
+            bool waitingOnApproval = false;
+            bool waitingOnUserInput = false;
+            using ThreadActiveFlag = ward::codex::v1::ThreadActiveFlagGadget::ThreadActiveFlag;
+            for (const auto flag : state.activeFlags()) {
+                switch (flag) {
+                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_WAITING_ON_APPROVAL:
+                        waitingOnApproval = true;
+                        break;
+                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_WAITING_ON_USER_INPUT:
+                        waitingOnUserInput = true;
+                        break;
+                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_UNSPECIFIED:
+                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_UNKNOWN:
+                    default:
+                        break;
+                }
+            }
+            const QString activeTurnId = state.hasTurnId() ? state.turnId() : QString();
+            using ThreadRuntimeStatus = ward::codex::v1::ThreadRuntimeStatusGadget::ThreadRuntimeStatus;
+            switch (state.status()) {
+                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_DETACHED:
+                    setTurnState(TurnState::Detached);
+                    break;
+                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_STARTING:
+                    setTurnState(TurnState::Starting);
+                    break;
+                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_IDLE:
+                    setTurnState(TurnState::Idle);
+                    break;
+                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_ACTIVE:
+                    setTurnState(TurnState::Running, activeTurnId, waitingOnApproval, waitingOnUserInput);
+                    break;
+                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_SYSTEM_ERROR:
+                    setTurnState(TurnState::SystemError);
+                    break;
+                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_UNKNOWN:
+                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_UNSPECIFIED:
+                default:
+                    setTurnState(TurnState::Unknown);
                     break;
             }
             break;

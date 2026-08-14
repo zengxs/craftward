@@ -13,6 +13,21 @@ Page {
     id: root
 
     required property CodexHistoryController controller
+    property double wallClockUnixMilliseconds: Date.now()
+
+    function activityStatusText(activity) {
+        if (!activity.reasoning)
+            return activity.statusLabel;
+
+        const startedAt = Number(activity.startedAtUnixMilliseconds);
+        if (startedAt <= 0)
+            return activity.statusLabel;
+
+        const completedAt = Number(activity.completedAtUnixMilliseconds);
+        const endAt = completedAt > 0 ? completedAt : root.wallClockUnixMilliseconds;
+        const elapsedSeconds = Math.max(0, Math.floor((endAt - startedAt) / 1000));
+        return qsTr("Processed %1 s").arg(elapsedSeconds);
+    }
 
     function submitPrompt() {
         const prompt = promptEditor.text;
@@ -33,9 +48,16 @@ Page {
         onEditorShouldLoseFocus: promptEditor.focus = false
     }
 
+    Timer {
+        interval: 1000
+        running: root.visible && root.controller.turnRunning
+        repeat: true
+        onTriggered: root.wallClockUnixMilliseconds = Date.now()
+    }
+
     function releaseWriteAccessWhenHidden() {
         const window = root.ApplicationWindow.window;
-        if (window && !window.visible && !root.controller.turnRunning)
+        if (window && !window.visible && !root.controller.turnInFlight && root.controller.writeAvailability === CodexHistoryController.Writable)
             root.controller.releaseWriteAccess();
     }
 
@@ -111,7 +133,7 @@ Page {
 
                     Button {
                         text: qsTr("Refresh")
-                        enabled: !root.controller.loadingThreads && !root.controller.turnRunning
+                        enabled: !root.controller.loadingThreads && !root.controller.turnInFlight
                         onClicked: root.controller.refresh()
                     }
                 }
@@ -145,7 +167,7 @@ Page {
                         width: ListView.view.width
                         checkable: true
                         checked: root.controller.selectedThreadId === threadId
-                        enabled: !root.controller.turnRunning
+                        enabled: !root.controller.turnInFlight
                         hoverEnabled: true
                         leftPadding: 12
                         rightPadding: 12
@@ -217,10 +239,62 @@ Page {
                         elide: Text.ElideRight
                     }
 
+                    Rectangle {
+                        implicitWidth: runtimeStateLayout.implicitWidth + 16
+                        implicitHeight: runtimeStateLayout.implicitHeight + 8
+                        radius: height / 2
+                        color: root.controller.turnState === CodexHistoryController.SystemError ? Qt.rgba(0.82, 0.12, 0.16, 0.08) : root.palette.alternateBase
+                        border.color: root.controller.turnState === CodexHistoryController.SystemError ? Qt.rgba(0.82, 0.12, 0.16, 0.24) : root.palette.mid
+                        visible: root.controller.selectedThreadId.length > 0
+
+                        RowLayout {
+                            id: runtimeStateLayout
+
+                            anchors.centerIn: parent
+                            spacing: 6
+
+                            Rectangle {
+                                Layout.preferredWidth: 7
+                                Layout.preferredHeight: 7
+                                radius: width / 2
+                                color: {
+                                    if (root.controller.turnState === CodexHistoryController.SystemError)
+                                        return "#B4232A";
+                                    if (root.controller.turnState === CodexHistoryController.Running || root.controller.turnState === CodexHistoryController.Starting)
+                                        return root.palette.highlight;
+                                    return root.palette.mid;
+                                }
+                            }
+
+                            Label {
+                                text: {
+                                    if (root.controller.turnState === CodexHistoryController.Starting)
+                                        return qsTr("Starting…");
+                                    if (root.controller.turnState === CodexHistoryController.Running) {
+                                        if (root.controller.waitingOnApproval)
+                                            return qsTr("Waiting for approval");
+                                        if (root.controller.waitingOnUserInput)
+                                            return qsTr("Waiting for input");
+                                        return qsTr("Running");
+                                    }
+                                    if (root.controller.turnState === CodexHistoryController.Idle)
+                                        return qsTr("Live · Idle");
+                                    if (root.controller.turnState === CodexHistoryController.SystemError)
+                                        return qsTr("Runtime error");
+                                    if (root.controller.turnState === CodexHistoryController.Unknown)
+                                        return qsTr("Status unknown");
+                                    return qsTr("History only");
+                                }
+                                color: root.controller.turnState === CodexHistoryController.SystemError ? "#B4232A" : root.palette.placeholderText
+                                font.pixelSize: 11
+                            }
+                        }
+                    }
+
                     BusyIndicator {
                         Layout.preferredWidth: 22
                         Layout.preferredHeight: 22
-                        running: root.controller.loadingConversation || root.controller.turnRunning
+                        running: root.controller.loadingConversation || root.controller.turnInFlight
                         visible: running
                     }
                 }
@@ -382,7 +456,7 @@ Page {
                         required property var activityItems
                         required property bool failed
                         required property bool running
-                        property bool groupExpanded: false
+                        property bool groupExpanded: activityItems.length > 0 && activityItems[0].reasoning
 
                         width: ListView.view.width
                         implicitHeight: activityGroup ? activityCard.implicitHeight : messageCard.implicitHeight
@@ -491,7 +565,7 @@ Page {
                                         id: activityItemDelegate
 
                                         required property var modelData
-                                        property bool detailsExpanded: false
+                                        property bool detailsExpanded: modelData.reasoning
 
                                         Layout.fillWidth: true
                                         leftPadding: 28
@@ -529,7 +603,7 @@ Page {
                                                 }
 
                                                 Label {
-                                                    text: activityItemDelegate.modelData.statusLabel
+                                                    text: root.activityStatusText(activityItemDelegate.modelData)
                                                     color: activityItemDelegate.modelData.failed ? "#B4232A" : root.palette.placeholderText
                                                     font.pixelSize: 10
                                                     visible: text.length > 0
@@ -621,7 +695,7 @@ Page {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Math.min(Math.max(contentHeight + topPadding + bottomPadding, 44), 120)
                                 placeholderText: qsTr("Ask Codex to continue this conversation…")
-                                enabled: !root.controller.turnRunning
+                                enabled: !root.controller.turnInFlight
                                 wrapMode: TextEdit.Wrap
                                 selectByMouse: true
                                 onTextChanged: composerState.saveDraft(text)
@@ -639,8 +713,8 @@ Page {
                             }
 
                             Button {
-                                text: root.controller.turnRunning ? qsTr("Working…") : qsTr("Send")
-                                enabled: !root.controller.turnRunning && root.controller.writeAvailability === CodexHistoryController.Writable && promptEditor.text.trim().length > 0
+                                text: root.controller.turnState === CodexHistoryController.Starting ? qsTr("Starting…") : (root.controller.turnRunning ? qsTr("Working…") : qsTr("Send"))
+                                enabled: !root.controller.turnInFlight && root.controller.writeAvailability === CodexHistoryController.Writable && promptEditor.text.trim().length > 0
                                 onClicked: root.submitPrompt()
                             }
                         }
