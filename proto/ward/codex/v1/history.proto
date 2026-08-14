@@ -46,6 +46,7 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_TURN_ERROR = 9;
   HISTORY_EVENT_KIND_TURN_NOTICE = 10;
   HISTORY_EVENT_KIND_THREAD_WRITE_STATE_CHANGED = 11;
+  HISTORY_EVENT_KIND_THREAD_RUNTIME_STATE_CHANGED = 12;
 }
 
 // The selected thread's writer availability for this Craftward observer.
@@ -63,6 +64,30 @@ message ThreadWriteState {
   optional string message = 2;
 }
 
+// Runtime state observed on the app-server connection subscribed to a thread.
+enum ThreadRuntimeStatus {
+  THREAD_RUNTIME_STATUS_UNSPECIFIED = 0;
+  THREAD_RUNTIME_STATUS_DETACHED = 1;
+  THREAD_RUNTIME_STATUS_STARTING = 2;
+  THREAD_RUNTIME_STATUS_IDLE = 3;
+  THREAD_RUNTIME_STATUS_ACTIVE = 4;
+  THREAD_RUNTIME_STATUS_SYSTEM_ERROR = 5;
+  THREAD_RUNTIME_STATUS_UNKNOWN = 6;
+}
+
+enum ThreadActiveFlag {
+  THREAD_ACTIVE_FLAG_UNSPECIFIED = 0;
+  THREAD_ACTIVE_FLAG_WAITING_ON_APPROVAL = 1;
+  THREAD_ACTIVE_FLAG_WAITING_ON_USER_INPUT = 2;
+  THREAD_ACTIVE_FLAG_UNKNOWN = 3;
+}
+
+message ThreadRuntimeState {
+  ThreadRuntimeStatus status = 1;
+  optional string turn_id = 2;
+  repeated ThreadActiveFlag active_flags = 3;
+}
+
 // One event emitted by a Codex history and live-turn observer.
 message HistoryEvent {
   HistoryEventKind kind = 1;
@@ -73,6 +98,7 @@ message HistoryEvent {
     Conversation conversation = 4;
     string error_message = 5;
     ThreadWriteState thread_write_state = 6;
+    ThreadRuntimeState thread_runtime_state = 7;
   }
 }
 
@@ -123,6 +149,7 @@ enum ActivityKind {
   ACTIVITY_KIND_REVIEW_STARTED = 11;
   ACTIVITY_KIND_REVIEW_COMPLETED = 12;
   ACTIVITY_KIND_CONTEXT_COMPACTION = 13;
+  ACTIVITY_KIND_REASONING = 14;
 }
 
 enum ActivityStatus {
@@ -161,4 +188,6 @@ message Activity {
   optional string detail = 6;
   optional string context = 7;
   repeated CommandAction command_actions = 8;
+  optional int64 started_at_unix_milliseconds = 9;
+  optional int64 completed_at_unix_milliseconds = 10;
 }

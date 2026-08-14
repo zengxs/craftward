@@ -10,6 +10,7 @@ use ward_codex::{
 
 use crate::{WardError, write_error};
 
+mod live;
 mod observer;
 
 mod wire {
@@ -109,6 +110,7 @@ fn activity_to_wire(activity: Activity) -> wire::Activity {
     wire::Activity {
         activity_id: activity.id,
         kind: match activity.kind {
+            ActivityKind::Reasoning => wire::ActivityKind::Reasoning,
             ActivityKind::Plan => wire::ActivityKind::Plan,
             ActivityKind::CommandExecution => wire::ActivityKind::CommandExecution,
             ActivityKind::FileChange => wire::ActivityKind::FileChange,
@@ -140,6 +142,8 @@ fn activity_to_wire(activity: Activity) -> wire::Activity {
             .into_iter()
             .map(command_action_to_wire)
             .collect(),
+        started_at_unix_milliseconds: activity.started_at_unix_milliseconds,
+        completed_at_unix_milliseconds: activity.completed_at_unix_milliseconds,
     }
 }
 
@@ -270,6 +274,8 @@ mod tests {
                         id: "activity-1".to_owned(),
                         kind: ActivityKind::CommandExecution,
                         status: ActivityStatus::Completed,
+                        started_at_unix_milliseconds: Some(1_000),
+                        completed_at_unix_milliseconds: Some(4_250),
                         summary: "sed -n 1,80p src/main.rs".to_owned(),
                         detail: Some("fn main() {}".to_owned()),
                         context: Some("/workspace".to_owned()),
@@ -321,6 +327,8 @@ mod tests {
         };
         assert_eq!(activity.activity_id, "activity-1");
         assert_eq!(activity.kind(), wire::ActivityKind::CommandExecution);
+        assert_eq!(activity.started_at_unix_milliseconds, Some(1_000));
+        assert_eq!(activity.completed_at_unix_milliseconds, Some(4_250));
         assert_eq!(activity.command_actions.len(), 1);
         assert_eq!(
             activity.command_actions[0].kind(),
