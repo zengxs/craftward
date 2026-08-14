@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::{
-    Activity, ActivityKind, ActivityStatus, AgentMessagePhase, CommandAction, CommandActionKind,
-    ServerInfo, Thread, ThreadItem, ThreadSummary, Turn, TurnStatus, TurnStreamEvent, UserInput,
+    Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
+    CommandActionKind, ServerInfo, Thread, ThreadActiveFlag, ThreadItem, ThreadRuntimeStatus,
+    ThreadStreamEvent, ThreadSubscription, ThreadSummary, Turn, TurnStatus, UserInput,
 };
 
 #[derive(Serialize)]
@@ -121,6 +122,12 @@ pub(crate) struct ThreadResumeResponse {
     pub(crate) thread: WireThread,
 }
 
+impl ThreadResumeResponse {
+    pub(crate) fn into_subscription(self) -> Result<ThreadSubscription, serde_json::Error> {
+        self.thread.into_subscription()
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TurnStartParams<'a> {
@@ -164,6 +171,7 @@ pub(crate) struct WireThread {
     cwd: PathBuf,
     created_at: i64,
     updated_at: i64,
+    status: WireThreadStatus,
     turns: Vec<WireTurn>,
 }
 
@@ -180,6 +188,10 @@ impl WireThread {
     }
 
     pub(crate) fn into_thread(self) -> Result<Thread, serde_json::Error> {
+        Ok(self.into_subscription()?.thread)
+    }
+
+    fn into_subscription(self) -> Result<ThreadSubscription, serde_json::Error> {
         let summary = make_summary(
             self.id,
             self.name,
@@ -193,7 +205,41 @@ impl WireThread {
             .into_iter()
             .map(WireTurn::into_model)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Thread { summary, turns })
+        Ok(ThreadSubscription {
+            thread: Thread { summary, turns },
+            runtime_status: self.status.into_model(),
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireThreadStatus {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    active_flags: Vec<String>,
+}
+
+impl WireThreadStatus {
+    fn into_model(self) -> ThreadRuntimeStatus {
+        match self.kind.as_str() {
+            "notLoaded" => ThreadRuntimeStatus::NotLoaded,
+            "idle" => ThreadRuntimeStatus::Idle,
+            "active" => ThreadRuntimeStatus::Active {
+                active_flags: self
+                    .active_flags
+                    .into_iter()
+                    .map(|flag| match flag.as_str() {
+                        "waitingOnApproval" => ThreadActiveFlag::WaitingOnApproval,
+                        "waitingOnUserInput" => ThreadActiveFlag::WaitingOnUserInput,
+                        _ => ThreadActiveFlag::Unknown(flag),
+                    })
+                    .collect(),
+            },
+            "systemError" => ThreadRuntimeStatus::SystemError,
+            _ => ThreadRuntimeStatus::Unknown(self.kind),
+        }
     }
 }
 
@@ -289,10 +335,15 @@ impl WireThreadItem {
                     fields.text,
                 ))
             }
-            "reasoning" => Ok(ThreadItem::Other {
-                id: self.id,
-                kind: self.kind,
-            }),
+            "reasoning" => {
+                let fields: ReasoningFields = serde_json::from_value(Value::Object(self.fields))?;
+                Ok(activity(
+                    self.id,
+                    ActivityKind::Reasoning,
+                    ActivityStatus::Unspecified,
+                    fields.summary.join("\n"),
+                ))
+            }
             "commandExecution" => {
                 let fields: CommandExecutionFields =
                     serde_json::from_value(Value::Object(self.fields))?;
@@ -300,6 +351,8 @@ impl WireThreadItem {
                     id: self.id,
                     kind: ActivityKind::CommandExecution,
                     status: activity_status(fields.status),
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary: fields.command,
                     detail: nonempty(fields.aggregated_output),
                     context: Some(fields.cwd.to_string_lossy().into_owned()),
@@ -312,27 +365,15 @@ impl WireThreadItem {
             }
             "fileChange" => {
                 let fields: FileChangeFields = serde_json::from_value(Value::Object(self.fields))?;
-                let summary = fields
-                    .changes
-                    .iter()
-                    .map(|change| change.path.to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let detail = fields
-                    .changes
-                    .iter()
-                    .filter(|change| !change.diff.trim().is_empty())
-                    .map(|change| {
-                        format!("{}\n{}", change.path.to_string_lossy(), change.diff.trim())
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
+                let (summary, detail) = file_change_content(&fields.changes);
                 Ok(ThreadItem::Activity(Activity {
                     id: self.id,
                     kind: ActivityKind::FileChange,
                     status: activity_status(fields.status),
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary,
-                    detail: nonempty(Some(detail)),
+                    detail,
                     context: None,
                     command_actions: Vec::new(),
                 }))
@@ -343,6 +384,8 @@ impl WireThreadItem {
                     id: self.id,
                     kind: ActivityKind::ToolCall,
                     status: activity_status(fields.status),
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary: format!("{} / {}", fields.server, fields.tool),
                     detail: json_detail(fields.arguments),
                     context: None,
@@ -362,6 +405,8 @@ impl WireThreadItem {
                     id: self.id,
                     kind: ActivityKind::ToolCall,
                     status: activity_status(fields.status),
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary,
                     detail: json_detail(fields.arguments),
                     context: None,
@@ -375,6 +420,8 @@ impl WireThreadItem {
                     id: self.id,
                     kind: ActivityKind::Collaboration,
                     status: activity_status(fields.status),
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary: fields.tool,
                     detail: nonempty(fields.prompt),
                     context: nonempty(fields.model),
@@ -388,6 +435,8 @@ impl WireThreadItem {
                     id: self.id,
                     kind: ActivityKind::Collaboration,
                     status: ActivityStatus::Unspecified,
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary: fields.agent_path,
                     detail: nonempty(Some(fields.kind)),
                     context: nonempty(Some(fields.agent_thread_id)),
@@ -436,6 +485,8 @@ impl WireThreadItem {
                     id: self.id,
                     kind: ActivityKind::ImageGeneration,
                     status: activity_status(fields.status),
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary,
                     detail: nonempty(Some(fields.result)),
                     context: saved_path,
@@ -463,7 +514,7 @@ impl WireThreadItem {
             "contextCompaction" => Ok(activity(
                 self.id,
                 ActivityKind::ContextCompaction,
-                ActivityStatus::Completed,
+                ActivityStatus::Unspecified,
                 String::new(),
             )),
             _ => Ok(ThreadItem::Other {
@@ -487,6 +538,10 @@ struct ItemNotification {
     thread_id: String,
     turn_id: String,
     item: WireThreadItem,
+    #[serde(default)]
+    started_at_ms: Option<i64>,
+    #[serde(default)]
+    completed_at_ms: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -496,6 +551,15 @@ struct DeltaNotification {
     turn_id: String,
     item_id: String,
     delta: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReasoningSummaryPartNotification {
+    thread_id: String,
+    turn_id: String,
+    item_id: String,
+    summary_index: i64,
 }
 
 #[derive(Deserialize)]
@@ -512,56 +576,145 @@ struct TurnErrorFields {
     message: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadStatusNotification {
+    thread_id: String,
+    status: WireThreadStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileChangePatchNotification {
+    thread_id: String,
+    turn_id: String,
+    item_id: String,
+    changes: Vec<FileUpdateChange>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpToolCallProgressNotification {
+    thread_id: String,
+    turn_id: String,
+    item_id: String,
+    message: String,
+}
+
 pub(crate) fn turn_stream_event(
     method: &str,
     params: Value,
-) -> Result<Option<TurnStreamEvent>, serde_json::Error> {
+) -> Result<Option<ThreadStreamEvent>, serde_json::Error> {
     match method {
+        "thread/status/changed" => {
+            let notification: ThreadStatusNotification = serde_json::from_value(params)?;
+            Ok(Some(ThreadStreamEvent::ThreadStatusChanged {
+                thread_id: notification.thread_id,
+                status: notification.status.into_model(),
+            }))
+        }
         "turn/started" => {
             let notification: TurnNotification = serde_json::from_value(params)?;
-            Ok(Some(TurnStreamEvent::TurnStarted {
+            Ok(Some(ThreadStreamEvent::TurnStarted {
                 thread_id: notification.thread_id,
                 turn: notification.turn.into_model()?,
             }))
         }
         "item/started" | "item/completed" => {
             let notification: ItemNotification = serde_json::from_value(params)?;
+            let mut item = notification.item.into_model()?;
+            if let ThreadItem::Activity(activity) = &mut item
+                && activity.status == ActivityStatus::Unspecified
+            {
+                activity.status = if method == "item/started" {
+                    ActivityStatus::InProgress
+                } else {
+                    ActivityStatus::Completed
+                };
+            }
+            if let ThreadItem::Activity(activity) = &mut item {
+                if method == "item/started" {
+                    activity.started_at_unix_milliseconds = notification.started_at_ms;
+                } else {
+                    activity.completed_at_unix_milliseconds = notification.completed_at_ms;
+                }
+            }
             let event = if method == "item/started" {
-                TurnStreamEvent::ItemStarted {
+                ThreadStreamEvent::ItemStarted {
                     thread_id: notification.thread_id,
                     turn_id: notification.turn_id,
-                    item: notification.item.into_model()?,
+                    item,
                 }
             } else {
-                TurnStreamEvent::ItemCompleted {
+                ThreadStreamEvent::ItemCompleted {
                     thread_id: notification.thread_id,
                     turn_id: notification.turn_id,
-                    item: notification.item.into_model()?,
+                    item,
                 }
             };
             Ok(Some(event))
         }
         "item/agentMessage/delta" => {
             let notification: DeltaNotification = serde_json::from_value(params)?;
-            Ok(Some(TurnStreamEvent::AgentMessageDelta {
+            Ok(Some(ThreadStreamEvent::AgentMessageDelta {
                 thread_id: notification.thread_id,
                 turn_id: notification.turn_id,
                 item_id: notification.item_id,
                 delta: notification.delta,
+            }))
+        }
+        "item/plan/delta" | "item/reasoning/summaryTextDelta" => {
+            let notification: DeltaNotification = serde_json::from_value(params)?;
+            Ok(Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: notification.thread_id,
+                turn_id: notification.turn_id,
+                item_id: notification.item_id,
+                update: ActivityUpdate::AppendSummary(notification.delta),
+            }))
+        }
+        "item/reasoning/summaryPartAdded" => {
+            let notification: ReasoningSummaryPartNotification = serde_json::from_value(params)?;
+            if notification.summary_index == 0 {
+                return Ok(None);
+            }
+            Ok(Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: notification.thread_id,
+                turn_id: notification.turn_id,
+                item_id: notification.item_id,
+                update: ActivityUpdate::StartSummarySection,
             }))
         }
         "item/commandExecution/outputDelta" | "item/fileChange/outputDelta" => {
             let notification: DeltaNotification = serde_json::from_value(params)?;
-            Ok(Some(TurnStreamEvent::ActivityOutputDelta {
+            Ok(Some(ThreadStreamEvent::ActivityOutputDelta {
                 thread_id: notification.thread_id,
                 turn_id: notification.turn_id,
                 item_id: notification.item_id,
                 delta: notification.delta,
             }))
         }
+        "item/fileChange/patchUpdated" => {
+            let notification: FileChangePatchNotification = serde_json::from_value(params)?;
+            let (summary, detail) = file_change_content(&notification.changes);
+            Ok(Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: notification.thread_id,
+                turn_id: notification.turn_id,
+                item_id: notification.item_id,
+                update: ActivityUpdate::ReplaceContent { summary, detail },
+            }))
+        }
+        "item/mcpToolCall/progress" => {
+            let notification: McpToolCallProgressNotification = serde_json::from_value(params)?;
+            Ok(Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: notification.thread_id,
+                turn_id: notification.turn_id,
+                item_id: notification.item_id,
+                update: ActivityUpdate::AppendDetail(format!("{}\n", notification.message)),
+            }))
+        }
         "error" => {
             let notification: ErrorNotification = serde_json::from_value(params)?;
-            Ok(Some(TurnStreamEvent::RuntimeError {
+            Ok(Some(ThreadStreamEvent::RuntimeError {
                 thread_id: notification.thread_id,
                 turn_id: notification.turn_id,
                 message: notification.error.message,
@@ -570,7 +723,7 @@ pub(crate) fn turn_stream_event(
         }
         "turn/completed" => {
             let notification: TurnNotification = serde_json::from_value(params)?;
-            Ok(Some(TurnStreamEvent::TurnCompleted {
+            Ok(Some(ThreadStreamEvent::TurnCompleted {
                 thread_id: notification.thread_id,
                 turn: notification.turn.into_model()?,
             }))
@@ -594,6 +747,12 @@ struct AgentMessageFields {
 #[derive(Deserialize)]
 struct PlanFields {
     text: String,
+}
+
+#[derive(Deserialize)]
+struct ReasoningFields {
+    #[serde(default)]
+    summary: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -647,6 +806,21 @@ struct FileChangeFields {
 struct FileUpdateChange {
     path: PathBuf,
     diff: String,
+}
+
+fn file_change_content(changes: &[FileUpdateChange]) -> (String, Option<String>) {
+    let summary = changes
+        .iter()
+        .map(|change| change.path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let detail = changes
+        .iter()
+        .filter(|change| !change.diff.trim().is_empty())
+        .map(|change| format!("{}\n{}", change.path.to_string_lossy(), change.diff.trim()))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (summary, nonempty(Some(detail)))
 }
 
 #[derive(Deserialize)]
@@ -722,6 +896,8 @@ fn activity(id: String, kind: ActivityKind, status: ActivityStatus, summary: Str
         id,
         kind,
         status,
+        started_at_unix_milliseconds: None,
+        completed_at_unix_milliseconds: None,
         summary,
         detail: None,
         context: None,
@@ -838,6 +1014,7 @@ mod tests {
                 "cwd": "/workspace",
                 "createdAt": 10,
                 "updatedAt": 20,
+                "status": { "type": "idle" },
                 "turns": [{
                     "id": "turn-1",
                     "status": "completed",
@@ -909,14 +1086,23 @@ mod tests {
                     text: "Hi".to_owned(),
                     phase: Some(AgentMessagePhase::FinalAnswer)
                 },
-                ThreadItem::Other {
+                ThreadItem::Activity(Activity {
                     id: "item-3".to_owned(),
-                    kind: "reasoning".to_owned()
-                },
+                    kind: ActivityKind::Reasoning,
+                    status: ActivityStatus::Unspecified,
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
+                    summary: "Inspect the relevant files.".to_owned(),
+                    detail: None,
+                    context: None,
+                    command_actions: vec![],
+                }),
                 ThreadItem::Activity(Activity {
                     id: "item-4".to_owned(),
                     kind: ActivityKind::CommandExecution,
                     status: ActivityStatus::Completed,
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary: "sed -n 1,80p src/main.rs".to_owned(),
                     detail: Some("fn main() {}".to_owned()),
                     context: Some("/workspace".to_owned()),
@@ -932,6 +1118,8 @@ mod tests {
                     id: "item-5".to_owned(),
                     kind: ActivityKind::WebSearch,
                     status: ActivityStatus::Unspecified,
+                    started_at_unix_milliseconds: None,
+                    completed_at_unix_milliseconds: None,
                     summary: "Codex app-server protocol".to_owned(),
                     detail: None,
                     context: None,
@@ -969,7 +1157,7 @@ mod tests {
         )
         .unwrap()
         .expect("the item notification should be displayable");
-        let TurnStreamEvent::ItemStarted {
+        let ThreadStreamEvent::ItemStarted {
             thread_id,
             turn_id,
             item: ThreadItem::Activity(activity),
@@ -993,13 +1181,343 @@ mod tests {
                 }),
             )
             .unwrap(),
-            Some(TurnStreamEvent::ActivityOutputDelta {
+            Some(ThreadStreamEvent::ActivityOutputDelta {
                 thread_id: "thread-1".to_owned(),
                 turn_id: "turn-2".to_owned(),
                 item_id: "command-1".to_owned(),
                 delta: "fn main() {}".to_owned(),
             })
         );
+    }
+
+    #[test]
+    fn maps_live_reasoning_summary_as_a_displayable_activity() {
+        let started = turn_stream_event(
+            "item/started",
+            serde_json::json!({
+                "threadId": "thread-1",
+                "turnId": "turn-2",
+                "startedAtMs": 1_723_456_789_000_i64,
+                "item": {
+                    "id": "reasoning-1",
+                    "type": "reasoning",
+                    "summary": [],
+                    "content": ["raw reasoning must not become display text"]
+                }
+            }),
+        )
+        .unwrap()
+        .expect("the reasoning lifecycle should be displayable");
+        let ThreadStreamEvent::ItemStarted {
+            thread_id,
+            turn_id,
+            item: ThreadItem::Activity(activity),
+        } = started
+        else {
+            panic!("the notification should start one reasoning activity");
+        };
+        assert_eq!(thread_id, "thread-1");
+        assert_eq!(turn_id, "turn-2");
+        assert_eq!(activity.status, ActivityStatus::InProgress);
+        assert_eq!(
+            activity.started_at_unix_milliseconds,
+            Some(1_723_456_789_000)
+        );
+        assert_eq!(activity.completed_at_unix_milliseconds, None);
+        assert!(activity.summary.is_empty());
+
+        let completed = turn_stream_event(
+            "item/completed",
+            serde_json::json!({
+                "threadId": "thread-1",
+                "turnId": "turn-2",
+                "completedAtMs": 1_723_456_793_250_i64,
+                "item": {
+                    "id": "reasoning-1",
+                    "type": "reasoning",
+                    "summary": ["Planning UI state"],
+                    "content": ["raw reasoning must not become display text"]
+                }
+            }),
+        )
+        .unwrap()
+        .expect("the reasoning completion should be displayable");
+        let ThreadStreamEvent::ItemCompleted {
+            item: ThreadItem::Activity(activity),
+            ..
+        } = completed
+        else {
+            panic!("the notification should complete one reasoning activity");
+        };
+        assert_eq!(activity.status, ActivityStatus::Completed);
+        assert_eq!(activity.started_at_unix_milliseconds, None);
+        assert_eq!(
+            activity.completed_at_unix_milliseconds,
+            Some(1_723_456_793_250)
+        );
+        assert_eq!(activity.summary, "Planning UI state");
+    }
+
+    #[test]
+    fn maps_live_reasoning_summary_deltas() {
+        assert_eq!(
+            turn_stream_event(
+                "item/reasoning/summaryTextDelta",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "itemId": "reasoning-1",
+                    "summaryIndex": 0,
+                    "delta": "Planning UI state"
+                }),
+            )
+            .unwrap(),
+            Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-2".to_owned(),
+                item_id: "reasoning-1".to_owned(),
+                update: ActivityUpdate::AppendSummary("Planning UI state".to_owned()),
+            })
+        );
+
+        assert_eq!(
+            turn_stream_event(
+                "item/reasoning/summaryPartAdded",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "itemId": "reasoning-1",
+                    "summaryIndex": 1
+                }),
+            )
+            .unwrap(),
+            Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-2".to_owned(),
+                item_id: "reasoning-1".to_owned(),
+                update: ActivityUpdate::StartSummarySection,
+            })
+        );
+
+        assert_eq!(
+            turn_stream_event(
+                "item/reasoning/textDelta",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "itemId": "reasoning-1",
+                    "contentIndex": 0,
+                    "delta": "private raw reasoning"
+                }),
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn maps_the_subscription_runtime_status_from_the_resume_response() {
+        let response: ThreadResumeResponse = serde_json::from_value(serde_json::json!({
+            "thread": {
+                "id": "thread-1",
+                "name": null,
+                "preview": "Working",
+                "cwd": "/workspace",
+                "createdAt": 10,
+                "updatedAt": 20,
+                "status": {
+                    "type": "active",
+                    "activeFlags": [
+                        "waitingOnApproval",
+                        "waitingOnUserInput",
+                        "futureFlag"
+                    ]
+                },
+                "turns": []
+            }
+        }))
+        .expect("the resume response should decode");
+
+        let subscription = response
+            .into_subscription()
+            .expect("the subscription should map");
+
+        assert_eq!(subscription.thread.summary.id, "thread-1");
+        assert_eq!(
+            subscription.runtime_status,
+            ThreadRuntimeStatus::Active {
+                active_flags: vec![
+                    ThreadActiveFlag::WaitingOnApproval,
+                    ThreadActiveFlag::WaitingOnUserInput,
+                    ThreadActiveFlag::Unknown("futureFlag".to_owned()),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn maps_runtime_status_notifications_from_the_subscribed_connection() {
+        assert_eq!(
+            turn_stream_event(
+                "thread/status/changed",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "status": {
+                        "type": "active",
+                        "activeFlags": ["waitingOnApproval"]
+                    }
+                }),
+            )
+            .unwrap(),
+            Some(ThreadStreamEvent::ThreadStatusChanged {
+                thread_id: "thread-1".to_owned(),
+                status: ThreadRuntimeStatus::Active {
+                    active_flags: vec![ThreadActiveFlag::WaitingOnApproval],
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn maps_incremental_activity_notifications() {
+        assert_eq!(
+            turn_stream_event(
+                "item/plan/delta",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "itemId": "plan-1",
+                    "delta": "Inspect files"
+                }),
+            )
+            .unwrap(),
+            Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-2".to_owned(),
+                item_id: "plan-1".to_owned(),
+                update: ActivityUpdate::AppendSummary("Inspect files".to_owned()),
+            })
+        );
+
+        assert_eq!(
+            turn_stream_event(
+                "item/fileChange/patchUpdated",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "itemId": "change-1",
+                    "changes": [{
+                        "path": "/workspace/src/main.rs",
+                        "kind": { "type": "update" },
+                        "diff": "+fn main() {}"
+                    }]
+                }),
+            )
+            .unwrap(),
+            Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-2".to_owned(),
+                item_id: "change-1".to_owned(),
+                update: ActivityUpdate::ReplaceContent {
+                    summary: "/workspace/src/main.rs".to_owned(),
+                    detail: Some("/workspace/src/main.rs\n+fn main() {}".to_owned()),
+                },
+            })
+        );
+
+        assert_eq!(
+            turn_stream_event(
+                "item/mcpToolCall/progress",
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "itemId": "tool-1",
+                    "message": "Fetching results"
+                }),
+            )
+            .unwrap(),
+            Some(ThreadStreamEvent::ActivityUpdated {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-2".to_owned(),
+                item_id: "tool-1".to_owned(),
+                update: ActivityUpdate::AppendDetail("Fetching results\n".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn infers_lifecycle_status_for_activities_without_a_wire_status() {
+        let plan = |method| {
+            turn_stream_event(
+                method,
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "item": {
+                        "id": "plan-1",
+                        "type": "plan",
+                        "text": "Inspect files"
+                    }
+                }),
+            )
+            .unwrap()
+            .expect("the plan should map")
+        };
+
+        let ThreadStreamEvent::ItemStarted {
+            item: ThreadItem::Activity(started),
+            ..
+        } = plan("item/started")
+        else {
+            panic!("the started plan should remain an activity");
+        };
+        let ThreadStreamEvent::ItemCompleted {
+            item: ThreadItem::Activity(completed),
+            ..
+        } = plan("item/completed")
+        else {
+            panic!("the completed plan should remain an activity");
+        };
+
+        assert_eq!(started.status, ActivityStatus::InProgress);
+        assert_eq!(completed.status, ActivityStatus::Completed);
+    }
+
+    #[test]
+    fn infers_context_compaction_lifecycle_status() {
+        let compaction = |method| {
+            turn_stream_event(
+                method,
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-2",
+                    "item": {
+                        "id": "compaction-1",
+                        "type": "contextCompaction"
+                    }
+                }),
+            )
+            .unwrap()
+            .expect("the context compaction should map")
+        };
+
+        let ThreadStreamEvent::ItemStarted {
+            item: ThreadItem::Activity(started),
+            ..
+        } = compaction("item/started")
+        else {
+            panic!("the started context compaction should remain an activity");
+        };
+        let ThreadStreamEvent::ItemCompleted {
+            item: ThreadItem::Activity(completed),
+            ..
+        } = compaction("item/completed")
+        else {
+            panic!("the completed context compaction should remain an activity");
+        };
+
+        assert_eq!(started.status, ActivityStatus::InProgress);
+        assert_eq!(completed.status, ActivityStatus::Completed);
     }
 
     #[test]
@@ -1026,7 +1544,7 @@ mod tests {
                 }),
             )
             .unwrap(),
-            Some(TurnStreamEvent::RuntimeError {
+            Some(ThreadStreamEvent::RuntimeError {
                 thread_id: "thread-1".to_owned(),
                 turn_id: "turn-2".to_owned(),
                 message: "Connection failed".to_owned(),

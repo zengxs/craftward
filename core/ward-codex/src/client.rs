@@ -20,7 +20,7 @@ use crate::protocol::{
     ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
     ThreadResumeResponse, TurnStartParams, TurnStartResponse, turn_stream_event,
 };
-use crate::{CodexError, ServerInfo, Thread, ThreadPage, TurnStreamEvent};
+use crate::{CodexError, ServerInfo, Thread, ThreadPage, ThreadStreamEvent, ThreadSubscription};
 
 type AppServerConnection = Connection<BufReader<ChildStdout>, BufWriter<ChildStdin>>;
 const APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -146,12 +146,14 @@ impl CodexClient {
     }
 
     /// Resumes a persisted thread and subscribes this connection to its events.
-    pub async fn resume_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
+    pub async fn resume_thread(
+        &mut self,
+        thread_id: &str,
+    ) -> Result<ThreadSubscription, CodexError> {
         let params = ThreadResumeParams { thread_id };
         let response: ThreadResumeResponse = self.request(THREAD_RESUME_METHOD, &params).await?;
         response
-            .thread
-            .into_thread()
+            .into_subscription()
             .map_err(|source| CodexError::InvalidResponse {
                 method: THREAD_RESUME_METHOD,
                 source,
@@ -167,7 +169,7 @@ impl CodexClient {
         &mut self,
         thread_id: &str,
         text: &str,
-        mut on_event: impl FnMut(TurnStreamEvent),
+        mut on_event: impl FnMut(ThreadStreamEvent),
     ) -> Result<(), CodexError> {
         let connection = self
             .connection
@@ -177,6 +179,19 @@ impl CodexClient {
             biased;
             _ = self.cancellation.cancelled() => Err(CodexError::Interrupted),
             result = start_text_turn_on_connection(connection, thread_id, text, &mut on_event) => result,
+        }
+    }
+
+    /// Waits for the next event on a connection subscribed to a thread.
+    pub async fn next_subscription_event(&mut self) -> Result<ThreadStreamEvent, CodexError> {
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or(CodexError::UnexpectedEof(THREAD_RESUME_METHOD))?;
+        tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => Err(CodexError::Interrupted),
+            result = next_subscription_event_on_connection(connection, THREAD_RESUME_METHOD) => result,
         }
     }
 
@@ -215,7 +230,7 @@ async fn start_text_turn_on_connection<R, W>(
     connection: &mut Connection<R, W>,
     thread_id: &str,
     text: &str,
-    mut on_event: impl FnMut(TurnStreamEvent),
+    mut on_event: impl FnMut(ThreadStreamEvent),
 ) -> Result<(), CodexError>
 where
     R: AsyncBufRead + Unpin,
@@ -231,34 +246,48 @@ where
             source,
         })?;
     let turn_id = turn.id.clone();
-    on_event(TurnStreamEvent::TurnStarted {
+    on_event(ThreadStreamEvent::TurnStarted {
         thread_id: thread_id.to_owned(),
         turn,
     });
 
     loop {
-        match connection.next_server_message(TURN_START_METHOD).await? {
+        let event = next_subscription_event_on_connection(connection, TURN_START_METHOD).await?;
+        let completed = matches!(
+            &event,
+            ThreadStreamEvent::TurnCompleted {
+                thread_id: completed_thread_id,
+                turn,
+            } if completed_thread_id == thread_id && turn.id == turn_id
+        );
+        on_event(event);
+        if completed {
+            return Ok(());
+        }
+    }
+}
+
+async fn next_subscription_event_on_connection<R, W>(
+    connection: &mut Connection<R, W>,
+    operation: &'static str,
+) -> Result<ThreadStreamEvent, CodexError>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    loop {
+        match connection.next_server_message(operation).await? {
             ServerMessage::Notification { method, params } => {
                 let event = turn_stream_event(&method, params).map_err(|source| {
                     CodexError::InvalidResponse {
-                        method: TURN_START_METHOD,
+                        method: operation,
                         source,
                     }
                 })?;
                 let Some(event) = event else {
                     continue;
                 };
-                let completed = matches!(
-                    &event,
-                    TurnStreamEvent::TurnCompleted {
-                        thread_id: completed_thread_id,
-                        turn,
-                    } if completed_thread_id == thread_id && turn.id == turn_id
-                );
-                on_event(event);
-                if completed {
-                    return Ok(());
-                }
+                return Ok(event);
             }
             ServerMessage::Request { id, method, params } => {
                 let request_thread_id = params
@@ -272,7 +301,7 @@ where
                     connection
                         .respond_result(id, json!({ "decision": "decline" }))
                         .await?;
-                    on_event(TurnStreamEvent::ApprovalDeclined {
+                    return Ok(ThreadStreamEvent::ApprovalDeclined {
                         thread_id: request_thread_id,
                         method,
                     });
@@ -284,7 +313,7 @@ where
                             format!("Craftward does not support the server request {method}"),
                         )
                         .await?;
-                    on_event(TurnStreamEvent::UnsupportedServerRequest {
+                    return Ok(ThreadStreamEvent::UnsupportedServerRequest {
                         thread_id: request_thread_id,
                         method,
                     });
@@ -377,17 +406,17 @@ mod tests {
         .await
         .expect("the streamed turn should complete");
 
-        assert!(matches!(events[0], TurnStreamEvent::TurnStarted { .. }));
+        assert!(matches!(events[0], ThreadStreamEvent::TurnStarted { .. }));
         assert!(matches!(
             events[1],
-            TurnStreamEvent::ItemStarted {
+            ThreadStreamEvent::ItemStarted {
                 item: crate::ThreadItem::UserMessage { .. },
                 ..
             }
         ));
         assert!(matches!(
             events[3],
-            TurnStreamEvent::ItemStarted {
+            ThreadStreamEvent::ItemStarted {
                 item: crate::ThreadItem::AgentMessage {
                     phase: Some(crate::AgentMessagePhase::Commentary),
                     ..
@@ -397,7 +426,7 @@ mod tests {
         ));
         assert!(matches!(
             events[6],
-            TurnStreamEvent::ItemStarted {
+            ThreadStreamEvent::ItemStarted {
                 item: crate::ThreadItem::Activity(crate::Activity {
                     kind: crate::ActivityKind::CommandExecution,
                     ..
@@ -407,11 +436,11 @@ mod tests {
         ));
         assert!(matches!(
             events[7],
-            TurnStreamEvent::ApprovalDeclined { .. }
+            ThreadStreamEvent::ApprovalDeclined { .. }
         ));
         assert!(matches!(
             events[10],
-            TurnStreamEvent::ItemStarted {
+            ThreadStreamEvent::ItemStarted {
                 item: crate::ThreadItem::Activity(crate::Activity {
                     kind: crate::ActivityKind::FileChange,
                     ..
@@ -421,7 +450,7 @@ mod tests {
         ));
         assert!(matches!(
             events[events.len() - 2],
-            TurnStreamEvent::ItemCompleted {
+            ThreadStreamEvent::ItemCompleted {
                 item: crate::ThreadItem::AgentMessage {
                     phase: Some(crate::AgentMessagePhase::FinalAnswer),
                     ..
@@ -431,7 +460,7 @@ mod tests {
         ));
         assert!(matches!(
             events.last(),
-            Some(TurnStreamEvent::TurnCompleted { .. })
+            Some(ThreadStreamEvent::TurnCompleted { .. })
         ));
         assert_eq!(
             String::from_utf8(connection.writer().clone()).unwrap(),
@@ -440,5 +469,23 @@ mod tests {
                 "{\"id\":\"approval-1\",\"result\":{\"decision\":\"decline\"}}\n"
             )
         );
+    }
+
+    #[tokio::test]
+    async fn reads_a_subscription_event_without_starting_a_turn() {
+        let input = "{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[\"waitingOnApproval\"]}}}\n";
+        let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
+
+        let event = next_subscription_event_on_connection(&mut connection, THREAD_RESUME_METHOD)
+            .await
+            .expect("the idle subscription event should be readable");
+
+        assert!(matches!(
+            event,
+            ThreadStreamEvent::ThreadStatusChanged {
+                thread_id,
+                status: crate::ThreadRuntimeStatus::Active { .. },
+            } if thread_id == "thread-1"
+        ));
     }
 }

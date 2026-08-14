@@ -19,7 +19,8 @@ pub use history::{
     CodexHistoryCancellation, CodexHistorySession, CodexThreadWriter, ThreadPagePoll, ThreadPoll,
 };
 pub use model::{
-    Activity, ActivityKind, ActivityStatus, AgentMessagePhase, CommandAction, CommandActionKind,
-    ServerInfo, Thread, ThreadItem, ThreadPage, ThreadSummary, Turn, TurnStatus, TurnStreamEvent,
+    Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
+    CommandActionKind, ServerInfo, Thread, ThreadActiveFlag, ThreadItem, ThreadPage,
+    ThreadRuntimeStatus, ThreadStreamEvent, ThreadSubscription, ThreadSummary, Turn, TurnStatus,
     UserInput,
 };

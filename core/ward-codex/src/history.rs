@@ -6,7 +6,10 @@ use std::path::PathBuf;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::{CodexClient, CodexError, Thread, ThreadListOptions, ThreadPage, TurnStreamEvent};
+use crate::{
+    CodexClient, CodexError, Thread, ThreadListOptions, ThreadPage, ThreadStreamEvent,
+    ThreadSubscription,
+};
 
 /// A cloneable handle that interrupts in-flight Codex session operations.
 ///
@@ -233,7 +236,7 @@ impl CodexThreadWriter {
         executable: impl AsRef<OsStr>,
         cancellation: CodexHistoryCancellation,
         thread_id: &str,
-    ) -> Result<(Self, Thread), CodexError> {
+    ) -> Result<(Self, ThreadSubscription), CodexError> {
         let executable = PathBuf::from(executable.as_ref());
         let mut client =
             CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone()).await?;
@@ -248,8 +251,8 @@ impl CodexThreadWriter {
                 .await?;
             result = client.resume_thread(thread_id).await;
         }
-        let thread = match result {
-            Ok(thread) => thread,
+        let subscription = match result {
+            Ok(subscription) => subscription,
             Err(error) => {
                 client.shutdown().await;
                 return Err(error);
@@ -265,7 +268,7 @@ impl CodexThreadWriter {
                 cancellation,
                 client,
             },
-            thread,
+            subscription,
         ))
     }
 
@@ -279,7 +282,7 @@ impl CodexThreadWriter {
     pub async fn start_text_turn(
         &mut self,
         text: &str,
-        mut on_event: impl FnMut(TurnStreamEvent),
+        mut on_event: impl FnMut(ThreadStreamEvent),
     ) -> Result<(), CodexError> {
         if self.cancellation.is_cancelled() {
             return Err(CodexError::Interrupted);
@@ -293,6 +296,14 @@ impl CodexThreadWriter {
         } else {
             result
         }
+    }
+
+    /// Waits for the next event emitted by the subscribed thread connection.
+    pub async fn next_subscription_event(&mut self) -> Result<ThreadStreamEvent, CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        self.client.next_subscription_event().await
     }
 
     /// Terminates and reaps the writer's app-server child.

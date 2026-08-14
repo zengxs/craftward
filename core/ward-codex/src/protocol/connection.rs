@@ -13,6 +13,7 @@ use crate::CodexError;
 pub(crate) struct Connection<R, W> {
     reader: R,
     writer: W,
+    read_buffer: Vec<u8>,
     next_request_id: u64,
     pending_server_messages: VecDeque<ServerMessage>,
 }
@@ -39,6 +40,7 @@ where
         Self {
             reader,
             writer,
+            read_buffer: Vec::new(),
             next_request_id: 1,
             pending_server_messages: VecDeque::new(),
         }
@@ -143,16 +145,17 @@ where
     }
 
     async fn read_message(&mut self, operation: &'static str) -> Result<Value, CodexError> {
-        let mut line = Vec::new();
         let byte_count = self
             .reader
-            .read_until(b'\n', &mut line)
+            .read_until(b'\n', &mut self.read_buffer)
             .await
             .map_err(|source| CodexError::io("read from", source))?;
         if byte_count == 0 {
             return Err(CodexError::UnexpectedEof(operation));
         }
-        serde_json::from_slice(&line).map_err(CodexError::InvalidJson)
+        let message = serde_json::from_slice(&self.read_buffer).map_err(CodexError::InvalidJson);
+        self.read_buffer.clear();
+        message
     }
 
     async fn write_message(&mut self, message: &impl Serialize) -> Result<(), CodexError> {
@@ -236,9 +239,11 @@ struct RpcError {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::time::Duration;
 
     use serde::{Deserialize, Serialize};
-    use tokio::io::BufReader;
+    use tokio::io::{AsyncWriteExt, BufReader};
+    use tokio::time::timeout;
 
     use super::*;
 
@@ -315,6 +320,34 @@ mod tests {
                 "{\"id\":1,\"method\":\"test/read\",\"params\":{\"value\":7}}\n",
                 "{\"id\":\"approval-1\",\"result\":{\"decision\":\"decline\"}}\n"
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn preserves_a_partial_message_when_an_idle_read_is_cancelled() {
+        let (input, mut server) = tokio::io::duplex(1_024);
+        let mut connection = Connection::new(BufReader::new(input), tokio::io::sink());
+        server
+            .write_all(b"{\"method\":\"thread/status/changed\"")
+            .await
+            .unwrap();
+
+        assert!(
+            timeout(
+                Duration::from_millis(10),
+                connection.next_server_message("test/stream"),
+            )
+            .await
+            .is_err()
+        );
+
+        server.write_all(b",\"params\":{}}\n").await.unwrap();
+        assert_eq!(
+            connection.next_server_message("test/stream").await.unwrap(),
+            ServerMessage::Notification {
+                method: "thread/status/changed".to_owned(),
+                params: serde_json::json!({}),
+            }
         );
     }
 }
