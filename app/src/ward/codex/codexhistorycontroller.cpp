@@ -54,12 +54,22 @@ codexExecutable()
     const QByteArray configured = qgetenv("CRAFTWARD_CODEX_PATH");
     return configured.isEmpty() ? QByteArrayLiteral("codex") : configured;
 }
+
+static_assert(static_cast<int>(CodexHistoryController::TurnMode::DefaultMode) == WardCodexTurnModeDefault);
+static_assert(static_cast<int>(CodexHistoryController::TurnMode::PlanMode) == WardCodexTurnModePlan);
+static_assert(static_cast<int>(CodexHistoryController::PermissionPreset::InheritPermissions) ==
+              WardCodexPermissionPresetInherit);
+static_assert(static_cast<int>(CodexHistoryController::PermissionPreset::RequestApproval) ==
+              WardCodexPermissionPresetRequestApproval);
+static_assert(static_cast<int>(CodexHistoryController::PermissionPreset::ReadOnlyPermissions) ==
+              WardCodexPermissionPresetReadOnly);
 }
 
 CodexHistoryController::CodexHistoryController(const WardRuntime* runtime, QObject* parent)
   : QObject(parent)
   , threadModel_(this)
   , timelineModel_(this)
+  , interactionModel_(this)
 {
     ++observerGeneration_;
     callbackContext_ = std::make_unique<CodexHistoryCallbackContext>(CodexHistoryCallbackContext{
@@ -99,6 +109,12 @@ CodexTimelineModel*
 CodexHistoryController::timeline()
 {
     return &timelineModel_;
+}
+
+CodexInteractionModel*
+CodexHistoryController::interactions()
+{
+    return &interactionModel_;
 }
 
 QString
@@ -173,6 +189,36 @@ CodexHistoryController::waitingOnUserInput() const
     return turnRuntimeState_.waitingOnUserInput;
 }
 
+CodexHistoryController::TurnMode
+CodexHistoryController::turnMode() const
+{
+    return turnMode_;
+}
+
+void
+CodexHistoryController::setTurnMode(TurnMode mode)
+{
+    if (turnMode_ == mode)
+        return;
+    turnMode_ = mode;
+    emit turnOptionsChanged();
+}
+
+CodexHistoryController::PermissionPreset
+CodexHistoryController::permissionPreset() const
+{
+    return permissionPreset_;
+}
+
+void
+CodexHistoryController::setPermissionPreset(PermissionPreset preset)
+{
+    if (permissionPreset_ == preset)
+        return;
+    permissionPreset_ = preset;
+    emit turnOptionsChanged();
+}
+
 CodexHistoryController::WriteAvailability
 CodexHistoryController::writeAvailability() const
 {
@@ -235,6 +281,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     selectedThreadId_ = threadId;
     selectedThreadTitle_ = title;
     timelineModel_.clear();
+    interactionModel_.clear();
     setActivityHistoryPartial(false);
     setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::NotRequested);
@@ -319,7 +366,12 @@ CodexHistoryController::startTurn(const QString& prompt)
     const QByteArray encodedPrompt = prompt.toUtf8();
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_start_turn(
-          historyObserver_, threadId.constData(), encodedPrompt.constData(), &rawError)) {
+          historyObserver_,
+          threadId.constData(),
+          encodedPrompt.constData(),
+          static_cast<WardCodexTurnMode>(static_cast<int>(turnMode_)),
+          static_cast<WardCodexPermissionPreset>(static_cast<int>(permissionPreset_)),
+          &rawError)) {
         QString message = copyError(rawError);
         if (message.isEmpty())
             message = tr("The Codex turn could not be started.");
@@ -330,6 +382,73 @@ CodexHistoryController::startTurn(const QString& prompt)
     setConversationErrorMessage({});
     setTurnState(TurnState::Starting);
     return true;
+}
+
+bool
+CodexHistoryController::respondToApproval(const QString& interactionId, InteractionDecision decision)
+{
+    bool validId = false;
+    const qulonglong id = interactionId.toULongLong(&validId);
+    if (!validId || id == 0 || historyObserver_ == nullptr)
+        return false;
+
+    using WireDecision = ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision;
+    WireDecision wireDecision;
+    switch (decision) {
+        case InteractionDecision::Accept:
+            wireDecision = WireDecision::PENDING_INTERACTION_DECISION_ACCEPT;
+            break;
+        case InteractionDecision::AcceptForSession:
+            wireDecision = WireDecision::PENDING_INTERACTION_DECISION_ACCEPT_FOR_SESSION;
+            break;
+        case InteractionDecision::Decline:
+            wireDecision = WireDecision::PENDING_INTERACTION_DECISION_DECLINE;
+            break;
+        case InteractionDecision::Cancel:
+            wireDecision = WireDecision::PENDING_INTERACTION_DECISION_CANCEL;
+            break;
+        default:
+            return false;
+    }
+
+    ward::codex::v1::PendingInteractionResponse response;
+    response.setInteractionId(id);
+    response.setDecision(wireDecision);
+    return sendInteractionResponse(interactionId, response);
+}
+
+bool
+CodexHistoryController::respondToUserInput(const QString& interactionId, const QVariantMap& answers)
+{
+    bool validId = false;
+    const qulonglong id = interactionId.toULongLong(&validId);
+    if (!validId || id == 0 || historyObserver_ == nullptr)
+        return false;
+
+    QList<ward::codex::v1::PendingInteractionAnswer> encodedAnswers;
+    encodedAnswers.reserve(answers.size());
+    for (auto answer = answers.cbegin(); answer != answers.cend(); ++answer) {
+        QStringList values;
+        if (answer.value().metaType().id() == QMetaType::QStringList) {
+            values = answer.value().toStringList();
+        } else if (answer.value().metaType().id() == QMetaType::QVariantList) {
+            for (const QVariant& value : answer.value().toList())
+                values.append(value.toString());
+        } else {
+            values.append(answer.value().toString());
+        }
+        ward::codex::v1::PendingInteractionAnswer encodedAnswer;
+        encodedAnswer.setQuestionId(answer.key());
+        encodedAnswer.setAnswers(std::move(values));
+        encodedAnswers.append(std::move(encodedAnswer));
+    }
+
+    ward::codex::v1::PendingUserInputResponse userInput;
+    userInput.setAnswers(std::move(encodedAnswers));
+    ward::codex::v1::PendingInteractionResponse response;
+    response.setInteractionId(id);
+    response.setUserInput(std::move(userInput));
+    return sendInteractionResponse(interactionId, response);
 }
 
 void
@@ -405,6 +524,36 @@ CodexHistoryController::setWriteAvailability(WriteAvailability availability, con
     emit writeAvailabilityChanged();
 }
 
+bool
+CodexHistoryController::sendInteractionResponse(const QString& interactionId,
+                                                const ward::codex::v1::PendingInteractionResponse& response)
+{
+    QProtobufSerializer serializer;
+    const QByteArray encoded = response.serialize(&serializer);
+    if (serializer.lastError() != QAbstractProtobufSerializer::Error::None) {
+        setConversationErrorMessage(
+          tr("The Codex response could not be encoded: %1").arg(serializer.lastErrorString()));
+        return false;
+    }
+
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_resolve_interaction(
+          historyObserver_,
+          reinterpret_cast<const std::uint8_t*>(encoded.constData()),
+          static_cast<std::size_t>(encoded.size()),
+          &rawError)) {
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("The Codex response could not be sent.");
+        setConversationErrorMessage(message);
+        return false;
+    }
+
+    interactionModel_.setResolving(interactionId, true);
+    setConversationErrorMessage({});
+    return true;
+}
+
 void
 CodexHistoryController::updateErrorMessage()
 {
@@ -451,190 +600,4 @@ CodexHistoryController::handleHistoryEvent(void* context, const WardBuffer* even
             controller->applyHistoryEvent(std::move(historyEvent), decodingError);
     };
     QMetaObject::invokeMethod(controller, std::move(apply), Qt::QueuedConnection);
-}
-
-void
-CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, const QString& decodingError)
-{
-    using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKind;
-
-    if (!decodingError.isEmpty()) {
-        finishThreadLoading(decodingError);
-        if (!selectedThreadId_.isEmpty())
-            finishConversationLoading(decodingError);
-        return;
-    }
-
-    const QString threadId = event.hasThreadId() ? event.threadId() : QString();
-    switch (event.kind()) {
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED: {
-            if (!event.hasThreadPage()) {
-                finishThreadLoading(tr("Ward Core returned a thread update without a thread page."));
-                break;
-            }
-            auto threads = event.threadPage().threads();
-            threadModel_.reconcileThreads(std::move(threads));
-            finishThreadLoading({});
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_RECOVERED:
-            finishThreadLoading({});
-            break;
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_ERROR: {
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            finishThreadLoading(message.isEmpty() ? tr("The Codex conversation list could not be observed.") : message);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED: {
-            if (threadId != selectedThreadId_)
-                return;
-            if (!event.hasConversation()) {
-                finishConversationLoading(tr("Ward Core returned a conversation update without a conversation."));
-                break;
-            }
-            const auto& conversation = event.conversation();
-            if (!conversation.title().trimmed().isEmpty() && conversation.title() != selectedThreadTitle_) {
-                selectedThreadTitle_ = conversation.title();
-                emit selectionChanged();
-            }
-            auto timeline = conversation.timeline();
-            timelineModel_.reconcileTimeline(std::move(timeline));
-            setActivityHistoryPartial(conversation.activityHistoryIsPartial());
-            finishConversationLoading({});
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_RECOVERED:
-            if (threadId != selectedThreadId_)
-                return;
-            finishConversationLoading({});
-            break;
-        case HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_ERROR: {
-            if (threadId != selectedThreadId_)
-                return;
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            finishConversationLoading(message.isEmpty() ? tr("The Codex conversation could not be observed.")
-                                                        : message);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STARTED:
-            if (threadId != selectedThreadId_)
-                return;
-            emit turnStarted();
-            break;
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_COMPLETED:
-            if (threadId != selectedThreadId_)
-                return;
-            break;
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_ERROR: {
-            if (threadId != selectedThreadId_)
-                return;
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            setConversationErrorMessage(message.isEmpty() ? tr("The Codex turn failed.") : message);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_NOTICE: {
-            if (threadId != selectedThreadId_)
-                return;
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            if (!message.isEmpty())
-                setConversationErrorMessage(message);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_WRITE_STATE_CHANGED: {
-            if (threadId != selectedThreadId_)
-                return;
-            if (!event.hasThreadWriteState()) {
-                setWriteAvailability(WriteAvailability::Unavailable,
-                                     tr("Ward Core returned a write-state update without a state."));
-                break;
-            }
-            const auto& state = event.threadWriteState();
-            const QString message = state.hasMessage() ? state.message() : QString();
-            using ThreadWriteStatus = ward::codex::v1::ThreadWriteStatusGadget::ThreadWriteStatus;
-            switch (state.status()) {
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_IDLE:
-                    setWriteAvailability(WriteAvailability::NotRequested);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_CHECKING:
-                    setWriteAvailability(WriteAvailability::Checking, message);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_WRITABLE:
-                    setWriteAvailability(WriteAvailability::Writable, message);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_BUSY:
-                    setWriteAvailability(WriteAvailability::Busy, message);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_UNAVAILABLE:
-                    setWriteAvailability(WriteAvailability::Unavailable, message);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_UNSPECIFIED:
-                default:
-                    setWriteAvailability(WriteAvailability::Unavailable,
-                                         tr("Ward Core returned an unsupported write state."));
-                    break;
-            }
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_RUNTIME_STATE_CHANGED: {
-            if (threadId != selectedThreadId_)
-                return;
-            if (!event.hasThreadRuntimeState()) {
-                setTurnState(TurnState::Unknown);
-                setConversationErrorMessage(tr("Ward Core returned a runtime update without a state."));
-                break;
-            }
-            const auto& state = event.threadRuntimeState();
-            bool waitingOnApproval = false;
-            bool waitingOnUserInput = false;
-            using ThreadActiveFlag = ward::codex::v1::ThreadActiveFlagGadget::ThreadActiveFlag;
-            for (const auto flag : state.activeFlags()) {
-                switch (flag) {
-                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_WAITING_ON_APPROVAL:
-                        waitingOnApproval = true;
-                        break;
-                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_WAITING_ON_USER_INPUT:
-                        waitingOnUserInput = true;
-                        break;
-                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_UNSPECIFIED:
-                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_UNKNOWN:
-                    default:
-                        break;
-                }
-            }
-            const QString activeTurnId = state.hasTurnId() ? state.turnId() : QString();
-            using ThreadRuntimeStatus = ward::codex::v1::ThreadRuntimeStatusGadget::ThreadRuntimeStatus;
-            switch (state.status()) {
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_DETACHED:
-                    setTurnState(TurnState::Detached);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_STARTING:
-                    setTurnState(TurnState::Starting);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_IDLE:
-                    setTurnState(TurnState::Idle);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_ACTIVE:
-                    setTurnState(TurnState::Running, activeTurnId, waitingOnApproval, waitingOnUserInput);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_SYSTEM_ERROR:
-                    setTurnState(TurnState::SystemError);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_UNKNOWN:
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_UNSPECIFIED:
-                default:
-                    setTurnState(TurnState::Unknown);
-                    break;
-            }
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_UNSPECIFIED:
-        default: {
-            const QString message = tr("Ward Core returned an unsupported Codex history event.");
-            if (threadId.isEmpty())
-                finishThreadLoading(message);
-            else if (threadId == selectedThreadId_)
-                finishConversationLoading(message);
-            break;
-        }
-    }
 }

@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+use crate::InteractionId;
+
 /// An error while communicating with a Codex app-server.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -51,6 +53,15 @@ pub enum CodexError {
         method: &'static str,
         description: String,
     },
+    #[error("Codex interaction {0} is no longer pending")]
+    UnknownInteraction(InteractionId),
+    #[error("the response to Codex interaction {interaction_id} is invalid: {description}")]
+    InvalidInteractionResponse {
+        interaction_id: InteractionId,
+        description: String,
+    },
+    #[error("the Codex app-server does not support the selected turn controls: {description}")]
+    UnsupportedTurnControls { description: String },
 }
 
 impl CodexError {

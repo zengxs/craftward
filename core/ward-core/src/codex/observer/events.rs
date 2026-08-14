@@ -4,11 +4,14 @@
 use std::ffi::c_void;
 
 use prost::Message as _;
-use ward_codex::{Thread, ThreadActiveFlag, ThreadPage};
+use ward_codex::{PendingInteraction, Thread, ThreadActiveFlag, ThreadPage};
 
 use super::super::live::LiveRuntimeState;
 use super::super::{WardBuffer, wire};
 use super::WardCodexHistoryEventCallback;
+
+#[cfg(test)]
+mod tests;
 
 pub(super) struct HistoryEventSink {
     callback: WardCodexHistoryEventCallback,
@@ -136,6 +139,22 @@ impl HistoryEventSink {
                     status: status as i32,
                     turn_id,
                     active_flags,
+                },
+            )),
+        });
+    }
+
+    pub(super) fn emit_pending_interactions(
+        &self,
+        thread_id: &str,
+        interactions: impl IntoIterator<Item = PendingInteraction>,
+    ) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::PendingInteractionsUpdated as i32,
+            thread_id: Some(thread_id.to_owned()),
+            body: Some(wire::history_event::Body::PendingInteractions(
+                wire::PendingInteractionPage {
+                    interactions: interactions.into_iter().map(Into::into).collect(),
                 },
             )),
         });

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::fmt;
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 /// Information returned by the app-server initialization handshake.
@@ -10,6 +12,35 @@ pub struct ServerInfo {
     pub platform_family: String,
     pub platform_os: String,
     pub user_agent: String,
+}
+
+/// Collaboration behavior selected for one Codex turn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TurnMode {
+    #[default]
+    Default,
+    Plan,
+}
+
+/// Permission behavior selected for one Codex turn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TurnPermissionPreset {
+    /// Preserve the permission settings already associated with the thread.
+    #[default]
+    Inherit,
+    /// Allow workspace edits while requesting approval for sandbox escalation.
+    RequestApproval,
+    /// Keep the turn read-only unless the user approves an escalation.
+    ReadOnly,
+}
+
+/// User-facing controls that affect how a Codex turn runs.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TurnOptions {
+    pub mode: TurnMode,
+    pub permission_preset: TurnPermissionPreset,
 }
 
 /// A page of Codex thread summaries.
@@ -62,6 +93,110 @@ pub enum ThreadActiveFlag {
     WaitingOnApproval,
     WaitingOnUserInput,
     Unknown(String),
+}
+
+/// Opaque non-zero identifier assigned to one app-server request awaiting user
+/// input.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct InteractionId(NonZeroU64);
+
+impl InteractionId {
+    /// Creates an interaction identifier from its private wire representation.
+    #[must_use]
+    pub const fn new(value: u64) -> Option<Self> {
+        match NonZeroU64::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    /// Returns the private wire representation of this identifier.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for InteractionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// One app-server request that Craftward can present and answer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingInteraction {
+    pub id: InteractionId,
+    pub thread_id: String,
+    pub turn_id: Option<String>,
+    pub item_id: Option<String>,
+    pub kind: PendingInteractionKind,
+    pub command: Option<String>,
+    pub working_directory: Option<PathBuf>,
+    pub reason: Option<String>,
+    pub grant_root: Option<PathBuf>,
+    pub available_decisions: Vec<InteractionDecision>,
+    pub questions: Vec<InteractionQuestion>,
+    pub user_input_is_blocking: bool,
+}
+
+/// User-facing category of a pending app-server request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PendingInteractionKind {
+    CommandApproval,
+    FileChangeApproval,
+    UserInput,
+}
+
+/// A decision accepted by a command or file-change approval request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum InteractionDecision {
+    Accept,
+    AcceptForSession,
+    Decline,
+    Cancel,
+}
+
+/// One question included in a Codex request for user input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InteractionQuestion {
+    pub id: String,
+    pub header: String,
+    pub prompt: String,
+    pub options: Vec<InteractionOption>,
+    pub allows_other: bool,
+    pub secret: bool,
+}
+
+/// One selectable answer advertised for a user-input question.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InteractionOption {
+    pub label: String,
+    pub description: String,
+}
+
+/// One answer supplied for a user-input question.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InteractionAnswer {
+    pub question_id: String,
+    pub answers: Vec<String>,
+}
+
+/// A response to one pending interaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InteractionResponse {
+    pub interaction_id: InteractionId,
+    pub body: InteractionResponseBody,
+}
+
+/// The typed payload used to resolve a pending interaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum InteractionResponseBody {
+    Decision(InteractionDecision),
+    UserInput(Vec<InteractionAnswer>),
 }
 
 /// One persisted turn in a Codex thread.
@@ -122,9 +257,9 @@ pub enum ThreadStreamEvent {
         thread_id: String,
         turn: Turn,
     },
-    ApprovalDeclined {
-        thread_id: Option<String>,
-        method: String,
+    PendingInteractionsUpdated {
+        thread_id: String,
+        interactions: Vec<PendingInteraction>,
     },
     UnsupportedServerRequest {
         thread_id: Option<String>,

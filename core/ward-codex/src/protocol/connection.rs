@@ -67,8 +67,8 @@ where
         loop {
             let message = self.read_message(method).await?;
             if message.get("method").is_some() {
-                self.pending_server_messages
-                    .push_back(server_message(message, method)?);
+                let message = self.server_message(message, method)?;
+                self.pending_server_messages.push_back(message);
                 continue;
             }
             let Some(response_id) = message.get("id") else {
@@ -113,7 +113,7 @@ where
             return Ok(message);
         }
         let message = self.read_message(operation).await?;
-        server_message(message, operation)
+        self.server_message(message, operation)
     }
 
     pub(crate) async fn respond_result(
@@ -121,7 +121,8 @@ where
         id: Value,
         result: Value,
     ) -> Result<(), CodexError> {
-        self.write_message(&Response { id, result }).await
+        self.write_message(&Response { id, result }).await?;
+        Ok(())
     }
 
     pub(crate) async fn respond_error(
@@ -134,7 +135,8 @@ where
             id,
             error: ResponseError { code, message },
         })
-        .await
+        .await?;
+        Ok(())
     }
 
     pub(crate) async fn initialized(&mut self) -> Result<(), CodexError> {
@@ -178,26 +180,30 @@ where
     pub(crate) fn writer(&self) -> &W {
         &self.writer
     }
-}
 
-fn server_message(message: Value, operation: &'static str) -> Result<ServerMessage, CodexError> {
-    let method = message
-        .get("method")
-        .and_then(Value::as_str)
-        .ok_or_else(|| CodexError::UnexpectedMessage {
-            method: operation,
-            description: "expected a server notification or request".to_owned(),
-        })?
-        .to_owned();
-    let params = message.get("params").cloned().unwrap_or(Value::Null);
-    Ok(match message.get("id") {
-        Some(id) => ServerMessage::Request {
-            id: id.clone(),
-            method,
-            params,
-        },
-        None => ServerMessage::Notification { method, params },
-    })
+    fn server_message(
+        &mut self,
+        message: Value,
+        operation: &'static str,
+    ) -> Result<ServerMessage, CodexError> {
+        let method = message
+            .get("method")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CodexError::UnexpectedMessage {
+                method: operation,
+                description: "expected a server notification or request".to_owned(),
+            })?
+            .to_owned();
+        let params = message.get("params").cloned().unwrap_or(Value::Null);
+        Ok(match message.get("id") {
+            Some(id) => ServerMessage::Request {
+                id: id.clone(),
+                method,
+                params,
+            },
+            None => ServerMessage::Notification { method, params },
+        })
+    }
 }
 
 #[derive(Serialize)]

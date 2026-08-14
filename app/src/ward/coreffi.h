@@ -36,6 +36,19 @@ extern "C"
     typedef struct WardCodexHistoryObserver WardCodexHistoryObserver;
     typedef void (*WardCodexHistoryEventCallback)(void* context, const WardBuffer* event);
 
+    typedef enum WardCodexTurnMode
+    {
+        WardCodexTurnModeDefault = 0,
+        WardCodexTurnModePlan = 1,
+    } WardCodexTurnMode;
+
+    typedef enum WardCodexPermissionPreset
+    {
+        WardCodexPermissionPresetInherit = 0,
+        WardCodexPermissionPresetRequestApproval = 1,
+        WardCodexPermissionPresetReadOnly = 2,
+    } WardCodexPermissionPreset;
+
     // The serialized event buffer is borrowed until the callback returns. The
     // callback context must remain valid until observer destruction completes.
     WardCodexHistoryObserver* ward_core_codex_history_observer_open(const WardRuntime* runtime,
@@ -56,7 +69,13 @@ extern "C"
     bool ward_core_codex_history_observer_start_turn(WardCodexHistoryObserver* observer,
                                                      const char* thread_id,
                                                      const char* prompt,
+                                                     WardCodexTurnMode turn_mode,
+                                                     WardCodexPermissionPreset permission_preset,
                                                      WardError** error);
+    bool ward_core_codex_history_observer_resolve_interaction(WardCodexHistoryObserver* observer,
+                                                              const uint8_t* response_data,
+                                                              size_t response_size,
+                                                              WardError** error);
     // Destruction waits for in-flight work and must not run inside the callback
     // or on a Tokio worker belonging to this observer's runtime.
     void ward_core_codex_history_observer_destroy(WardCodexHistoryObserver* observer);

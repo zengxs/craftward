@@ -3,12 +3,29 @@
 
 use std::path::PathBuf;
 
-use super::{ThreadReadResponse, ThreadResumeResponse, TurnStartParams, turn_stream_event};
+use super::{
+    InitializeParams, ThreadReadResponse, ThreadResumeResponse, TurnStartParams, turn_stream_event,
+};
 use crate::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
     CommandActionKind, ThreadActiveFlag, ThreadItem, ThreadRuntimeStatus, ThreadStreamEvent,
-    UserInput,
+    TurnMode, TurnOptions, TurnPermissionPreset, UserInput,
 };
+
+#[test]
+fn opts_in_to_the_experimental_app_server_surface() {
+    assert_eq!(
+        serde_json::to_value(InitializeParams::craftward()).unwrap(),
+        serde_json::json!({
+            "clientInfo": {
+                "name": "craftward",
+                "title": "Craftward",
+                "version": env!("CARGO_PKG_VERSION")
+            },
+            "capabilities": { "experimentalApi": true }
+        })
+    );
+}
 
 #[test]
 fn maps_conversation_items_without_exposing_the_full_wire_schema() {
@@ -324,6 +341,7 @@ fn maps_live_reasoning_summary_deltas() {
 #[test]
 fn maps_the_subscription_runtime_status_from_the_resume_response() {
     let response: ThreadResumeResponse = serde_json::from_value(serde_json::json!({
+        "model": "gpt-5.6-sol",
         "thread": {
             "id": "thread-1",
             "name": null,
@@ -344,10 +362,9 @@ fn maps_the_subscription_runtime_status_from_the_resume_response() {
     }))
     .expect("the resume response should decode");
 
-    let subscription = response
-        .into_subscription()
-        .expect("the subscription should map");
+    let (subscription, model) = response.into_parts().expect("the subscription should map");
 
+    assert_eq!(model.as_deref(), Some("gpt-5.6-sol"));
     assert_eq!(subscription.thread.summary.id, "thread-1");
     assert_eq!(
         subscription.runtime_status,
@@ -529,12 +546,106 @@ fn infers_context_compaction_lifecycle_status() {
 #[test]
 fn serializes_a_text_turn_start_request() {
     assert_eq!(
-        serde_json::to_value(TurnStartParams::text("thread-1", "Continue")).unwrap(),
+        serde_json::to_value(
+            TurnStartParams::text(
+                "thread-1",
+                "Continue",
+                Some("gpt-5.6-sol"),
+                TurnOptions::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         serde_json::json!({
             "threadId": "thread-1",
-            "input": [{ "type": "text", "text": "Continue" }]
+            "input": [{ "type": "text", "text": "Continue" }],
+            "collaborationMode": {
+                "mode": "default",
+                "settings": {
+                    "developer_instructions": null,
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": null
+                }
+            }
         })
     );
+}
+
+#[test]
+fn serializes_plan_mode_with_interactive_workspace_permissions() {
+    assert_eq!(
+        serde_json::to_value(
+            TurnStartParams::text(
+                "thread-1",
+                "Plan this change",
+                Some("gpt-5.6-sol"),
+                TurnOptions {
+                    mode: TurnMode::Plan,
+                    permission_preset: TurnPermissionPreset::RequestApproval,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+        serde_json::json!({
+            "threadId": "thread-1",
+            "input": [{ "type": "text", "text": "Plan this change" }],
+            "collaborationMode": {
+                "mode": "plan",
+                "settings": {
+                    "developer_instructions": null,
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": null
+                }
+            },
+            "approvalPolicy": "on-request",
+            "approvalsReviewer": "user",
+            "sandboxPolicy": {
+                "type": "workspaceWrite",
+                "networkAccess": false
+            }
+        })
+    );
+}
+
+#[test]
+fn serializes_read_only_permissions() {
+    let params = TurnStartParams::text(
+        "thread-1",
+        "Inspect only",
+        Some("gpt-5.6-sol"),
+        TurnOptions {
+            mode: TurnMode::Default,
+            permission_preset: TurnPermissionPreset::ReadOnly,
+        },
+    )
+    .unwrap();
+    let value = serde_json::to_value(params).unwrap();
+
+    assert_eq!(value["approvalPolicy"], "on-request");
+    assert_eq!(value["approvalsReviewer"], "user");
+    assert_eq!(
+        value["sandboxPolicy"],
+        serde_json::json!({ "type": "readOnly" })
+    );
+}
+
+#[test]
+fn rejects_plan_mode_when_an_older_resume_response_omits_the_model() {
+    let result = TurnStartParams::text(
+        "thread-1",
+        "Plan this change",
+        None,
+        TurnOptions {
+            mode: TurnMode::Plan,
+            permission_preset: TurnPermissionPreset::Inherit,
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(crate::CodexError::UnsupportedTurnControls { .. })
+    ));
 }
 
 #[test]

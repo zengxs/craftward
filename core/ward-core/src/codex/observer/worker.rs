@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tokio::sync::mpsc::{self, Receiver};
+use tokio::sync::mpsc::Receiver;
 use tokio::time::{Instant as TokioInstant, MissedTickBehavior};
 use ward_codex::{
     CodexError, CodexHistoryCancellation, CodexHistorySession, CodexThreadWriter, Thread,
@@ -18,8 +18,8 @@ use ward_codex::{
 use super::super::live::{LiveRuntimeState, LiveThreadProjection, event_is_incremental};
 use super::super::wire;
 use super::commands::{
-    CommandUpdate, DrainedCommands, ObserverCommand, TurnRequest, WriteAccessRequest,
-    drain_commands, merge_command,
+    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, TurnRequest,
+    WriteAccessRequest, drain_commands, merge_command,
 };
 use super::events::HistoryEventSink;
 
@@ -29,7 +29,10 @@ const LIVE_DELTA_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 const HISTORY_ERROR_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const THREAD_PAGE_LIMIT: u32 = 100;
 
-pub(super) enum OperationDrive<T> {
+#[cfg(test)]
+mod tests;
+
+enum OperationDrive<T> {
     Completed {
         output: T,
         deferred: Option<CommandUpdate>,
@@ -38,13 +41,13 @@ pub(super) enum OperationDrive<T> {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(super) enum PollSample<T> {
+enum PollSample<T> {
     Updated(T),
     Unchanged,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(super) enum PollEffect<T> {
+enum PollEffect<T> {
     Updated(T),
     Recovered,
     Unchanged,
@@ -60,12 +63,12 @@ impl<T> PollEffect<T> {
 }
 
 #[derive(Default)]
-pub(super) struct PollHealth {
+struct PollHealth {
     last_error: Option<String>,
 }
 
 impl PollHealth {
-    pub(super) fn observe<T>(
+    fn observe<T>(
         &mut self,
         result: Result<PollSample<T>, CodexError>,
         cancelled: bool,
@@ -90,19 +93,19 @@ impl PollHealth {
         }
     }
 
-    pub(super) fn reset(&mut self) {
+    fn reset(&mut self) {
         self.last_error = None;
     }
 }
 
-pub(super) struct ObserverState {
+struct ObserverState {
     executable: PathBuf,
     cancellation: CodexHistoryCancellation,
     session: Option<CodexHistorySession>,
     writer: Option<CodexThreadWriter>,
     thread_page_health: PollHealth,
     conversation_health: PollHealth,
-    pub(super) live: LiveThreadProjection,
+    live: LiveThreadProjection,
     terminal_error: Option<String>,
     pending_conversation_emit: bool,
 }
@@ -126,7 +129,7 @@ enum ObserverWake {
 }
 
 impl ObserverState {
-    pub(super) fn new(executable: PathBuf, cancellation: CodexHistoryCancellation) -> Self {
+    fn new(executable: PathBuf, cancellation: CodexHistoryCancellation) -> Self {
         Self {
             executable,
             cancellation,
@@ -140,7 +143,7 @@ impl ObserverState {
         }
     }
 
-    pub(super) async fn select_thread(&mut self) {
+    async fn select_thread(&mut self) {
         if let Some(writer) = self.writer.take() {
             writer.shutdown().await;
         }
@@ -183,6 +186,7 @@ impl ObserverState {
                 if let Some(thread) = self.live.conversation().cloned() {
                     sink.emit_conversation_updated(thread_id, thread);
                 }
+                sink.emit_pending_interactions(thread_id, std::iter::empty());
                 sink.emit_thread_runtime_state(thread_id, self.live.runtime());
                 self.writer = Some(writer);
                 sink.emit_thread_write_state(thread_id, wire::ThreadWriteStatus::Writable, None);
@@ -216,6 +220,7 @@ impl ObserverState {
         self.live.detach();
         self.terminal_error = None;
         self.pending_conversation_emit = false;
+        sink.emit_pending_interactions(thread_id, std::iter::empty());
         sink.emit_thread_runtime_state(thread_id, self.live.runtime());
         sink.emit_thread_write_state(thread_id, wire::ThreadWriteStatus::Idle, None);
     }
@@ -229,7 +234,7 @@ impl ObserverState {
         }
     }
 
-    pub(super) async fn poll_threads(&mut self, sink: &HistoryEventSink) -> bool {
+    async fn poll_threads(&mut self, sink: &HistoryEventSink) -> bool {
         let result = self.poll_thread_page().await.map(|poll| match poll {
             ThreadPagePoll::Baseline(page) | ThreadPagePoll::Changed(page) => {
                 PollSample::Updated(page)
@@ -249,11 +254,7 @@ impl ObserverState {
         succeeded
     }
 
-    pub(super) async fn poll_conversation(
-        &mut self,
-        thread_id: &str,
-        sink: &HistoryEventSink,
-    ) -> bool {
+    async fn poll_conversation(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
         let result = self.poll_thread(thread_id).await.map(|poll| match poll {
             ThreadPoll::Baseline(thread) | ThreadPoll::Changed(thread) => {
                 PollSample::Updated(thread)
@@ -297,29 +298,86 @@ impl ObserverState {
         }
     }
 
-    pub(super) fn accept_writer_event(
+    fn accept_writer_event(
         &mut self,
         thread_id: &str,
         event: ThreadStreamEvent,
         sink: &HistoryEventSink,
     ) {
-        accept_live_event(
-            &mut self.live,
-            event,
-            thread_id,
-            sink,
-            &mut self.terminal_error,
-            &mut self.pending_conversation_emit,
-        );
+        match &event {
+            ThreadStreamEvent::PendingInteractionsUpdated {
+                thread_id: event_thread_id,
+                interactions,
+            } if event_thread_id == thread_id => {
+                sink.emit_pending_interactions(thread_id, interactions.iter().cloned());
+            }
+            ThreadStreamEvent::UnsupportedServerRequest {
+                thread_id: event_thread_id,
+                method,
+            } if event_thread_id.as_deref().is_none_or(|id| id == thread_id) => {
+                sink.emit_turn_notice(
+                    thread_id,
+                    &format!("Craftward does not support the server request {method}."),
+                );
+            }
+            ThreadStreamEvent::RuntimeError {
+                thread_id: event_thread_id,
+                message,
+                will_retry,
+                ..
+            } if event_thread_id == thread_id => {
+                if *will_retry {
+                    sink.emit_turn_notice(thread_id, message);
+                } else {
+                    self.terminal_error = Some(message.clone());
+                }
+            }
+            _ => {}
+        }
+
+        let incremental = event_is_incremental(&event);
+        let effect = self.live.apply_event(&event, thread_id);
+        if effect.runtime_changed {
+            sink.emit_thread_runtime_state(thread_id, self.live.runtime());
+        }
+        if effect.started_turn_id.is_some() {
+            self.terminal_error = None;
+            sink.emit_turn_started(thread_id);
+        }
+        if effect.conversation_changed {
+            if incremental {
+                self.pending_conversation_emit = true;
+            } else {
+                emit_live_conversation(&self.live, thread_id, sink);
+                self.pending_conversation_emit = false;
+            }
+        }
+
+        if let ThreadStreamEvent::TurnCompleted {
+            thread_id: event_thread_id,
+            turn,
+        } = &event
+            && event_thread_id == thread_id
+        {
+            if turn.status == TurnStatus::Failed {
+                sink.emit_turn_error(
+                    thread_id,
+                    self.terminal_error
+                        .as_deref()
+                        .unwrap_or("The Codex turn failed."),
+                );
+            } else {
+                sink.emit_turn_completed(thread_id);
+            }
+            self.terminal_error = None;
+        }
     }
 
     fn flush_pending_live_conversation(&mut self, thread_id: &str, sink: &HistoryEventSink) {
-        flush_pending_live_conversation(
-            &mut self.pending_conversation_emit,
-            &self.live,
-            thread_id,
-            sink,
-        );
+        if !std::mem::take(&mut self.pending_conversation_emit) {
+            return;
+        }
+        emit_live_conversation(&self.live, thread_id, sink);
     }
 
     async fn fail_writer_stream(
@@ -356,11 +414,51 @@ impl ObserverState {
         }
         self.terminal_error = None;
         self.pending_conversation_emit = false;
+        sink.emit_pending_interactions(thread_id, std::iter::empty());
     }
 
-    async fn run_turn(&mut self, request: TurnRequest, sink: &HistoryEventSink) -> bool {
+    async fn apply_thread_control(
+        &mut self,
+        control: ThreadControlRequest,
+        sink: &HistoryEventSink,
+    ) {
+        let ThreadControlRequest::ResolveInteraction(response) = control;
+        let Some(writer) = self.writer.as_mut() else {
+            return;
+        };
+        let thread_id = writer.thread_id().to_owned();
+        match writer.resolve_interaction(response).await {
+            Ok(event) => self.accept_writer_event(&thread_id, event, sink),
+            Err(error) => {
+                sink.emit_turn_notice(&thread_id, &error.to_string());
+                sink.emit_pending_interactions(&thread_id, writer.pending_interactions());
+            }
+        }
+    }
+
+    async fn apply_thread_controls(
+        &mut self,
+        controls: Vec<ThreadControlRequest>,
+        sink: &HistoryEventSink,
+    ) {
+        for control in controls {
+            self.apply_thread_control(control, sink).await;
+        }
+    }
+
+    async fn run_turn(
+        &mut self,
+        request: TurnRequest,
+        sink: &HistoryEventSink,
+        receiver: &mut Receiver<ObserverCommand>,
+        mut initial_controls: Vec<ThreadControlRequest>,
+    ) -> OperationDrive<bool> {
         self.conversation_health.reset();
-        let TurnRequest { thread_id, prompt } = request;
+        let TurnRequest {
+            thread_id,
+            prompt,
+            options,
+        } = request;
         if !self
             .writer
             .as_ref()
@@ -375,7 +473,10 @@ impl ObserverState {
                 Some(message),
             );
             sink.emit_turn_error(&thread_id, message);
-            return false;
+            return OperationDrive::Completed {
+                output: false,
+                deferred: None,
+            };
         }
 
         self.flush_pending_live_conversation(&thread_id, sink);
@@ -383,67 +484,110 @@ impl ObserverState {
         if self.live.begin_turn() {
             sink.emit_thread_runtime_state(&thread_id, self.live.runtime());
         }
-        let result = {
+        let started = {
             let writer = self
                 .writer
                 .as_mut()
                 .expect("the matching writer was checked above");
-            let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
-            let turn = writer.start_text_turn(&prompt, move |event| {
-                let _ = event_sender.send(event);
-            });
-            tokio::pin!(turn);
-            let mut emit_interval = tokio::time::interval(LIVE_DELTA_EMIT_INTERVAL);
-            emit_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            emit_interval.tick().await;
-
-            loop {
-                tokio::select! {
-                    result = &mut turn => {
-                        while let Ok(event) = event_receiver.try_recv() {
-                            accept_live_event(
-                                &mut self.live,
-                                event,
-                                &thread_id,
-                                sink,
-                                &mut self.terminal_error,
-                                &mut self.pending_conversation_emit,
-                            );
-                        }
-                        break result;
-                    }
-                    event = event_receiver.recv() => {
-                        if let Some(event) = event {
-                            accept_live_event(
-                                &mut self.live,
-                                event,
-                                &thread_id,
-                                sink,
-                                &mut self.terminal_error,
-                                &mut self.pending_conversation_emit,
-                            );
-                        }
-                    }
-                    _ = emit_interval.tick(), if self.pending_conversation_emit => {
-                        flush_pending_live_conversation(
-                            &mut self.pending_conversation_emit,
-                            &self.live,
-                            &thread_id,
-                            sink,
-                        );
-                    }
-                }
-            }
+            drive_operation(
+                writer.begin_text_turn(&prompt, options),
+                receiver,
+                &self.cancellation,
+            )
+            .await
         };
-
-        self.flush_pending_live_conversation(&thread_id, sink);
-
-        match result {
-            Ok(()) => true,
-            Err(_) if self.cancellation.is_cancelled() => false,
+        let OperationDrive::Completed {
+            output: result,
+            deferred,
+        } = started
+        else {
+            return OperationDrive::Stop;
+        };
+        let event = match result {
+            Ok(event) => event,
+            Err(_) if self.cancellation.is_cancelled() => {
+                return OperationDrive::Completed {
+                    output: false,
+                    deferred,
+                };
+            }
             Err(error) => {
                 self.fail_writer_stream(&thread_id, error, sink).await;
-                false
+                return OperationDrive::Completed {
+                    output: false,
+                    deferred,
+                };
+            }
+        };
+        let turn_id = match &event {
+            ThreadStreamEvent::TurnStarted { turn, .. } => turn.id.clone(),
+            _ => unreachable!("beginning a turn always produces its started event"),
+        };
+        self.accept_writer_event(&thread_id, event, sink);
+
+        let mut deferred = deferred.unwrap_or_default();
+        initial_controls.append(&mut deferred.controls);
+        self.apply_thread_controls(initial_controls, sink).await;
+
+        let mut emit_interval = tokio::time::interval(LIVE_DELTA_EMIT_INTERVAL);
+        emit_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        emit_interval.tick().await;
+        let cancellation = self.cancellation.clone();
+        loop {
+            let wake = tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return OperationDrive::Stop,
+                command = receiver.recv() => ObserverWake::Command(command),
+                update = self.next_writer_update() => ObserverWake::Writer(Box::new(update)),
+                _ = emit_interval.tick() => ObserverWake::Timer,
+            };
+            match wake {
+                ObserverWake::Cancelled => return OperationDrive::Stop,
+                ObserverWake::Command(None) => return OperationDrive::Stop,
+                ObserverWake::Command(Some(command)) => match drain_commands(command, receiver) {
+                    DrainedCommands::Stop => return OperationDrive::Stop,
+                    DrainedCommands::Update(mut update) => {
+                        self.apply_thread_controls(std::mem::take(&mut update.controls), sink)
+                            .await;
+                        deferred.merge(update);
+                    }
+                },
+                ObserverWake::Writer(update) => match *update {
+                    WriterStreamUpdate::Event {
+                        thread_id: event_thread_id,
+                        event,
+                    } => {
+                        let completed = matches!(
+                            &event,
+                            ThreadStreamEvent::TurnCompleted { thread_id, turn }
+                                if thread_id == &event_thread_id && turn.id == turn_id
+                        );
+                        self.accept_writer_event(&event_thread_id, event, sink);
+                        if completed {
+                            self.flush_pending_live_conversation(&thread_id, sink);
+                            return OperationDrive::Completed {
+                                output: true,
+                                deferred: (!deferred.is_empty()).then_some(deferred),
+                            };
+                        }
+                    }
+                    WriterStreamUpdate::Error {
+                        thread_id: event_thread_id,
+                        error,
+                    } => {
+                        if self.cancellation.is_cancelled() {
+                            return OperationDrive::Stop;
+                        }
+                        self.fail_writer_stream(&event_thread_id, error, sink).await;
+                        return OperationDrive::Completed {
+                            output: false,
+                            deferred: (!deferred.is_empty()).then_some(deferred),
+                        };
+                    }
+                },
+                ObserverWake::Timer => {
+                    self.flush_pending_live_conversation(&thread_id, sink);
+                }
             }
         }
     }
@@ -492,14 +636,14 @@ impl ObserverState {
     }
 }
 
-pub(super) enum WriteAccessEffect {
+enum WriteAccessEffect {
     Acquired(Box<(CodexThreadWriter, ThreadSubscription)>),
     Busy,
     Unavailable(String),
     Cancelled,
 }
 
-pub(super) fn classify_write_access_result(
+fn classify_write_access_result(
     result: Result<(CodexThreadWriter, ThreadSubscription), CodexError>,
     cancelled: bool,
 ) -> WriteAccessEffect {
@@ -511,103 +655,10 @@ pub(super) fn classify_write_access_result(
     }
 }
 
-pub(super) fn accept_live_event(
-    live: &mut LiveThreadProjection,
-    event: ThreadStreamEvent,
-    expected_thread_id: &str,
-    sink: &HistoryEventSink,
-    terminal_error: &mut Option<String>,
-    pending_conversation_emit: &mut bool,
-) {
-    match &event {
-        ThreadStreamEvent::ApprovalDeclined { thread_id, method }
-            if thread_id
-                .as_deref()
-                .is_none_or(|id| id == expected_thread_id) =>
-        {
-            sink.emit_turn_notice(
-                expected_thread_id,
-                &format!(
-                    "Craftward declined {method} because approval controls are not available yet."
-                ),
-            );
-        }
-        ThreadStreamEvent::UnsupportedServerRequest { thread_id, method }
-            if thread_id
-                .as_deref()
-                .is_none_or(|id| id == expected_thread_id) =>
-        {
-            sink.emit_turn_notice(
-                expected_thread_id,
-                &format!("Craftward does not support the server request {method}."),
-            );
-        }
-        ThreadStreamEvent::RuntimeError {
-            thread_id,
-            message,
-            will_retry,
-            ..
-        } if thread_id == expected_thread_id => {
-            if *will_retry {
-                sink.emit_turn_notice(expected_thread_id, message);
-            } else {
-                *terminal_error = Some(message.clone());
-            }
-        }
-        _ => {}
-    }
-
-    let incremental = event_is_incremental(&event);
-    let effect = live.apply_event(&event, expected_thread_id);
-    if effect.runtime_changed {
-        sink.emit_thread_runtime_state(expected_thread_id, live.runtime());
-    }
-    if effect.started_turn_id.is_some() {
-        *terminal_error = None;
-        sink.emit_turn_started(expected_thread_id);
-    }
-    if effect.conversation_changed {
-        if incremental {
-            *pending_conversation_emit = true;
-        } else {
-            emit_live_conversation(live, expected_thread_id, sink);
-            *pending_conversation_emit = false;
-        }
-    }
-
-    if let ThreadStreamEvent::TurnCompleted { thread_id, turn } = &event
-        && thread_id == expected_thread_id
-    {
-        if turn.status == TurnStatus::Failed {
-            sink.emit_turn_error(
-                expected_thread_id,
-                terminal_error
-                    .as_deref()
-                    .unwrap_or("The Codex turn failed."),
-            );
-        } else {
-            sink.emit_turn_completed(expected_thread_id);
-        }
-        *terminal_error = None;
-    }
-}
-
 fn emit_live_conversation(live: &LiveThreadProjection, thread_id: &str, sink: &HistoryEventSink) {
     if let Some(thread) = live.conversation().cloned() {
         sink.emit_conversation_updated(thread_id, thread);
     }
-}
-
-pub(super) fn flush_pending_live_conversation(
-    pending: &mut bool,
-    live: &LiveThreadProjection,
-    thread_id: &str,
-    sink: &HistoryEventSink,
-) {
-    if !std::mem::take(pending) {
-        return;
-    }
-    emit_live_conversation(live, thread_id, sink);
 }
 
 pub(super) async fn run_observer(
@@ -750,6 +801,7 @@ pub(super) async fn run_observer(
                         refresh,
                         write_access,
                         turn,
+                        controls,
                     } = update;
                     let mut following = CommandUpdate::default();
 
@@ -764,6 +816,9 @@ pub(super) async fn run_observer(
                             following.merge(deferred);
                         }
                         watched_thread = Some(thread_id);
+                        if let Some(thread_id) = watched_thread.as_deref() {
+                            sink.emit_pending_interactions(thread_id, std::iter::empty());
+                        }
                         conversation_due = Some(now);
                         live_emit_due = None;
                     }
@@ -829,12 +884,9 @@ pub(super) async fn run_observer(
                         let OperationDrive::Completed {
                             output: succeeded,
                             deferred,
-                        } = drive_operation(
-                            state.run_turn(request, &sink),
-                            &mut receiver,
-                            &cancellation,
-                        )
-                        .await
+                        } = state
+                            .run_turn(request, &sink, &mut receiver, controls)
+                            .await
                         else {
                             break 'observer;
                         };
@@ -851,6 +903,8 @@ pub(super) async fn run_observer(
                                     HISTORY_ERROR_RETRY_INTERVAL
                                 },
                         );
+                    } else {
+                        state.apply_thread_controls(controls, &sink).await;
                     }
                     if !following.is_empty() {
                         deferred_update = Some(following);
@@ -864,7 +918,7 @@ pub(super) async fn run_observer(
     state.shutdown().await;
 }
 
-pub(super) async fn drive_operation<F>(
+async fn drive_operation<F>(
     operation: F,
     receiver: &mut Receiver<ObserverCommand>,
     cancellation: &CodexHistoryCancellation,

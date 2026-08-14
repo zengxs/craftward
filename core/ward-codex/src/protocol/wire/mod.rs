@@ -5,10 +5,16 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use self::interactions::{
+    interaction_result, pending_interaction, resolved_server_request,
+};
 pub(crate) use self::notifications::turn_stream_event;
 use self::thread::{WireThread, WireTurn};
-use crate::{ServerInfo, ThreadSubscription, Turn};
+use crate::{
+    CodexError, ServerInfo, ThreadSubscription, Turn, TurnMode, TurnOptions, TurnPermissionPreset,
+};
 
+mod interactions;
 mod notifications;
 mod thread;
 
@@ -31,7 +37,7 @@ impl InitializeParams {
                 version: env!("CARGO_PKG_VERSION"),
             },
             capabilities: InitializeCapabilities {
-                experimental_api: false,
+                experimental_api: true,
             },
         }
     }
@@ -121,13 +127,18 @@ pub(crate) struct ThreadResumeParams<'a> {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadResumeResponse {
     pub(crate) thread: WireThread,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 impl ThreadResumeResponse {
-    pub(crate) fn into_subscription(self) -> Result<ThreadSubscription, serde_json::Error> {
-        self.thread.into_subscription()
+    pub(crate) fn into_parts(
+        self,
+    ) -> Result<(ThreadSubscription, Option<String>), serde_json::Error> {
+        Ok((self.thread.into_subscription()?, self.model))
     }
 }
 
@@ -136,15 +147,107 @@ impl ThreadResumeResponse {
 pub(crate) struct TurnStartParams<'a> {
     pub(crate) thread_id: &'a str,
     input: Vec<TextTurnInput<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    collaboration_mode: Option<CollaborationMode<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approval_policy: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approvals_reviewer: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox_policy: Option<SandboxPolicy>,
 }
 
 impl<'a> TurnStartParams<'a> {
-    pub(crate) fn text(thread_id: &'a str, text: &'a str) -> Self {
-        Self {
+    pub(crate) fn text(
+        thread_id: &'a str,
+        text: &'a str,
+        model: Option<&'a str>,
+        options: TurnOptions,
+    ) -> Result<Self, CodexError> {
+        let collaboration_mode = match model {
+            Some(model) => Some(CollaborationMode::new(options.mode, model)),
+            None if options.mode == TurnMode::Default => None,
+            None => {
+                return Err(CodexError::UnsupportedTurnControls {
+                    description:
+                        "the app-server did not report the active model required for Plan mode"
+                            .to_owned(),
+                });
+            }
+        };
+        let (approval_policy, approvals_reviewer, sandbox_policy) = match options.permission_preset
+        {
+            TurnPermissionPreset::Inherit => (None, None, None),
+            TurnPermissionPreset::RequestApproval => (
+                Some("on-request"),
+                Some("user"),
+                Some(SandboxPolicy::WorkspaceWrite {
+                    network_access: false,
+                }),
+            ),
+            TurnPermissionPreset::ReadOnly => (
+                Some("on-request"),
+                Some("user"),
+                Some(SandboxPolicy::ReadOnly),
+            ),
+        };
+        Ok(Self {
             thread_id,
             input: vec![TextTurnInput { kind: "text", text }],
+            collaboration_mode,
+            approval_policy,
+            approvals_reviewer,
+            sandbox_policy,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct CollaborationMode<'a> {
+    mode: WireTurnMode,
+    settings: CollaborationSettings<'a>,
+}
+
+impl<'a> CollaborationMode<'a> {
+    fn new(mode: TurnMode, model: &'a str) -> Self {
+        Self {
+            mode: match mode {
+                TurnMode::Default => WireTurnMode::Default,
+                TurnMode::Plan => WireTurnMode::Plan,
+            },
+            settings: CollaborationSettings {
+                developer_instructions: None,
+                model,
+                reasoning_effort: None,
+            },
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum WireTurnMode {
+    Default,
+    Plan,
+}
+
+#[derive(Serialize)]
+struct CollaborationSettings<'a> {
+    developer_instructions: Option<&'a str>,
+    model: &'a str,
+    reasoning_effort: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum SandboxPolicy {
+    #[serde(rename = "workspaceWrite")]
+    WorkspaceWrite {
+        #[serde(rename = "networkAccess")]
+        network_access: bool,
+    },
+    #[serde(rename = "readOnly")]
+    ReadOnly,
 }
 
 #[derive(Serialize)]

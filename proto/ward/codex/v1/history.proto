@@ -47,6 +47,7 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_TURN_NOTICE = 10;
   HISTORY_EVENT_KIND_THREAD_WRITE_STATE_CHANGED = 11;
   HISTORY_EVENT_KIND_THREAD_RUNTIME_STATE_CHANGED = 12;
+  HISTORY_EVENT_KIND_PENDING_INTERACTIONS_UPDATED = 13;
 }
 
 // The selected thread's writer availability for this Craftward observer.
@@ -99,6 +100,77 @@ message HistoryEvent {
     string error_message = 5;
     ThreadWriteState thread_write_state = 6;
     ThreadRuntimeState thread_runtime_state = 7;
+    PendingInteractionPage pending_interactions = 8;
+  }
+}
+
+enum PendingInteractionKind {
+  PENDING_INTERACTION_KIND_UNSPECIFIED = 0;
+  PENDING_INTERACTION_KIND_COMMAND_APPROVAL = 1;
+  PENDING_INTERACTION_KIND_FILE_CHANGE_APPROVAL = 2;
+  PENDING_INTERACTION_KIND_USER_INPUT = 3;
+}
+
+enum PendingInteractionDecision {
+  PENDING_INTERACTION_DECISION_UNSPECIFIED = 0;
+  PENDING_INTERACTION_DECISION_ACCEPT = 1;
+  PENDING_INTERACTION_DECISION_ACCEPT_FOR_SESSION = 2;
+  PENDING_INTERACTION_DECISION_DECLINE = 3;
+  PENDING_INTERACTION_DECISION_CANCEL = 4;
+}
+
+message PendingInteractionOption {
+  string label = 1;
+  string description = 2;
+}
+
+message PendingInteractionQuestion {
+  string question_id = 1;
+  string header = 2;
+  string prompt = 3;
+  repeated PendingInteractionOption options = 4;
+  bool allows_other = 5;
+  bool secret = 6;
+}
+
+// One app-server request awaiting a response from the Craftward user.
+message PendingInteraction {
+  // Opaque identifier assigned by Craftward. This is not the JSON-RPC request
+  // identifier used by the app-server transport.
+  uint64 interaction_id = 1;
+  string thread_id = 2;
+  optional string turn_id = 3;
+  optional string item_id = 4;
+  PendingInteractionKind kind = 5;
+  optional string command = 6;
+  optional string working_directory = 7;
+  optional string reason = 8;
+  optional string grant_root = 9;
+  repeated PendingInteractionDecision available_decisions = 10;
+  repeated PendingInteractionQuestion questions = 11;
+  bool user_input_is_blocking = 12;
+}
+
+message PendingInteractionPage {
+  repeated PendingInteraction interactions = 1;
+}
+
+message PendingInteractionAnswer {
+  string question_id = 1;
+  repeated string answers = 2;
+}
+
+message PendingUserInputResponse {
+  repeated PendingInteractionAnswer answers = 1;
+}
+
+// A structured response sent from the UI back to Ward Core.
+message PendingInteractionResponse {
+  uint64 interaction_id = 1;
+
+  oneof body {
+    PendingInteractionDecision decision = 2;
+    PendingUserInputResponse user_input = 3;
   }
 }
 

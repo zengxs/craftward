@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -8,7 +9,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncWrite, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
@@ -18,9 +19,13 @@ use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
     THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, TURN_START_METHOD,
     ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
-    ThreadResumeResponse, TurnStartParams, TurnStartResponse, turn_stream_event,
+    ThreadResumeResponse, TurnStartParams, TurnStartResponse, interaction_result,
+    pending_interaction, resolved_server_request, turn_stream_event,
 };
-use crate::{CodexError, ServerInfo, Thread, ThreadPage, ThreadStreamEvent, ThreadSubscription};
+use crate::{
+    CodexError, InteractionId, InteractionResponse, PendingInteraction, ServerInfo, Thread,
+    ThreadPage, ThreadStreamEvent, ThreadSubscription, TurnOptions,
+};
 
 type AppServerConnection = Connection<BufReader<ChildStdout>, BufWriter<ChildStdin>>;
 const APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,12 +38,199 @@ pub struct ThreadListOptions {
     pub archived: Option<bool>,
 }
 
+struct PendingServerInteraction {
+    request_id: Value,
+    interaction: PendingInteraction,
+}
+
+struct SubscriptionState {
+    next_interaction_id: u64,
+    pending: BTreeMap<InteractionId, PendingServerInteraction>,
+    queued_events: VecDeque<ThreadStreamEvent>,
+}
+
+impl Default for SubscriptionState {
+    fn default() -> Self {
+        Self {
+            next_interaction_id: 1,
+            pending: BTreeMap::new(),
+            queued_events: VecDeque::new(),
+        }
+    }
+}
+
+impl SubscriptionState {
+    fn reset(&mut self) {
+        self.pending.clear();
+        self.queued_events.clear();
+    }
+
+    fn pending_for(&self, thread_id: &str) -> Vec<PendingInteraction> {
+        self.pending
+            .values()
+            .filter(|entry| entry.interaction.thread_id == thread_id)
+            .map(|entry| entry.interaction.clone())
+            .collect()
+    }
+
+    fn update_event(&self, thread_id: &str) -> ThreadStreamEvent {
+        ThreadStreamEvent::PendingInteractionsUpdated {
+            thread_id: thread_id.to_owned(),
+            interactions: self.pending_for(thread_id),
+        }
+    }
+
+    fn allocate_interaction_id(&mut self) -> InteractionId {
+        loop {
+            let interaction_id = InteractionId::new(self.next_interaction_id)
+                .expect("the next interaction identifier is non-zero");
+            self.next_interaction_id = self.next_interaction_id.checked_add(1).unwrap_or(1);
+            if !self.pending.contains_key(&interaction_id) {
+                return interaction_id;
+            }
+        }
+    }
+
+    fn remove_external(&mut self, request_id: &Value) -> Option<PendingInteraction> {
+        let interaction_id = self.pending.iter().find_map(|(interaction_id, entry)| {
+            (entry.request_id == *request_id).then_some(*interaction_id)
+        })?;
+        self.pending
+            .remove(&interaction_id)
+            .map(|entry| entry.interaction)
+    }
+
+    fn finish_turn(&mut self, thread_id: &str, turn_id: &str) -> bool {
+        let previous_count = self.pending.len();
+        self.pending.retain(|_, entry| {
+            entry.interaction.thread_id != thread_id
+                || entry.interaction.turn_id.as_deref() != Some(turn_id)
+        });
+        self.pending.len() != previous_count
+    }
+
+    async fn next_event<R, W>(
+        &mut self,
+        connection: &mut Connection<R, W>,
+        operation: &'static str,
+    ) -> Result<ThreadStreamEvent, CodexError>
+    where
+        R: AsyncBufRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        if let Some(event) = self.queued_events.pop_front() {
+            return Ok(event);
+        }
+
+        loop {
+            match connection.next_server_message(operation).await? {
+                ServerMessage::Notification { method, params } => {
+                    if method == "serverRequest/resolved" {
+                        let (request_id, _resolved_thread_id) = resolved_server_request(params)
+                            .map_err(|source| CodexError::InvalidResponse {
+                                method: operation,
+                                source,
+                            })?;
+                        let Some(interaction) = self.remove_external(&request_id) else {
+                            continue;
+                        };
+                        return Ok(self.update_event(&interaction.thread_id));
+                    }
+                    let event = turn_stream_event(&method, params).map_err(|source| {
+                        CodexError::InvalidResponse {
+                            method: operation,
+                            source,
+                        }
+                    })?;
+                    let Some(event) = event else {
+                        continue;
+                    };
+                    if let ThreadStreamEvent::TurnCompleted { thread_id, turn } = &event
+                        && self.finish_turn(thread_id, &turn.id)
+                    {
+                        let update = self.update_event(thread_id);
+                        self.queued_events.push_back(event);
+                        return Ok(update);
+                    }
+                    return Ok(event);
+                }
+                ServerMessage::Request {
+                    id: request_id,
+                    method,
+                    params,
+                } => {
+                    let request_thread_id = params
+                        .get("threadId")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    let interaction_id = self.allocate_interaction_id();
+                    let interaction = pending_interaction(interaction_id, &method, params)
+                        .map_err(|source| CodexError::InvalidResponse {
+                            method: operation,
+                            source,
+                        })?;
+                    if let Some(interaction) = interaction {
+                        let thread_id = interaction.thread_id.clone();
+                        self.pending.insert(
+                            interaction_id,
+                            PendingServerInteraction {
+                                request_id,
+                                interaction,
+                            },
+                        );
+                        return Ok(self.update_event(&thread_id));
+                    }
+                    connection
+                        .respond_error(
+                            request_id,
+                            -32601,
+                            format!("Craftward does not support the server request {method}"),
+                        )
+                        .await?;
+                    return Ok(ThreadStreamEvent::UnsupportedServerRequest {
+                        thread_id: request_thread_id,
+                        method,
+                    });
+                }
+            }
+        }
+    }
+
+    async fn resolve<R, W>(
+        &mut self,
+        connection: &mut Connection<R, W>,
+        response: InteractionResponse,
+    ) -> Result<ThreadStreamEvent, CodexError>
+    where
+        R: AsyncBufRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let entry = self
+            .pending
+            .get(&response.interaction_id)
+            .ok_or(CodexError::UnknownInteraction(response.interaction_id))?;
+        let result = interaction_result(&entry.interaction, &response).map_err(|description| {
+            CodexError::InvalidInteractionResponse {
+                interaction_id: response.interaction_id,
+                description,
+            }
+        })?;
+        let request_id = entry.request_id.clone();
+        let thread_id = entry.interaction.thread_id.clone();
+        connection.respond_result(request_id, result).await?;
+        self.pending.remove(&response.interaction_id);
+        Ok(self.update_event(&thread_id))
+    }
+}
+
 /// An asynchronous client for one Codex app-server child process.
 pub struct CodexClient {
     child: Child,
     connection: Option<AppServerConnection>,
     server_info: ServerInfo,
     cancellation: CancellationToken,
+    subscription_state: SubscriptionState,
+    resumed_thread_model: Option<String>,
 }
 
 impl CodexClient {
@@ -98,6 +290,8 @@ impl CodexClient {
                 connection: Some(connection),
                 server_info,
                 cancellation,
+                subscription_state: SubscriptionState::default(),
+                resumed_thread_model: None,
             }),
             Err(error) => {
                 terminate_child(&mut child).await;
@@ -152,25 +346,25 @@ impl CodexClient {
     ) -> Result<ThreadSubscription, CodexError> {
         let params = ThreadResumeParams { thread_id };
         let response: ThreadResumeResponse = self.request(THREAD_RESUME_METHOD, &params).await?;
-        response
-            .into_subscription()
-            .map_err(|source| CodexError::InvalidResponse {
-                method: THREAD_RESUME_METHOD,
-                source,
-            })
+        let (subscription, model) =
+            response
+                .into_parts()
+                .map_err(|source| CodexError::InvalidResponse {
+                    method: THREAD_RESUME_METHOD,
+                    source,
+                })?;
+        self.subscription_state.reset();
+        self.resumed_thread_model = model;
+        Ok(subscription)
     }
 
-    /// Starts one text turn and streams events until that turn completes.
-    ///
-    /// Server approval requests are declined because Craftward does not expose
-    /// approval controls yet. Other server requests receive an unsupported
-    /// response so the app-server stream cannot remain blocked indefinitely.
-    pub async fn start_text_turn(
+    /// Starts one text turn and returns its initial streamed event.
+    pub async fn begin_text_turn(
         &mut self,
         thread_id: &str,
         text: &str,
-        mut on_event: impl FnMut(ThreadStreamEvent),
-    ) -> Result<(), CodexError> {
+        options: TurnOptions,
+    ) -> Result<ThreadStreamEvent, CodexError> {
         let connection = self
             .connection
             .as_mut()
@@ -178,7 +372,13 @@ impl CodexClient {
         tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => Err(CodexError::Interrupted),
-            result = start_text_turn_on_connection(connection, thread_id, text, &mut on_event) => result,
+            result = begin_text_turn_on_connection(
+                connection,
+                thread_id,
+                text,
+                self.resumed_thread_model.as_deref(),
+                options,
+            ) => result,
         }
     }
 
@@ -191,8 +391,27 @@ impl CodexClient {
         tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => Err(CodexError::Interrupted),
-            result = next_subscription_event_on_connection(connection, THREAD_RESUME_METHOD) => result,
+            result = self.subscription_state.next_event(
+                connection,
+                THREAD_RESUME_METHOD,
+            ) => result,
         }
+    }
+
+    /// Resolves one pending approval or user-input request.
+    pub async fn resolve_interaction(
+        &mut self,
+        response: InteractionResponse,
+    ) -> Result<ThreadStreamEvent, CodexError> {
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or(CodexError::UnexpectedEof(THREAD_RESUME_METHOD))?;
+        self.subscription_state.resolve(connection, response).await
+    }
+
+    pub(crate) fn pending_interactions(&self, thread_id: &str) -> Vec<PendingInteraction> {
+        self.subscription_state.pending_for(thread_id)
     }
 
     /// Terminates and reaps the app-server child process.
@@ -226,101 +445,29 @@ impl CodexClient {
     }
 }
 
-async fn start_text_turn_on_connection<R, W>(
+async fn begin_text_turn_on_connection<R, W>(
     connection: &mut Connection<R, W>,
     thread_id: &str,
     text: &str,
-    mut on_event: impl FnMut(ThreadStreamEvent),
-) -> Result<(), CodexError>
+    model: Option<&str>,
+    options: TurnOptions,
+) -> Result<ThreadStreamEvent, CodexError>
 where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let response: TurnStartResponse = connection
-        .request(TURN_START_METHOD, &TurnStartParams::text(thread_id, text))
-        .await?;
+    let params = TurnStartParams::text(thread_id, text, model, options)?;
+    let response: TurnStartResponse = connection.request(TURN_START_METHOD, &params).await?;
     let turn = response
         .into_turn()
         .map_err(|source| CodexError::InvalidResponse {
             method: TURN_START_METHOD,
             source,
         })?;
-    let turn_id = turn.id.clone();
-    on_event(ThreadStreamEvent::TurnStarted {
+    Ok(ThreadStreamEvent::TurnStarted {
         thread_id: thread_id.to_owned(),
         turn,
-    });
-
-    loop {
-        let event = next_subscription_event_on_connection(connection, TURN_START_METHOD).await?;
-        let completed = matches!(
-            &event,
-            ThreadStreamEvent::TurnCompleted {
-                thread_id: completed_thread_id,
-                turn,
-            } if completed_thread_id == thread_id && turn.id == turn_id
-        );
-        on_event(event);
-        if completed {
-            return Ok(());
-        }
-    }
-}
-
-async fn next_subscription_event_on_connection<R, W>(
-    connection: &mut Connection<R, W>,
-    operation: &'static str,
-) -> Result<ThreadStreamEvent, CodexError>
-where
-    R: AsyncBufRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    loop {
-        match connection.next_server_message(operation).await? {
-            ServerMessage::Notification { method, params } => {
-                let event = turn_stream_event(&method, params).map_err(|source| {
-                    CodexError::InvalidResponse {
-                        method: operation,
-                        source,
-                    }
-                })?;
-                let Some(event) = event else {
-                    continue;
-                };
-                return Ok(event);
-            }
-            ServerMessage::Request { id, method, params } => {
-                let request_thread_id = params
-                    .get("threadId")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                if matches!(
-                    method.as_str(),
-                    "item/commandExecution/requestApproval" | "item/fileChange/requestApproval"
-                ) {
-                    connection
-                        .respond_result(id, json!({ "decision": "decline" }))
-                        .await?;
-                    return Ok(ThreadStreamEvent::ApprovalDeclined {
-                        thread_id: request_thread_id,
-                        method,
-                    });
-                } else {
-                    connection
-                        .respond_error(
-                            id,
-                            -32601,
-                            format!("Craftward does not support the server request {method}"),
-                        )
-                        .await?;
-                    return Ok(ThreadStreamEvent::UnsupportedServerRequest {
-                        thread_id: request_thread_id,
-                        method,
-                    });
-                }
-            }
-        }
-    }
+    })
 }
 
 async fn terminate_child(child: &mut Child) {
@@ -387,7 +534,7 @@ mod tests {
             "{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"commentary-1\",\"delta\":\"Inspecting.\"}}\n",
             "{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"completedAtMs\":2,\"item\":{\"id\":\"commentary-1\",\"type\":\"agentMessage\",\"text\":\"Inspecting.\",\"phase\":\"commentary\"}}}\n",
             "{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"startedAtMs\":3,\"item\":{\"id\":\"command-1\",\"type\":\"commandExecution\",\"command\":\"pwd\",\"commandActions\":[],\"cwd\":\"/workspace\",\"status\":\"inProgress\"}}}\n",
-            "{\"id\":\"approval-1\",\"method\":\"item/commandExecution/requestApproval\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"command-1\"}}\n",
+            "{\"id\":\"approval-1\",\"method\":\"item/commandExecution/requestApproval\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"command-1\",\"startedAtMs\":3}}\n",
             "{\"method\":\"item/commandExecution/outputDelta\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"command-1\",\"delta\":\"/workspace\\n\"}}\n",
             "{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"completedAtMs\":4,\"item\":{\"id\":\"command-1\",\"type\":\"commandExecution\",\"command\":\"pwd\",\"commandActions\":[],\"cwd\":\"/workspace\",\"status\":\"completed\",\"aggregatedOutput\":\"/workspace\\n\"}}}\n",
             "{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"startedAtMs\":5,\"item\":{\"id\":\"change-1\",\"type\":\"fileChange\",\"changes\":[{\"path\":\"/workspace/a.txt\",\"diff\":\"+hello\"}],\"status\":\"inProgress\"}}}\n",
@@ -398,13 +545,53 @@ mod tests {
             "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-1\",\"turn\":{\"id\":\"turn-2\",\"status\":\"completed\",\"items\":[]}}}\n"
         );
         let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
+        let mut subscription_state = SubscriptionState::default();
         let mut events = Vec::new();
 
-        start_text_turn_on_connection(&mut connection, "thread-1", "Continue", |event| {
+        events.push(
+            begin_text_turn_on_connection(
+                &mut connection,
+                "thread-1",
+                "Continue",
+                None,
+                TurnOptions::default(),
+            )
+            .await
+            .expect("the turn should start"),
+        );
+        loop {
+            let event = subscription_state
+                .next_event(&mut connection, TURN_START_METHOD)
+                .await
+                .expect("the streamed turn should continue");
+            if let ThreadStreamEvent::PendingInteractionsUpdated { interactions, .. } = &event
+                && let Some(interaction) = interactions.first()
+            {
+                let response = InteractionResponse {
+                    interaction_id: interaction.id,
+                    body: crate::InteractionResponseBody::Decision(
+                        crate::InteractionDecision::Decline,
+                    ),
+                };
+                events.push(event);
+                let update = subscription_state
+                    .resolve(&mut connection, response)
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    &update,
+                    ThreadStreamEvent::PendingInteractionsUpdated { interactions, .. }
+                        if interactions.is_empty()
+                ));
+                events.push(update);
+                continue;
+            }
+            let completed = matches!(event, ThreadStreamEvent::TurnCompleted { .. });
             events.push(event);
-        })
-        .await
-        .expect("the streamed turn should complete");
+            if completed {
+                break;
+            }
+        }
 
         assert!(matches!(events[0], ThreadStreamEvent::TurnStarted { .. }));
         assert!(matches!(
@@ -436,10 +623,26 @@ mod tests {
         ));
         assert!(matches!(
             events[7],
-            ThreadStreamEvent::ApprovalDeclined { .. }
+            ThreadStreamEvent::PendingInteractionsUpdated {
+                ref interactions,
+                ..
+            } if matches!(
+                interactions.as_slice(),
+                [PendingInteraction {
+                    kind: crate::PendingInteractionKind::CommandApproval,
+                    ..
+                }]
+            )
         ));
         assert!(matches!(
-            events[10],
+            events[8],
+            ThreadStreamEvent::PendingInteractionsUpdated {
+                ref interactions,
+                ..
+            } if interactions.is_empty()
+        ));
+        assert!(matches!(
+            events[11],
             ThreadStreamEvent::ItemStarted {
                 item: crate::ThreadItem::Activity(crate::Activity {
                     kind: crate::ActivityKind::FileChange,
@@ -475,8 +678,10 @@ mod tests {
     async fn reads_a_subscription_event_without_starting_a_turn() {
         let input = "{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[\"waitingOnApproval\"]}}}\n";
         let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
+        let mut subscription_state = SubscriptionState::default();
 
-        let event = next_subscription_event_on_connection(&mut connection, THREAD_RESUME_METHOD)
+        let event = subscription_state
+            .next_event(&mut connection, THREAD_RESUME_METHOD)
             .await
             .expect("the idle subscription event should be readable");
 
@@ -486,6 +691,74 @@ mod tests {
                 thread_id,
                 status: crate::ThreadRuntimeStatus::Active { .. },
             } if thread_id == "thread-1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn clears_unanswered_interactions_before_the_completed_turn_event() {
+        let input = concat!(
+            "{\"id\":\"approval-1\",\"method\":\"item/commandExecution/requestApproval\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"command-1\",\"startedAtMs\":3}}\n",
+            "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-1\",\"turn\":{\"id\":\"turn-2\",\"status\":\"completed\",\"items\":[]}}}\n"
+        );
+        let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
+        let mut subscription_state = SubscriptionState::default();
+
+        let requested = subscription_state
+            .next_event(&mut connection, THREAD_RESUME_METHOD)
+            .await
+            .unwrap();
+        assert!(matches!(
+            requested,
+            ThreadStreamEvent::PendingInteractionsUpdated { interactions, .. }
+                if interactions.len() == 1
+        ));
+
+        let cleared = subscription_state
+            .next_event(&mut connection, THREAD_RESUME_METHOD)
+            .await
+            .unwrap();
+        assert!(matches!(
+            cleared,
+            ThreadStreamEvent::PendingInteractionsUpdated { interactions, .. }
+                if interactions.is_empty()
+        ));
+
+        assert!(matches!(
+            subscription_state
+                .next_event(&mut connection, THREAD_RESUME_METHOD)
+                .await
+                .unwrap(),
+            ThreadStreamEvent::TurnCompleted { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn resolves_an_interaction_by_its_opaque_server_request_id() {
+        let input = concat!(
+            "{\"id\":\"approval-1\",\"method\":\"item/fileChange/requestApproval\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-2\",\"itemId\":\"change-1\",\"startedAtMs\":3}}\n",
+            "{\"method\":\"serverRequest/resolved\",\"params\":{\"requestId\":\"approval-1\",\"threadId\":\"thread-1\"}}\n"
+        );
+        let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
+        let mut subscription_state = SubscriptionState::default();
+
+        let requested = subscription_state
+            .next_event(&mut connection, THREAD_RESUME_METHOD)
+            .await
+            .unwrap();
+        assert!(matches!(
+            requested,
+            ThreadStreamEvent::PendingInteractionsUpdated { interactions, .. }
+                if interactions.len() == 1
+        ));
+
+        let resolved = subscription_state
+            .next_event(&mut connection, THREAD_RESUME_METHOD)
+            .await
+            .unwrap();
+        assert!(matches!(
+            resolved,
+            ThreadStreamEvent::PendingInteractionsUpdated { interactions, .. }
+                if interactions.is_empty()
         ));
     }
 }

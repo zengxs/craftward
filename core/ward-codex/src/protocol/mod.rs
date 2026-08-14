@@ -8,7 +8,8 @@ pub(crate) use connection::{Connection, ServerMessage};
 pub(crate) use wire::{
     InitializeParams, InitializeResponse, ThreadListParams, ThreadListResponse, ThreadReadParams,
     ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse, TurnStartParams,
-    TurnStartResponse, turn_stream_event,
+    TurnStartResponse, interaction_result, pending_interaction, resolved_server_request,
+    turn_stream_event,
 };
 
 pub(crate) const INITIALIZE_METHOD: &str = "initialize";

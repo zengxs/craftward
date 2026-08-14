@@ -90,6 +90,9 @@ jobs:
             -m qtgrpc qtimageformats qttasktree
           echo "QT6_ROOT=$HOME/Library/Qt/6.11.1/macos" >> "$GITHUB_ENV"
 
+      - name: Test QML
+        run: task app:test:qml
+
       - name: Build and package
         run: task app:deploy BUILD_TYPE=Release SIGN_IDENTITY=-
 

@@ -3,8 +3,13 @@ qt_add_qml_module(CraftwardPages
     URI Craftward.Pages
     QML_FILES
         AboutPage.qml
+        CodexApprovalActionState.qml
+        CodexComposer.qml
         CodexComposerState.qml
         CodexHistoryPage.qml
+        CodexInteractionCard.qml
+        CodexTimelineView.qml
+        CodexTurnControlState.qml
         SettingsGeneralPage.qml
 )
 

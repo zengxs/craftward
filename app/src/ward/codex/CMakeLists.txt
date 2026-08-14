@@ -3,7 +3,10 @@ qt_add_qml_module(CraftwardCodex
     URI Craftward.Codex
     SOURCES
         codexhistorycontroller.cpp
+        codexhistorycontroller_events.cpp
         codexhistorycontroller.h
+        codexinteractionmodel.cpp
+        codexinteractionmodel.h
         codexthreadmodel.cpp
         codexthreadmodel.h
         codextimelinemodel.cpp

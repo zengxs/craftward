@@ -3,11 +3,13 @@
 
 #pragma once
 
+#include "codexinteractionmodel.h"
 #include "codexthreadmodel.h"
 #include "codextimelinemodel.h"
 
 #include <QObject>
 #include <QString>
+#include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
 
 #include <cstdint>
@@ -29,6 +31,7 @@ class CodexHistoryController : public QObject
     QML_UNCREATABLE("CodexHistoryController is provided by the application.")
     Q_PROPERTY(CodexThreadModel* threads READ threads CONSTANT)
     Q_PROPERTY(CodexTimelineModel* timeline READ timeline CONSTANT)
+    Q_PROPERTY(CodexInteractionModel* interactions READ interactions CONSTANT)
     Q_PROPERTY(QString selectedThreadId READ selectedThreadId NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedThreadTitle READ selectedThreadTitle NOTIFY selectionChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
@@ -41,6 +44,9 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(QString activeTurnId READ activeTurnId NOTIFY turnStateChanged)
     Q_PROPERTY(bool waitingOnApproval READ waitingOnApproval NOTIFY turnStateChanged)
     Q_PROPERTY(bool waitingOnUserInput READ waitingOnUserInput NOTIFY turnStateChanged)
+    Q_PROPERTY(TurnMode turnMode READ turnMode WRITE setTurnMode NOTIFY turnOptionsChanged)
+    Q_PROPERTY(
+      PermissionPreset permissionPreset READ permissionPreset WRITE setPermissionPreset NOTIFY turnOptionsChanged)
     Q_PROPERTY(WriteAvailability writeAvailability READ writeAvailability NOTIFY writeAvailabilityChanged)
     Q_PROPERTY(QString writeAvailabilityMessage READ writeAvailabilityMessage NOTIFY writeAvailabilityChanged)
 
@@ -66,11 +72,52 @@ class CodexHistoryController : public QObject
     };
     Q_ENUM(WriteAvailability)
 
+    enum class TurnMode
+    {
+        DefaultMode = 0,
+        PlanMode = 1,
+    };
+    Q_ENUM(TurnMode)
+
+    enum class PermissionPreset
+    {
+        InheritPermissions = 0,
+        RequestApproval = 1,
+        ReadOnlyPermissions = 2,
+    };
+    Q_ENUM(PermissionPreset)
+
+    enum class InteractionKind
+    {
+        CommandApproval = static_cast<int>(ward::codex::v1::PendingInteractionKindGadget::PendingInteractionKind::
+                                             PENDING_INTERACTION_KIND_COMMAND_APPROVAL),
+        FileChangeApproval = static_cast<int>(ward::codex::v1::PendingInteractionKindGadget::PendingInteractionKind::
+                                                PENDING_INTERACTION_KIND_FILE_CHANGE_APPROVAL),
+        UserInput = static_cast<int>(
+          ward::codex::v1::PendingInteractionKindGadget::PendingInteractionKind::PENDING_INTERACTION_KIND_USER_INPUT),
+    };
+    Q_ENUM(InteractionKind)
+
+    enum class InteractionDecision
+    {
+        Accept = static_cast<int>(ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision::
+                                    PENDING_INTERACTION_DECISION_ACCEPT),
+        AcceptForSession =
+          static_cast<int>(ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision::
+                             PENDING_INTERACTION_DECISION_ACCEPT_FOR_SESSION),
+        Decline = static_cast<int>(ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision::
+                                     PENDING_INTERACTION_DECISION_DECLINE),
+        Cancel = static_cast<int>(ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision::
+                                    PENDING_INTERACTION_DECISION_CANCEL),
+    };
+    Q_ENUM(InteractionDecision)
+
     explicit CodexHistoryController(const WardRuntime* runtime, QObject* parent = nullptr);
     ~CodexHistoryController() override;
 
     [[nodiscard]] CodexThreadModel* threads();
     [[nodiscard]] CodexTimelineModel* timeline();
+    [[nodiscard]] CodexInteractionModel* interactions();
     [[nodiscard]] QString selectedThreadId() const;
     [[nodiscard]] QString selectedThreadTitle() const;
     [[nodiscard]] QString errorMessage() const;
@@ -83,6 +130,10 @@ class CodexHistoryController : public QObject
     [[nodiscard]] QString activeTurnId() const;
     [[nodiscard]] bool waitingOnApproval() const;
     [[nodiscard]] bool waitingOnUserInput() const;
+    [[nodiscard]] TurnMode turnMode() const;
+    void setTurnMode(TurnMode mode);
+    [[nodiscard]] PermissionPreset permissionPreset() const;
+    void setPermissionPreset(PermissionPreset preset);
     [[nodiscard]] WriteAvailability writeAvailability() const;
     [[nodiscard]] QString writeAvailabilityMessage() const;
 
@@ -91,6 +142,8 @@ class CodexHistoryController : public QObject
     Q_INVOKABLE void acquireWriteAccess();
     Q_INVOKABLE void releaseWriteAccess();
     Q_INVOKABLE bool startTurn(const QString& prompt);
+    Q_INVOKABLE bool respondToApproval(const QString& interactionId, InteractionDecision decision);
+    Q_INVOKABLE bool respondToUserInput(const QString& interactionId, const QVariantMap& answers);
     Q_INVOKABLE void clearError();
 
   signals:
@@ -99,6 +152,7 @@ class CodexHistoryController : public QObject
     void loadingChanged();
     void activityHistoryPartialChanged();
     void turnStateChanged();
+    void turnOptionsChanged();
     void turnStarted();
     void writeAvailabilityChanged();
 
@@ -122,6 +176,8 @@ class CodexHistoryController : public QObject
                       bool waitingOnApproval = false,
                       bool waitingOnUserInput = false);
     void setWriteAvailability(WriteAvailability availability, const QString& message = {});
+    bool sendInteractionResponse(const QString& interactionId,
+                                 const ward::codex::v1::PendingInteractionResponse& response);
     void updateErrorMessage();
     void finishThreadLoading(const QString& errorMessage);
     void finishConversationLoading(const QString& errorMessage);
@@ -129,6 +185,7 @@ class CodexHistoryController : public QObject
 
     CodexThreadModel threadModel_;
     CodexTimelineModel timelineModel_;
+    CodexInteractionModel interactionModel_;
     WardCodexHistoryObserver* historyObserver_ = nullptr;
     std::unique_ptr<CodexHistoryCallbackContext> callbackContext_;
     QString selectedThreadId_;
@@ -141,6 +198,8 @@ class CodexHistoryController : public QObject
     bool loadingConversation_ = false;
     bool activityHistoryPartial_ = false;
     TurnRuntimeState turnRuntimeState_;
+    TurnMode turnMode_ = TurnMode::DefaultMode;
+    PermissionPreset permissionPreset_ = PermissionPreset::InheritPermissions;
     WriteAvailability writeAvailability_ = WriteAvailability::NotRequested;
     QString writeAvailabilityMessage_;
 };

@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    CodexClient, CodexError, Thread, ThreadListOptions, ThreadPage, ThreadStreamEvent,
-    ThreadSubscription,
+    CodexClient, CodexError, InteractionResponse, Thread, ThreadListOptions, ThreadPage,
+    ThreadStreamEvent, ThreadSubscription,
 };
 
 /// A cloneable handle that interrupts in-flight Codex session operations.
@@ -279,17 +279,17 @@ impl CodexThreadWriter {
 
     /// Starts a text turn without resuming again, preserving the writer lease
     /// acquired on this same connection.
-    pub async fn start_text_turn(
+    pub async fn begin_text_turn(
         &mut self,
         text: &str,
-        mut on_event: impl FnMut(ThreadStreamEvent),
-    ) -> Result<(), CodexError> {
+        options: crate::TurnOptions,
+    ) -> Result<ThreadStreamEvent, CodexError> {
         if self.cancellation.is_cancelled() {
             return Err(CodexError::Interrupted);
         }
         let result = self
             .client
-            .start_text_turn(&self.thread_id, text, &mut on_event)
+            .begin_text_turn(&self.thread_id, text, options)
             .await;
         if self.cancellation.is_cancelled() {
             Err(CodexError::Interrupted)
@@ -304,6 +304,23 @@ impl CodexThreadWriter {
             return Err(CodexError::Interrupted);
         }
         self.client.next_subscription_event().await
+    }
+
+    /// Resolves one pending approval or user-input request.
+    pub async fn resolve_interaction(
+        &mut self,
+        response: InteractionResponse,
+    ) -> Result<ThreadStreamEvent, CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        self.client.resolve_interaction(response).await
+    }
+
+    /// Returns the current pending interactions for this subscribed thread.
+    #[must_use]
+    pub fn pending_interactions(&self) -> Vec<crate::PendingInteraction> {
+        self.client.pending_interactions(&self.thread_id)
     }
 
     /// Terminates and reaps the writer's app-server child.

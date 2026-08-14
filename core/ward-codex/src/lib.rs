@@ -20,7 +20,9 @@ pub use history::{
 };
 pub use model::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
-    CommandActionKind, ServerInfo, Thread, ThreadActiveFlag, ThreadItem, ThreadPage,
-    ThreadRuntimeStatus, ThreadStreamEvent, ThreadSubscription, ThreadSummary, Turn, TurnStatus,
-    UserInput,
+    CommandActionKind, InteractionAnswer, InteractionDecision, InteractionId, InteractionOption,
+    InteractionQuestion, InteractionResponse, InteractionResponseBody, PendingInteraction,
+    PendingInteractionKind, ServerInfo, Thread, ThreadActiveFlag, ThreadItem, ThreadPage,
+    ThreadRuntimeStatus, ThreadStreamEvent, ThreadSubscription, ThreadSummary, Turn, TurnMode,
+    TurnOptions, TurnPermissionPreset, TurnStatus, UserInput,
 };

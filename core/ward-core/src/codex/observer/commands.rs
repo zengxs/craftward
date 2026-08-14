@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use tokio::sync::mpsc::Receiver;
+use ward_codex::{InteractionResponse, TurnOptions};
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug)]
 pub(super) enum ObserverCommand {
@@ -10,7 +14,13 @@ pub(super) enum ObserverCommand {
     AcquireWrite(String),
     ReleaseWrite(String),
     StartTurn(TurnRequest),
+    ResolveInteraction(InteractionResponse),
     Stop,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum ThreadControlRequest {
+    ResolveInteraction(InteractionResponse),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -23,6 +33,7 @@ pub(super) enum WriteAccessRequest {
 pub(super) struct TurnRequest {
     pub(super) thread_id: String,
     pub(super) prompt: String,
+    pub(super) options: TurnOptions,
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -31,6 +42,7 @@ pub(super) struct CommandUpdate {
     pub(super) refresh: bool,
     pub(super) write_access: Option<WriteAccessRequest>,
     pub(super) turn: Option<TurnRequest>,
+    pub(super) controls: Vec<ThreadControlRequest>,
 }
 
 impl CommandUpdate {
@@ -45,6 +57,7 @@ impl CommandUpdate {
         if self.turn.is_none() {
             self.turn = newer.turn;
         }
+        self.controls.extend(newer.controls);
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -52,6 +65,7 @@ impl CommandUpdate {
             && !self.refresh
             && self.write_access.is_none()
             && self.turn.is_none()
+            && self.controls.is_empty()
     }
 
     pub(super) fn is_turn_only(&self) -> bool {
@@ -59,6 +73,7 @@ impl CommandUpdate {
             && !self.refresh
             && self.write_access.is_none()
             && self.turn.is_some()
+            && self.controls.is_empty()
     }
 }
 
@@ -105,6 +120,11 @@ pub(super) fn merge_command(update: &mut CommandUpdate, command: ObserverCommand
             update.turn = Some(request);
         }
         ObserverCommand::StartTurn(_) => {}
+        ObserverCommand::ResolveInteraction(response) => {
+            update
+                .controls
+                .push(ThreadControlRequest::ResolveInteraction(response));
+        }
         ObserverCommand::Stop => return false,
     }
     true

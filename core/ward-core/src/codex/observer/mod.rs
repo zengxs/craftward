@@ -1,26 +1,31 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::ffi::{c_char, c_void};
+use std::ffi::{c_char, c_int, c_void};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use prost::Message as _;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task::JoinHandle;
-use ward_codex::CodexHistoryCancellation;
+use ward_codex::{
+    CodexHistoryCancellation, InteractionResponse, TurnMode, TurnOptions, TurnPermissionPreset,
+};
 
 use self::commands::{ObserverCommand, TurnRequest};
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
-use super::{WardBuffer, clear_error, required_string};
+use super::{WardBuffer, clear_error, required_string, wire};
 use crate::{WardError, write_error};
 
 mod commands;
 mod events;
 mod worker;
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;
 
@@ -256,13 +261,16 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_release_write(
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` and `prompt` must
-/// point to NUL-terminated strings. `output_error`, when non-null, must be
-/// writable.
+/// point to NUL-terminated strings. `turn_mode` and `permission_preset` must
+/// use values declared by the private C interface. `output_error`, when
+/// non-null, must be writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     prompt: *const c_char,
+    turn_mode: c_int,
+    permission_preset: c_int,
     output_error: *mut *mut WardError,
 ) -> bool {
     // SAFETY: The caller supplied the optional error output pointer.
@@ -288,6 +296,14 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
         unsafe { write_error(output_error, "the Codex prompt is empty") };
         return false;
     }
+    let options = match decode_turn_options(turn_mode, permission_preset) {
+        Ok(options) => options,
+        Err(message) => {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, message) };
+            return false;
+        }
+    };
 
     if observer
         .turn_active
@@ -306,13 +322,98 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
 
     let sent = send_command(
         observer,
-        ObserverCommand::StartTurn(TurnRequest { thread_id, prompt }),
+        ObserverCommand::StartTurn(TurnRequest {
+            thread_id,
+            prompt,
+            options,
+        }),
         output_error,
     );
     if !sent {
         observer.turn_active.store(false, Ordering::Release);
     }
     sent
+}
+
+fn decode_turn_options(
+    turn_mode: c_int,
+    permission_preset: c_int,
+) -> Result<TurnOptions, &'static str> {
+    let mode = match turn_mode {
+        0 => TurnMode::Default,
+        1 => TurnMode::Plan,
+        _ => return Err("the Codex turn mode is invalid"),
+    };
+    let permission_preset = match permission_preset {
+        0 => TurnPermissionPreset::Inherit,
+        1 => TurnPermissionPreset::RequestApproval,
+        2 => TurnPermissionPreset::ReadOnly,
+        _ => return Err("the Codex permission preset is invalid"),
+    };
+    Ok(TurnOptions {
+        mode,
+        permission_preset,
+    })
+}
+
+/// Sends one structured response to a pending Codex interaction.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `response_data` must point to
+/// `response_size` readable bytes containing a serialized
+/// `PendingInteractionResponse`. `output_error`, when non-null, must be
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_resolve_interaction(
+    observer: *mut WardCodexHistoryObserver,
+    response_data: *const u8,
+    response_size: usize,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    if response_data.is_null() {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex interaction response is missing") };
+        return false;
+    }
+    // SAFETY: The private C interface requires a readable buffer with the
+    // documented length for the duration of this call.
+    let bytes = unsafe { std::slice::from_raw_parts(response_data, response_size) };
+    let response = match wire::PendingInteractionResponse::decode(bytes) {
+        Ok(response) => response,
+        Err(error) => {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe {
+                write_error(
+                    output_error,
+                    format!("the Codex interaction response is invalid: {error}"),
+                )
+            };
+            return false;
+        }
+    };
+    let response = match InteractionResponse::try_from(response) {
+        Ok(response) => response,
+        Err(error) => {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, error) };
+            return false;
+        }
+    };
+
+    send_command(
+        observer,
+        ObserverCommand::ResolveInteraction(response),
+        output_error,
+    )
 }
 
 fn send_command(
