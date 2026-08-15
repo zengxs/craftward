@@ -1,15 +1,16 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{
-    InitializeParams, ThreadReadResponse, ThreadResumeResponse, TurnStartParams, turn_stream_event,
+    InitializeParams, ThreadReadResponse, ThreadResumeResponse, ThreadStartParams,
+    ThreadStartResponse, TurnStartParams, turn_stream_event,
 };
 use crate::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
-    CommandActionKind, ThreadActiveFlag, ThreadItem, ThreadRuntimeStatus, ThreadStreamEvent,
-    TurnMode, TurnOptions, TurnPermissionPreset, UserInput,
+    CommandActionKind, ThreadActiveFlag, ThreadItem, ThreadRuntimeStatus, ThreadStartOptions,
+    ThreadStreamEvent, TurnMode, TurnOptions, TurnPermissionPreset, UserInput,
 };
 
 #[test]
@@ -376,6 +377,52 @@ fn maps_the_subscription_runtime_status_from_the_resume_response() {
             ]
         }
     );
+}
+
+#[test]
+fn serializes_a_thread_start_for_one_working_directory() {
+    assert_eq!(
+        serde_json::to_value(ThreadStartParams::new(
+            Path::new("/workspace"),
+            ThreadStartOptions::default(),
+        ))
+        .unwrap(),
+        serde_json::json!({ "cwd": "/workspace" })
+    );
+}
+
+#[test]
+fn maps_a_started_thread_to_the_normalized_subscription() {
+    let response: ThreadStartResponse = serde_json::from_value(serde_json::json!({
+        "approvalPolicy": "on-request",
+        "approvalsReviewer": "user",
+        "cwd": "/workspace",
+        "model": "gpt-5.6-sol",
+        "modelProvider": "openai",
+        "sandbox": { "type": "workspaceWrite" },
+        "thread": {
+            "id": "thread-new",
+            "name": null,
+            "preview": "",
+            "cwd": "/workspace",
+            "createdAt": 10,
+            "updatedAt": 10,
+            "ephemeral": false,
+            "status": { "type": "idle" },
+            "turns": []
+        }
+    }))
+    .expect("the thread start response should decode");
+
+    let (subscription, model, ephemeral) = response
+        .into_parts()
+        .expect("the started thread should map");
+
+    assert_eq!(model, "gpt-5.6-sol");
+    assert_eq!(ephemeral, Some(false));
+    assert_eq!(subscription.thread.summary.id, "thread-new");
+    assert_eq!(subscription.thread.summary.cwd, PathBuf::from("/workspace"));
+    assert_eq!(subscription.runtime_status, ThreadRuntimeStatus::Idle);
 }
 
 #[test]

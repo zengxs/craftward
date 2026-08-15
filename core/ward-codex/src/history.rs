@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     CodexClient, CodexError, InteractionResponse, Thread, ThreadListOptions, ThreadPage,
-    ThreadStreamEvent, ThreadSubscription,
+    ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
 };
 
 /// A cloneable handle that interrupts in-flight Codex session operations.
@@ -83,7 +83,7 @@ pub struct CodexHistorySession {
     page_tracker: ThreadPageTracker,
 }
 
-/// An exclusive writer lease for one resumed Codex thread.
+/// An exclusive writer lease for one started or resumed Codex thread.
 ///
 /// The underlying app-server child remains alive until this value is dropped,
 /// so a successful availability check and the following turns use the same
@@ -230,6 +230,42 @@ impl CodexHistorySession {
 }
 
 impl CodexThreadWriter {
+    /// Starts a new thread in a dedicated app-server child controlled by the
+    /// supplied cancellation handle.
+    ///
+    /// A failed start is not retried because the app-server may have created
+    /// the thread before its response became unavailable.
+    pub async fn start_with_cancellation(
+        executable: impl AsRef<OsStr>,
+        cancellation: CodexHistoryCancellation,
+        working_directory: &Path,
+        options: ThreadStartOptions,
+    ) -> Result<(Self, ThreadSubscription), CodexError> {
+        let executable = PathBuf::from(executable.as_ref());
+        let mut client =
+            CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone()).await?;
+        let subscription = match client.start_thread(working_directory, options).await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                client.shutdown().await;
+                return Err(error);
+            }
+        };
+        if cancellation.is_cancelled() {
+            client.shutdown().await;
+            return Err(CodexError::Interrupted);
+        }
+        let thread_id = subscription.thread.summary.id.clone();
+        Ok((
+            Self {
+                thread_id,
+                cancellation,
+                client,
+            },
+            subscription,
+        ))
+    }
+
     /// Acquires the writer for a persisted thread on a dedicated app-server
     /// child controlled by the supplied cancellation handle.
     pub async fn acquire_with_cancellation(
@@ -469,5 +505,21 @@ mod tests {
             .await
             .expect("cancellation should wake the waiter")
             .expect("the cancellation waiter should not panic");
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_thread_start_does_not_spawn_an_app_server() {
+        let cancellation = CodexHistoryCancellation::new();
+        cancellation.cancel();
+
+        let result = CodexThreadWriter::start_with_cancellation(
+            "/an/executable/that/does/not/exist",
+            cancellation,
+            Path::new("/workspace"),
+            ThreadStartOptions::default(),
+        )
+        .await;
+
+        assert!(matches!(result, Err(CodexError::Interrupted)));
     }
 }

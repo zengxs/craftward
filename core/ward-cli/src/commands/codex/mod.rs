@@ -6,7 +6,10 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use ward_codex::{CodexClient, CodexHistorySession, ThreadItem, ThreadListOptions, UserInput};
+use ward_codex::{
+    CodexClient, CodexHistoryCancellation, CodexHistorySession, CodexThreadWriter, ThreadItem,
+    ThreadListOptions, ThreadRuntimeStatus, ThreadStartOptions, ThreadSubscription, UserInput,
+};
 
 mod watch;
 
@@ -54,6 +57,18 @@ impl CodexArguments {
                 session.shutdown().await;
                 result
             }
+            CodexCommand::ProbeStart { working_directory } => {
+                let (writer, subscription) = CodexThreadWriter::start_with_cancellation(
+                    executable,
+                    CodexHistoryCancellation::new(),
+                    &working_directory,
+                    ThreadStartOptions { ephemeral: true },
+                )
+                .await?;
+                let result = display_started_thread(&subscription, output);
+                writer.shutdown().await;
+                result
+            }
         }
     }
 }
@@ -71,6 +86,12 @@ enum CodexCommand {
     },
     /// Watch a persisted thread for changes made by another app-server.
     Watch(watch::WatchArguments),
+    /// Start an ephemeral thread to verify writer connectivity.
+    ProbeStart {
+        /// Working directory to make visible to the app-server.
+        #[arg(long = "cwd", value_name = "PATH")]
+        working_directory: PathBuf,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -162,6 +183,39 @@ async fn read(client: &mut CodexClient, thread_id: &str, output: &mut dyn Write)
         }
     }
     Ok(())
+}
+
+fn display_started_thread(
+    subscription: &ThreadSubscription,
+    output: &mut dyn Write,
+) -> CommandResult {
+    writeln!(
+        output,
+        "Started ephemeral thread {}",
+        subscription.thread.summary.id
+    )?;
+    writeln!(
+        output,
+        "Working directory: {}",
+        subscription.thread.summary.cwd.display()
+    )?;
+    writeln!(
+        output,
+        "Runtime status: {}",
+        runtime_status_name(&subscription.runtime_status)
+    )?;
+    Ok(())
+}
+
+fn runtime_status_name(status: &ThreadRuntimeStatus) -> &str {
+    match status {
+        ThreadRuntimeStatus::NotLoaded => "not loaded",
+        ThreadRuntimeStatus::Idle => "idle",
+        ThreadRuntimeStatus::Active { .. } => "active",
+        ThreadRuntimeStatus::SystemError => "system error",
+        ThreadRuntimeStatus::Unknown(value) => value,
+        _ => "unknown",
+    }
 }
 
 fn display_user_input(input: UserInput, output: &mut dyn Write) -> CommandResult {

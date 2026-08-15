@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,8 @@ pub(crate) use self::interactions::{
 pub(crate) use self::notifications::turn_stream_event;
 use self::thread::{WireThread, WireTurn};
 use crate::{
-    CodexError, ServerInfo, ThreadSubscription, Turn, TurnMode, TurnOptions, TurnPermissionPreset,
+    CodexError, ServerInfo, ThreadStartOptions, ThreadSubscription, Turn, TurnMode, TurnOptions,
+    TurnPermissionPreset,
 };
 
 mod interactions;
@@ -118,6 +119,41 @@ pub(crate) struct ThreadReadParams<'a> {
 #[derive(Deserialize)]
 pub(crate) struct ThreadReadResponse {
     pub(crate) thread: WireThread,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ThreadStartParams<'a> {
+    cwd: &'a Path,
+    #[serde(skip_serializing_if = "is_false")]
+    ephemeral: bool,
+}
+
+impl<'a> ThreadStartParams<'a> {
+    pub(crate) fn new(cwd: &'a Path, options: ThreadStartOptions) -> Self {
+        Self {
+            cwd,
+            ephemeral: options.ephemeral,
+        }
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ThreadStartResponse {
+    thread: WireThread,
+    model: String,
+}
+
+impl ThreadStartResponse {
+    pub(crate) fn into_parts(
+        self,
+    ) -> Result<(ThreadSubscription, String, Option<bool>), serde_json::Error> {
+        let ephemeral = self.thread.ephemeral();
+        Ok((self.thread.into_subscription()?, self.model, ephemeral))
+    }
 }
 
 #[derive(Serialize)]

@@ -23,6 +23,6 @@ pub use model::{
     CommandActionKind, InteractionAnswer, InteractionDecision, InteractionId, InteractionOption,
     InteractionQuestion, InteractionResponse, InteractionResponseBody, PendingInteraction,
     PendingInteractionKind, ServerInfo, Thread, ThreadActiveFlag, ThreadItem, ThreadPage,
-    ThreadRuntimeStatus, ThreadStreamEvent, ThreadSubscription, ThreadSummary, Turn, TurnMode,
-    TurnOptions, TurnPermissionPreset, TurnStatus, UserInput,
+    ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription, ThreadSummary,
+    Turn, TurnMode, TurnOptions, TurnPermissionPreset, TurnStatus, UserInput,
 };

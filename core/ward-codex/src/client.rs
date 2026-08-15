@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -17,15 +17,16 @@ use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
-    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, TURN_INTERRUPT_METHOD,
-    TURN_START_METHOD, ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse,
-    ThreadResumeParams, ThreadResumeResponse, TurnInterruptParams, TurnInterruptResponse,
+    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, THREAD_START_METHOD,
+    TURN_INTERRUPT_METHOD, TURN_START_METHOD, ThreadListParams, ThreadListResponse,
+    ThreadReadParams, ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse,
+    ThreadStartParams, ThreadStartResponse, TurnInterruptParams, TurnInterruptResponse,
     TurnStartParams, TurnStartResponse, interaction_result, pending_interaction,
     resolved_server_request, turn_stream_event,
 };
 use crate::{
     CodexError, InteractionId, InteractionResponse, PendingInteraction, ServerInfo, Thread,
-    ThreadPage, ThreadStreamEvent, ThreadSubscription, TurnOptions,
+    ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription, TurnOptions,
 };
 
 type AppServerConnection = Connection<BufReader<ChildStdout>, BufWriter<ChildStdin>>;
@@ -231,7 +232,7 @@ pub struct CodexClient {
     server_info: ServerInfo,
     cancellation: CancellationToken,
     subscription_state: SubscriptionState,
-    resumed_thread_model: Option<String>,
+    subscribed_thread_model: Option<String>,
 }
 
 impl CodexClient {
@@ -292,7 +293,7 @@ impl CodexClient {
                 server_info,
                 cancellation,
                 subscription_state: SubscriptionState::default(),
-                resumed_thread_model: None,
+                subscribed_thread_model: None,
             }),
             Err(error) => {
                 terminate_child(&mut child).await;
@@ -340,6 +341,38 @@ impl CodexClient {
             })
     }
 
+    /// Starts a thread in one app-server-visible working directory and
+    /// subscribes this connection to its events.
+    pub(crate) async fn start_thread(
+        &mut self,
+        working_directory: &Path,
+        options: ThreadStartOptions,
+    ) -> Result<ThreadSubscription, CodexError> {
+        let cancellation = self.cancellation.clone();
+        let result = {
+            let connection = self
+                .connection
+                .as_mut()
+                .ok_or(CodexError::UnexpectedEof(THREAD_START_METHOD))?;
+            let request = start_thread_on_connection(connection, working_directory, options);
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => Err(CodexError::Interrupted),
+                result = timeout(APP_SERVER_REQUEST_TIMEOUT, request) => {
+                    result.unwrap_or(Err(CodexError::TimedOut(THREAD_START_METHOD)))
+                },
+            }
+        };
+        if matches!(result, Err(CodexError::TimedOut(_))) {
+            self.connection.take();
+            terminate_child(&mut self.child).await;
+        }
+        let (subscription, model) = result?;
+        self.subscription_state.reset();
+        self.subscribed_thread_model = Some(model);
+        Ok(subscription)
+    }
+
     /// Resumes a persisted thread and subscribes this connection to its events.
     pub async fn resume_thread(
         &mut self,
@@ -355,7 +388,7 @@ impl CodexClient {
                     source,
                 })?;
         self.subscription_state.reset();
-        self.resumed_thread_model = model;
+        self.subscribed_thread_model = model;
         Ok(subscription)
     }
 
@@ -377,7 +410,7 @@ impl CodexClient {
                 connection,
                 thread_id,
                 text,
-                self.resumed_thread_model.as_deref(),
+                self.subscribed_thread_model.as_deref(),
                 options,
             ) => result,
         }
@@ -461,6 +494,37 @@ impl CodexClient {
     }
 }
 
+async fn start_thread_on_connection<R, W>(
+    connection: &mut Connection<R, W>,
+    working_directory: &Path,
+    options: ThreadStartOptions,
+) -> Result<(ThreadSubscription, String), CodexError>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let response: ThreadStartResponse = connection
+        .request(
+            THREAD_START_METHOD,
+            &ThreadStartParams::new(working_directory, options),
+        )
+        .await?;
+    let (subscription, model, ephemeral) =
+        response
+            .into_parts()
+            .map_err(|source| CodexError::InvalidResponse {
+                method: THREAD_START_METHOD,
+                source,
+            })?;
+    if options.ephemeral && ephemeral != Some(true) {
+        return Err(CodexError::UnexpectedMessage {
+            method: THREAD_START_METHOD,
+            description: "the app-server did not confirm an ephemeral thread".to_owned(),
+        });
+    }
+    Ok((subscription, model))
+}
+
 async fn begin_text_turn_on_connection<R, W>(
     connection: &mut Connection<R, W>,
     thread_id: &str,
@@ -538,6 +602,39 @@ mod tests {
         terminate_child(&mut child).await;
 
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn starts_a_thread_in_the_requested_working_directory() {
+        let input = concat!(
+            "{\"id\":1,\"result\":{",
+            "\"model\":\"gpt-5.6-sol\",",
+            "\"thread\":{",
+            "\"id\":\"thread-new\",\"name\":null,\"preview\":\"\",",
+            "\"cwd\":\"/workspace\",\"createdAt\":10,\"updatedAt\":10,",
+            "\"ephemeral\":false,\"status\":{\"type\":\"idle\"},\"turns\":[]",
+            "}}}\n"
+        );
+        let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
+
+        let (subscription, model) = start_thread_on_connection(
+            &mut connection,
+            Path::new("/workspace"),
+            ThreadStartOptions::default(),
+        )
+        .await
+        .expect("the thread should start");
+
+        assert_eq!(subscription.thread.summary.id, "thread-new");
+        assert_eq!(
+            subscription.runtime_status,
+            crate::ThreadRuntimeStatus::Idle
+        );
+        assert_eq!(model, "gpt-5.6-sol");
+        assert_eq!(
+            String::from_utf8(connection.writer().clone()).unwrap(),
+            "{\"id\":1,\"method\":\"thread/start\",\"params\":{\"cwd\":\"/workspace\"}}\n"
+        );
     }
 
     #[tokio::test]

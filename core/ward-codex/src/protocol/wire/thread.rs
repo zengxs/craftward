@@ -21,11 +21,17 @@ pub(crate) struct WireThread {
     cwd: PathBuf,
     created_at: i64,
     updated_at: i64,
+    #[serde(default)]
+    ephemeral: Option<bool>,
     status: WireThreadStatus,
     turns: Vec<WireTurn>,
 }
 
 impl WireThread {
+    pub(super) fn ephemeral(&self) -> Option<bool> {
+        self.ephemeral
+    }
+
     pub(crate) fn into_summary(self) -> ThreadSummary {
         make_summary(
             self.id,

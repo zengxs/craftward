@@ -43,6 +43,13 @@ pub struct TurnOptions {
     pub permission_preset: TurnPermissionPreset,
 }
 
+/// Controls how a new Codex thread is created.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ThreadStartOptions {
+    /// Keep the thread in memory without materializing it in persisted history.
+    pub ephemeral: bool,
+}
+
 /// A page of Codex thread summaries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ThreadPage {
