@@ -34,3 +34,23 @@ target_link_libraries(CraftwardCodex
         Qt6::Qml
         Ward::Core
 )
+
+if(BUILD_TESTING)
+    qt_add_executable(CraftwardCodexHistoryControllerTest
+        tests/codexhistorycontrollertest.cpp
+    )
+    target_include_directories(CraftwardCodexHistoryControllerTest
+        PRIVATE
+            "${PROJECT_SOURCE_DIR}/src"
+    )
+    target_link_libraries(CraftwardCodexHistoryControllerTest
+        PRIVATE
+            CraftwardCodex
+            Qt6::Test
+            "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
+    )
+    add_test(
+        NAME CraftwardCodexHistoryControllerTest
+        COMMAND CraftwardCodexHistoryControllerTest
+    )
+endif()

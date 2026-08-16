@@ -20,3 +20,6 @@ ward-runtime = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }
+
+[dev-dependencies]
+ward-codex-test-support = { workspace = true }

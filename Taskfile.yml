@@ -25,6 +25,13 @@ tasks:
     cmds:
       - task --list-all --sort none
 
+  test:
+    desc: Run all automated tests
+    cmds:
+      - task: core:test
+      - task: xtask:test
+      - task: app:test
+
   format:
     desc: Format source code
     cmds:

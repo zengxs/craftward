@@ -11,6 +11,14 @@ tasks:
     cmds:
       - cargo run --package ward-cli -- {{.CLI_ARGS}}
 
+  test:
+    desc: Run Rust regression tests
+    preconditions:
+      - sh: command -v cargo
+        msg: cargo is not available in PATH
+    cmds:
+      - cargo test --workspace --all-targets --locked
+
   build:
     label: "core:build:{{.BUILD_TYPE}}"
     desc: Build the Ward Core Universal2 static library

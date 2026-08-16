@@ -9,8 +9,10 @@ use tokio::sync::{mpsc, oneshot};
 use ward_codex::{
     Activity, ActivityKind, ActivityStatus, CodexError, CodexHistoryCancellation,
     InteractionDecision, InteractionId, PendingInteraction, PendingInteractionKind,
-    ThreadActiveFlag, ThreadItem, ThreadStreamEvent, ThreadSubscription, Turn, TurnStatus,
+    ThreadActiveFlag, ThreadItem, ThreadStreamEvent, ThreadSubscription, Turn, TurnOptions,
+    TurnStatus,
 };
+use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions};
 
 use super::super::test_support::{CapturedEvent, event_sink, thread};
 use super::*;
@@ -18,25 +20,12 @@ use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
 use crate::codex::observer::commands::{CommandUpdate, ObserverCommand, ThreadStartRequest};
 use crate::codex::wire;
 
-#[cfg(unix)]
-#[path = "../../../../../test-support/fake_codex_app_server.rs"]
-mod fake_codex_app_server;
-
-#[cfg(unix)]
 #[tokio::test]
 async fn starts_a_persisted_thread_and_adopts_its_writer() {
-    use fake_codex_app_server::{FakeCodexAppServer, ThreadStartScenario};
-
-    let fake_app_server = FakeCodexAppServer::create(ThreadStartScenario {
-        request_ephemeral: false,
-        response_ephemeral: false,
-    });
+    let fake_app_server = FakeCodexAppServer::default();
     let captured = Mutex::new(CapturedEvent::default());
     let sink = event_sink(&captured);
-    let mut state = ObserverState::new(
-        fake_app_server.executable().to_owned(),
-        CodexHistoryCancellation::new(),
-    );
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
 
     let started_thread_id = state
         .start_thread(
@@ -85,21 +74,113 @@ async fn starts_a_persisted_thread_and_adopts_its_writer() {
     state.shutdown().await;
 }
 
-#[cfg(unix)]
 #[tokio::test]
-async fn preserves_the_current_writer_when_a_new_thread_fails_to_start() {
-    use fake_codex_app_server::{FakeCodexAppServer, ThreadStartScenario};
-
-    let fake_app_server = FakeCodexAppServer::create(ThreadStartScenario {
-        request_ephemeral: false,
-        response_ephemeral: false,
+async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        initial_thread_read_failures: 1,
+        renumber_persisted_first_turn: true,
+        ..FakeCodexAppServerOptions::default()
     });
     let captured = Mutex::new(CapturedEvent::default());
     let sink = event_sink(&captured);
-    let mut state = ObserverState::new(
-        fake_app_server.executable().to_owned(),
-        CodexHistoryCancellation::new(),
-    );
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+
+    let started_thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    let (_commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let result = state
+        .run_turn(
+            TurnRequest {
+                thread_id: started_thread_id.clone(),
+                prompt: "Hello".to_owned(),
+                options: TurnOptions::default(),
+            },
+            &sink,
+            &mut receiver,
+            vec![],
+        )
+        .await;
+    assert!(matches!(
+        result,
+        OperationDrive::Completed {
+            output: true,
+            deferred: None,
+        }
+    ));
+
+    {
+        let captured = captured.lock().unwrap();
+        let conversation = latest_conversation(&captured);
+        assert_eq!(conversation.timeline.len(), 2);
+        assert!(
+            conversation
+                .timeline
+                .iter()
+                .all(|item| item.turn_id == "live-turn-1")
+        );
+    }
+
+    assert!(state.poll_conversation(&started_thread_id, &sink).await);
+    assert!(state.poll_conversation(&started_thread_id, &sink).await);
+
+    {
+        let captured = captured.lock().unwrap();
+        assert!(
+            captured
+                .events
+                .iter()
+                .all(|event| { event.kind != wire::HistoryEventKind::ConversationError as i32 })
+        );
+        let conversation = latest_conversation(&captured);
+        assert_eq!(conversation.timeline.len(), 2);
+        assert!(
+            conversation
+                .timeline
+                .iter()
+                .all(|item| item.turn_id == "persisted-turn-1")
+        );
+        let messages = conversation
+            .timeline
+            .iter()
+            .map(|item| match item.body.as_ref() {
+                Some(wire::timeline_item::Body::Message(message)) => message,
+                _ => panic!("the fake turn should contain only messages"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(messages[0].message_id, "persisted-user-1");
+        assert_eq!(messages[0].text, "Hello");
+        assert_eq!(messages[1].message_id, "persisted-agent-1");
+        assert_eq!(messages[1].text, "Done.");
+    }
+
+    state.shutdown().await;
+}
+
+fn latest_conversation(captured: &CapturedEvent) -> &wire::Conversation {
+    captured
+        .events
+        .iter()
+        .rev()
+        .find_map(|event| match event.body.as_ref() {
+            Some(wire::history_event::Body::Conversation(conversation)) => Some(conversation),
+            _ => None,
+        })
+        .expect("the conversation should be emitted")
+}
+
+#[tokio::test]
+async fn preserves_the_current_writer_when_a_new_thread_fails_to_start() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
     let _ = state
         .start_thread(
             ThreadStartRequest {
@@ -109,7 +190,7 @@ async fn preserves_the_current_writer_when_a_new_thread_fails_to_start() {
         )
         .await;
     captured.lock().unwrap().events.clear();
-    state.executable = PathBuf::from("/craftward-tests/missing-codex");
+    state.source = PathBuf::from("/craftward-tests/missing-codex").into();
 
     let started_thread_id = state
         .start_thread(

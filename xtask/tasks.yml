@@ -1,6 +1,14 @@
 version: "3"
 
 tasks:
+  test:
+    desc: Run repository tooling regression tests
+    preconditions:
+      - sh: command -v cargo
+        msg: cargo is not available in PATH
+    cmds:
+      - cargo test --all-targets --locked
+
   format:cargo:
     desc: Format Cargo files
     internal: true

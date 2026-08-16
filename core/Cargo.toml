@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "ward-cli",
     "ward-codex",
+    "ward-codex-test-support",
     "ward-core",
     "ward-realm",
     "ward-realm-vz",
@@ -19,6 +20,7 @@ license = "GPL-3.0-or-later"
 # workspace crates
 ward-cli = { path = "ward-cli" }
 ward-codex = { path = "ward-codex" }
+ward-codex-test-support = { path = "ward-codex-test-support" }
 ward-core = { path = "ward-core" }
 ward-realm = { path = "ward-realm" }
 ward-realm-vz = { path = "ward-realm-vz" }

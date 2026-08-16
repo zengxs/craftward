@@ -32,6 +32,12 @@ tasks:
         'formatter=$1; shift; for path do test ! -f "$path" || "$formatter" -i "$path" || exit; done'
         sh "$QT6_ROOT/bin/qmlformat"
 
+  test:
+    desc: Run all application regression tests
+    cmds:
+      - task: test:qml
+      - task: test:cpp
+
   test:qml:
     desc: Run QML regression tests
     requires:
@@ -44,12 +50,37 @@ tasks:
     cmds:
       - '"$QT6_ROOT/bin/qmltestrunner" -input tests/qml'
 
+  test:cpp:
+    desc: Build and run C++ regression tests
+    vars:
+      BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
+      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+    deps:
+      - task: :core:build
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+      - task: configure
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+          BUILD_TESTING: "ON"
+          SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    cmds:
+      - >-
+        cmake --build "{{.BUILD_DIR}}"
+        --target CraftwardCodexHistoryControllerTest
+        --parallel
+      - >-
+        ctest --test-dir "{{.BUILD_DIR}}"
+        --output-on-failure
+        -R '^CraftwardCodexHistoryControllerTest$'
+
   configure:
-    label: "app:configure:{{.BUILD_TYPE}}"
+    label: "app:configure:{{.BUILD_TYPE}}:testing={{.BUILD_TESTING}}"
     desc: Configure the application build
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
       BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      BUILD_TESTING: '{{default "OFF" .BUILD_TESTING}}'
     requires:
       vars: [QT6_ROOT]
     deps:
@@ -67,6 +98,7 @@ tasks:
         -DCMAKE_BUILD_TYPE="{{.BUILD_TYPE}}"
         -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
         -DCMAKE_OSX_DEPLOYMENT_TARGET="{{.MACOS_DEPLOYMENT_TARGET}}"
+        -DBUILD_TESTING="{{.BUILD_TESTING}}"
         -DQt6_ROOT="$QT6_ROOT"
         -DCRAFTWARD_SIGN_IDENTITY="$CRAFTWARD_SIGN_IDENTITY"
 

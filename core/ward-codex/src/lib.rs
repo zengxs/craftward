@@ -7,12 +7,14 @@
 //! JSONL request framing. Callers receive a compact normalized model instead of
 //! depending on the generated wire schema.
 
+mod app_server;
 mod client;
 mod error;
 mod history;
 mod model;
 mod protocol;
 
+pub use app_server::{CodexAppServerConnector, CodexAppServerSource, CodexAppServerTransport};
 pub use client::{CodexClient, ThreadListOptions};
 pub use error::CodexError;
 pub use history::{

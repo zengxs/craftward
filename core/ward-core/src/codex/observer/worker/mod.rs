@@ -3,16 +3,15 @@
 
 use std::collections::HashSet;
 use std::future::Future;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc::Receiver;
 use tokio::time::{Instant as TokioInstant, MissedTickBehavior};
 use ward_codex::{
-    CodexError, CodexHistoryCancellation, CodexHistorySession, CodexThreadWriter, Thread,
-    ThreadListOptions, ThreadPagePoll, ThreadPoll, ThreadStartOptions, ThreadStreamEvent,
-    ThreadSubscription, TurnStatus,
+    CodexAppServerSource, CodexError, CodexHistoryCancellation, CodexHistorySession,
+    CodexThreadWriter, Thread, ThreadListOptions, ThreadPagePoll, ThreadPoll, ThreadStartOptions,
+    ThreadStreamEvent, ThreadSubscription, TurnStatus,
 };
 
 use super::super::live::{LiveRuntimeState, LiveThreadProjection, event_is_incremental};
@@ -135,7 +134,7 @@ impl PollHealth {
 }
 
 struct ObserverState {
-    executable: PathBuf,
+    source: CodexAppServerSource,
     cancellation: CodexHistoryCancellation,
     session: Option<CodexHistorySession>,
     writer: Option<CodexThreadWriter>,
@@ -166,9 +165,12 @@ enum ObserverWake {
 }
 
 impl ObserverState {
-    fn new(executable: PathBuf, cancellation: CodexHistoryCancellation) -> Self {
+    fn new(
+        source: impl Into<CodexAppServerSource>,
+        cancellation: CodexHistoryCancellation,
+    ) -> Self {
         Self {
-            executable,
+            source: source.into(),
             cancellation,
             session: None,
             writer: None,
@@ -199,8 +201,8 @@ impl ObserverState {
         request: ThreadStartRequest,
         sink: &HistoryEventSink,
     ) -> Option<String> {
-        let result = CodexThreadWriter::start_with_cancellation(
-            &self.executable,
+        let result = CodexThreadWriter::start_on(
+            &self.source,
             self.cancellation.clone(),
             &request.working_directory,
             ThreadStartOptions::default(),
@@ -250,12 +252,8 @@ impl ObserverState {
             writer.shutdown().await;
         }
         sink.emit_thread_write_state(thread_id, wire::ThreadWriteStatus::Checking, None);
-        let result = CodexThreadWriter::acquire_with_cancellation(
-            &self.executable,
-            self.cancellation.clone(),
-            thread_id,
-        )
-        .await;
+        let result =
+            CodexThreadWriter::acquire_on(&self.source, self.cancellation.clone(), thread_id).await;
         match classify_write_access_result(result, self.cancellation.is_cancelled()) {
             WriteAccessEffect::Acquired(acquired) => {
                 let (writer, subscription) = *acquired;
@@ -723,8 +721,8 @@ impl ObserverState {
     async fn ensure_session(&mut self) -> Result<(), CodexError> {
         if self.session.is_none() {
             self.session = Some(
-                CodexHistorySession::spawn_with_cancellation(
-                    &self.executable,
+                CodexHistorySession::connect_with_cancellation(
+                    self.source.clone(),
                     self.cancellation.clone(),
                 )
                 .await?,
@@ -786,13 +784,13 @@ fn emit_live_conversation(live: &LiveThreadProjection, thread_id: &str, sink: &H
 }
 
 pub(super) async fn run_observer(
-    executable: PathBuf,
+    source: CodexAppServerSource,
     mut receiver: Receiver<ObserverCommand>,
     sink: HistoryEventSink,
     cancellation: CodexHistoryCancellation,
     active_operation: Arc<ObserverOperationGate>,
 ) {
-    let mut state = ObserverState::new(executable, cancellation.clone());
+    let mut state = ObserverState::new(source, cancellation.clone());
     let mut watched_thread: Option<String> = None;
     let mut threads_due = TokioInstant::now();
     let mut conversation_due: Option<TokioInstant> = None;

@@ -166,6 +166,8 @@ class CodexHistoryController : public QObject
     void writeAvailabilityChanged();
 
   private:
+    friend class CodexHistoryControllerTest;
+
     struct TurnRuntimeState
     {
         TurnState status = TurnState::Detached;

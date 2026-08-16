@@ -2,20 +2,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    CodexClient, CodexError, InteractionResponse, Thread, ThreadListOptions, ThreadPage,
-    ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
+    CodexAppServerSource, CodexClient, CodexError, InteractionResponse, Thread, ThreadListOptions,
+    ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
 };
 
 /// A cloneable handle that interrupts in-flight Codex session operations.
 ///
 /// Cancellation is permanent for the associated session. Every in-flight
 /// operation observes this token so its owner can proceed to asynchronous
-/// shutdown of the app-server child.
+/// shutdown of the app-server transport.
 #[derive(Clone, Default)]
 pub struct CodexHistoryCancellation {
     token: CancellationToken,
@@ -71,12 +71,12 @@ pub enum ThreadPagePoll {
 
 /// A reusable observer for persisted Codex history.
 ///
-/// The session owns one read-only app-server child process and retains the last
+/// The session owns one read-only app-server connection and retains the last
 /// successful page and conversation snapshots. If the app-server stream is
 /// lost, an idempotent request is retried once through a newly initialized
-/// child process. Thread writers use separate child processes.
+/// connection. Thread writers use separate connections.
 pub struct CodexHistorySession {
-    executable: PathBuf,
+    source: CodexAppServerSource,
     cancellation: CodexHistoryCancellation,
     client: CodexClient,
     thread_tracker: ThreadTracker,
@@ -85,9 +85,9 @@ pub struct CodexHistorySession {
 
 /// An exclusive writer lease for one started or resumed Codex thread.
 ///
-/// The underlying app-server child remains alive until this value is dropped,
+/// The underlying app-server connection remains alive until this value is dropped,
 /// so a successful availability check and the following turns use the same
-/// writer. Dropping the value terminates that child and releases the writer.
+/// writer. Dropping the value closes that connection and releases the writer.
 pub struct CodexThreadWriter {
     thread_id: String,
     cancellation: CodexHistoryCancellation,
@@ -150,11 +150,25 @@ impl CodexHistorySession {
         executable: impl AsRef<OsStr>,
         cancellation: CodexHistoryCancellation,
     ) -> Result<Self, CodexError> {
-        let executable = PathBuf::from(executable.as_ref());
+        Self::connect_with_cancellation(CodexAppServerSource::executable(executable), cancellation)
+            .await
+    }
+
+    /// Opens a history session through a reusable app-server source.
+    pub async fn connect(source: CodexAppServerSource) -> Result<Self, CodexError> {
+        Self::connect_with_cancellation(source, CodexHistoryCancellation::new()).await
+    }
+
+    /// Opens a history session through a reusable app-server source and a
+    /// pre-created cancellation handle.
+    pub async fn connect_with_cancellation(
+        source: CodexAppServerSource,
+        cancellation: CodexHistoryCancellation,
+    ) -> Result<Self, CodexError> {
         let client =
-            CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone()).await?;
+            CodexClient::connect_with_cancellation(&source, cancellation.token.clone()).await?;
         Ok(Self {
-            executable,
+            source,
             cancellation,
             client,
             thread_tracker: ThreadTracker::default(),
@@ -216,21 +230,21 @@ impl CodexHistorySession {
 
     async fn reconnect(&mut self) -> Result<(), CodexError> {
         let replacement =
-            CodexClient::spawn_with_cancellation(&self.executable, self.cancellation.token.clone())
+            CodexClient::connect_with_cancellation(&self.source, self.cancellation.token.clone())
                 .await?;
         let previous = std::mem::replace(&mut self.client, replacement);
         previous.shutdown().await;
         Ok(())
     }
 
-    /// Terminates and reaps the session's app-server child.
+    /// Closes the session's app-server connection.
     pub async fn shutdown(self) {
         self.client.shutdown().await;
     }
 }
 
 impl CodexThreadWriter {
-    /// Starts a new thread in a dedicated app-server child controlled by the
+    /// Starts a new thread in a dedicated app-server connection controlled by the
     /// supplied cancellation handle.
     ///
     /// A failed start is not retried because the app-server may have created
@@ -241,9 +255,19 @@ impl CodexThreadWriter {
         working_directory: &Path,
         options: ThreadStartOptions,
     ) -> Result<(Self, ThreadSubscription), CodexError> {
-        let executable = PathBuf::from(executable.as_ref());
+        let source = CodexAppServerSource::executable(executable);
+        Self::start_on(&source, cancellation, working_directory, options).await
+    }
+
+    /// Starts a new thread through a reusable app-server source.
+    pub async fn start_on(
+        source: &CodexAppServerSource,
+        cancellation: CodexHistoryCancellation,
+        working_directory: &Path,
+        options: ThreadStartOptions,
+    ) -> Result<(Self, ThreadSubscription), CodexError> {
         let mut client =
-            CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone()).await?;
+            CodexClient::connect_with_cancellation(source, cancellation.token.clone()).await?;
         let subscription = match client.start_thread(working_directory, options).await {
             Ok(subscription) => subscription,
             Err(error) => {
@@ -267,15 +291,25 @@ impl CodexThreadWriter {
     }
 
     /// Acquires the writer for a persisted thread on a dedicated app-server
-    /// child controlled by the supplied cancellation handle.
+    /// connection controlled by the supplied cancellation handle.
     pub async fn acquire_with_cancellation(
         executable: impl AsRef<OsStr>,
         cancellation: CodexHistoryCancellation,
         thread_id: &str,
     ) -> Result<(Self, ThreadSubscription), CodexError> {
-        let executable = PathBuf::from(executable.as_ref());
+        let source = CodexAppServerSource::executable(executable);
+        Self::acquire_on(&source, cancellation, thread_id).await
+    }
+
+    /// Acquires a persisted thread writer through a reusable app-server
+    /// source.
+    pub async fn acquire_on(
+        source: &CodexAppServerSource,
+        cancellation: CodexHistoryCancellation,
+        thread_id: &str,
+    ) -> Result<(Self, ThreadSubscription), CodexError> {
         let mut client =
-            CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone()).await?;
+            CodexClient::connect_with_cancellation(source, cancellation.token.clone()).await?;
         let mut result = client.resume_thread(thread_id).await;
         if result
             .as_ref()
@@ -283,8 +317,8 @@ impl CodexThreadWriter {
             && !cancellation.is_cancelled()
         {
             client.shutdown().await;
-            client = CodexClient::spawn_with_cancellation(&executable, cancellation.token.clone())
-                .await?;
+            client =
+                CodexClient::connect_with_cancellation(source, cancellation.token.clone()).await?;
             result = client.resume_thread(thread_id).await;
         }
         let subscription = match result {
@@ -367,7 +401,7 @@ impl CodexThreadWriter {
         self.client.interrupt_turn(&self.thread_id, turn_id).await
     }
 
-    /// Terminates and reaps the writer's app-server child.
+    /// Closes the writer's app-server connection.
     pub async fn shutdown(self) {
         self.client.shutdown().await;
     }

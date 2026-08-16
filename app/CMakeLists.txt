@@ -11,6 +11,9 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/version.cmake")
 project(Craftward VERSION "${CRAFTWARD_VERSION}" LANGUAGES CXX)
 
+option(BUILD_TESTING "Build the Craftward test suite" OFF)
+include(CTest)
+
 if(APPLE)
     enable_language(OBJCXX)
     set(CMAKE_OBJCXX_STANDARD 20)
@@ -62,6 +65,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Qt6 6.11 REQUIRED COMPONENTS Protobuf Qml Quick QuickControls2 QuickDialogs2 Svg)
+if(BUILD_TESTING)
+    find_package(Qt6 6.11 REQUIRED COMPONENTS Test)
+endif()
 
 qt_standard_project_setup(REQUIRES 6.11)
 

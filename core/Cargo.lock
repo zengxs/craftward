@@ -1185,6 +1185,16 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "ward-codex-test-support",
+]
+
+[[package]]
+name = "ward-codex-test-support"
+version = "0.1.0+1"
+dependencies = [
+ "serde_json",
+ "tokio",
+ "ward-codex",
 ]
 
 [[package]]
@@ -1197,6 +1207,7 @@ dependencies = [
  "tokio",
  "ward-cli",
  "ward-codex",
+ "ward-codex-test-support",
  "ward-realm",
  "ward-realm-vz",
  "ward-runtime",

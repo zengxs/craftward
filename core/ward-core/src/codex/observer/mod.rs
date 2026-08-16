@@ -11,7 +11,8 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task::JoinHandle;
 use ward_codex::{
-    CodexHistoryCancellation, InteractionResponse, TurnMode, TurnOptions, TurnPermissionPreset,
+    CodexAppServerSource, CodexHistoryCancellation, InteractionResponse, TurnMode, TurnOptions,
+    TurnPermissionPreset,
 };
 
 use self::commands::{ObserverCommand, ThreadStartRequest, TurnRequest};
@@ -143,7 +144,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
         let active_operation = Arc::clone(&active_operation);
         async move {
             run_observer(
-                PathBuf::from(executable),
+                CodexAppServerSource::executable(PathBuf::from(executable)),
                 receiver,
                 sink,
                 cancellation,

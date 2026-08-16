@@ -3,18 +3,17 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::path::Path;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncWrite, BufReader, BufWriter};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use crate::app_server::{AppServerReader, AppServerShutdown, AppServerWriter};
 use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
     THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, THREAD_START_METHOD,
@@ -25,11 +24,12 @@ use crate::protocol::{
     resolved_server_request, turn_stream_event,
 };
 use crate::{
-    CodexError, InteractionId, InteractionResponse, PendingInteraction, ServerInfo, Thread,
-    ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription, TurnOptions,
+    CodexAppServerSource, CodexError, InteractionId, InteractionResponse, PendingInteraction,
+    ServerInfo, Thread, ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
+    TurnOptions,
 };
 
-type AppServerConnection = Connection<BufReader<ChildStdout>, BufWriter<ChildStdin>>;
+type AppServerConnection = Connection<BufReader<AppServerReader>, BufWriter<AppServerWriter>>;
 const APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Filters and pagination controls for a thread history request.
@@ -225,10 +225,10 @@ impl SubscriptionState {
     }
 }
 
-/// An asynchronous client for one Codex app-server child process.
+/// An asynchronous client for one Codex app-server connection.
 pub struct CodexClient {
-    child: Child,
     connection: Option<AppServerConnection>,
+    shutdown: Option<AppServerShutdown>,
     server_info: ServerInfo,
     cancellation: CancellationToken,
     subscription_state: SubscriptionState,
@@ -246,31 +246,21 @@ impl CodexClient {
         executable: impl AsRef<OsStr>,
         cancellation: CancellationToken,
     ) -> Result<Self, CodexError> {
+        let source = CodexAppServerSource::executable(executable);
+        Self::connect_with_cancellation(&source, cancellation).await
+    }
+
+    pub(crate) async fn connect_with_cancellation(
+        source: &CodexAppServerSource,
+        cancellation: CancellationToken,
+    ) -> Result<Self, CodexError> {
         if cancellation.is_cancelled() {
             return Err(CodexError::Interrupted);
         }
-        let executable = PathBuf::from(executable.as_ref());
-        let mut child = Command::new(&executable)
-            .args(["app-server", "--stdio"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|source| CodexError::Spawn {
-                executable: executable.clone(),
-                source,
-            })?;
+        let transport = source.connect()?;
+        let (output, input, mut shutdown) = transport.into_parts();
 
         let setup_result = async {
-            let input = child
-                .stdin
-                .take()
-                .ok_or(CodexError::MissingPipe("standard input"))?;
-            let output = child
-                .stdout
-                .take()
-                .ok_or(CodexError::MissingPipe("standard output"))?;
             let mut connection = Connection::new(BufReader::new(output), BufWriter::new(input));
             let response: InitializeResponse = connection
                 .request(INITIALIZE_METHOD, &InitializeParams::craftward())
@@ -288,15 +278,15 @@ impl CodexClient {
 
         match setup_result {
             Ok((connection, server_info)) => Ok(Self {
-                child,
                 connection: Some(connection),
+                shutdown: Some(shutdown),
                 server_info,
                 cancellation,
                 subscription_state: SubscriptionState::default(),
                 subscribed_thread_model: None,
             }),
             Err(error) => {
-                terminate_child(&mut child).await;
+                shutdown.shutdown().await;
                 Err(error)
             }
         }
@@ -365,7 +355,7 @@ impl CodexClient {
         };
         if matches!(result, Err(CodexError::TimedOut(_))) {
             self.connection.take();
-            terminate_child(&mut self.child).await;
+            shutdown_app_server(&mut self.shutdown).await;
         }
         let (subscription, model) = result?;
         self.subscription_state.reset();
@@ -463,10 +453,10 @@ impl CodexClient {
         Ok(())
     }
 
-    /// Terminates and reaps the app-server child process.
+    /// Closes the connection and waits for its backing transport to stop.
     pub async fn shutdown(mut self) {
         self.connection.take();
-        terminate_child(&mut self.child).await;
+        shutdown_app_server(&mut self.shutdown).await;
     }
 
     async fn request<P, T>(&mut self, method: &'static str, params: &P) -> Result<T, CodexError>
@@ -488,9 +478,15 @@ impl CodexClient {
         };
         if matches!(result, Err(CodexError::TimedOut(_))) {
             self.connection.take();
-            terminate_child(&mut self.child).await;
+            shutdown_app_server(&mut self.shutdown).await;
         }
         result
+    }
+}
+
+async fn shutdown_app_server(shutdown: &mut Option<AppServerShutdown>) {
+    if let Some(mut shutdown) = shutdown.take() {
+        shutdown.shutdown().await;
     }
 }
 
@@ -550,19 +546,16 @@ where
     })
 }
 
-async fn terminate_child(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return;
-    }
-    let _ = child.kill().await;
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::process::Stdio;
     use std::time::Duration;
 
+    use tokio::process::Command;
+
     use super::*;
+    use crate::app_server::terminate_child;
 
     const CHILD_HELPER_ENV: &str = "WARD_CODEX_CHILD_CLEANUP_HELPER";
 
