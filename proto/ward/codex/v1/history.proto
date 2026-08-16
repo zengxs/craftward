@@ -48,6 +48,10 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_THREAD_WRITE_STATE_CHANGED = 11;
   HISTORY_EVENT_KIND_THREAD_RUNTIME_STATE_CHANGED = 12;
   HISTORY_EVENT_KIND_PENDING_INTERACTIONS_UPDATED = 13;
+  // Carries the new thread identifier and its initial Conversation.
+  HISTORY_EVENT_KIND_THREAD_STARTED = 14;
+  // Carries an error_message without a thread identifier.
+  HISTORY_EVENT_KIND_THREAD_START_ERROR = 15;
 }
 
 // The selected thread's writer availability for this Craftward observer.

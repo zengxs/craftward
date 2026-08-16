@@ -4,22 +4,22 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::sync::mpsc::Receiver;
 use tokio::time::{Instant as TokioInstant, MissedTickBehavior};
 use ward_codex::{
     CodexError, CodexHistoryCancellation, CodexHistorySession, CodexThreadWriter, Thread,
-    ThreadListOptions, ThreadPagePoll, ThreadPoll, ThreadStreamEvent, ThreadSubscription,
-    TurnStatus,
+    ThreadListOptions, ThreadPagePoll, ThreadPoll, ThreadStartOptions, ThreadStreamEvent,
+    ThreadSubscription, TurnStatus,
 };
 
 use super::super::live::{LiveRuntimeState, LiveThreadProjection, event_is_incremental};
 use super::super::wire;
+use super::ObserverOperationGate;
 use super::commands::{
-    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, TurnRequest,
-    WriteAccessRequest, drain_commands, merge_command,
+    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, ThreadStartRequest,
+    TurnRequest, WriteAccessRequest, drain_commands, merge_command,
 };
 use super::events::HistoryEventSink;
 
@@ -153,6 +153,46 @@ impl ObserverState {
         self.pending_conversation_emit = false;
         if let Some(session) = self.session.as_mut() {
             session.reset_thread_baseline();
+        }
+    }
+
+    async fn start_thread(
+        &mut self,
+        request: ThreadStartRequest,
+        sink: &HistoryEventSink,
+    ) -> Option<String> {
+        let result = CodexThreadWriter::start_with_cancellation(
+            &self.executable,
+            self.cancellation.clone(),
+            &request.working_directory,
+            ThreadStartOptions::default(),
+        )
+        .await;
+        match classify_thread_start_result(result, self.cancellation.is_cancelled()) {
+            ThreadStartEffect::Started(started) => {
+                let (writer, subscription) = *started;
+                let thread_id = writer.thread_id().to_owned();
+                self.select_thread().await;
+                self.live.attach(subscription);
+                self.writer = Some(writer);
+                self.refresh();
+
+                let thread = self
+                    .live
+                    .conversation()
+                    .cloned()
+                    .expect("a started writer always includes its thread snapshot");
+                sink.emit_thread_started(&thread_id, thread);
+                sink.emit_pending_interactions(&thread_id, std::iter::empty());
+                sink.emit_thread_runtime_state(&thread_id, self.live.runtime());
+                sink.emit_thread_write_state(&thread_id, wire::ThreadWriteStatus::Writable, None);
+                Some(thread_id)
+            }
+            ThreadStartEffect::Failed(message) => {
+                sink.emit_thread_start_error(&message);
+                None
+            }
+            ThreadStartEffect::Cancelled => None,
         }
     }
 
@@ -675,6 +715,23 @@ enum WriteAccessEffect {
     Cancelled,
 }
 
+enum ThreadStartEffect {
+    Started(Box<(CodexThreadWriter, ThreadSubscription)>),
+    Failed(String),
+    Cancelled,
+}
+
+fn classify_thread_start_result(
+    result: Result<(CodexThreadWriter, ThreadSubscription), CodexError>,
+    cancelled: bool,
+) -> ThreadStartEffect {
+    match result {
+        Ok(started) => ThreadStartEffect::Started(Box::new(started)),
+        Err(_) if cancelled => ThreadStartEffect::Cancelled,
+        Err(error) => ThreadStartEffect::Failed(error.to_string()),
+    }
+}
+
 fn classify_write_access_result(
     result: Result<(CodexThreadWriter, ThreadSubscription), CodexError>,
     cancelled: bool,
@@ -698,7 +755,7 @@ pub(super) async fn run_observer(
     mut receiver: Receiver<ObserverCommand>,
     sink: HistoryEventSink,
     cancellation: CodexHistoryCancellation,
-    turn_active: Arc<AtomicBool>,
+    active_operation: Arc<ObserverOperationGate>,
 ) {
     let mut state = ObserverState::new(executable, cancellation.clone());
     let mut watched_thread: Option<String> = None;
@@ -815,7 +872,7 @@ pub(super) async fn run_observer(
             Some(drained) => match drained {
                 DrainedCommands::Stop => break,
                 DrainedCommands::Update(mut update) => {
-                    if update.is_turn_only()
+                    if update.is_exclusive_operation_only()
                         && let Ok(command) = receiver.try_recv()
                     {
                         if !merge_command(&mut update, command) {
@@ -832,6 +889,7 @@ pub(super) async fn run_observer(
                         watched_thread: requested_thread,
                         refresh,
                         write_access,
+                        thread_start,
                         turn,
                         controls,
                     } = update;
@@ -897,6 +955,32 @@ pub(super) async fn run_observer(
                             }
                         }
                     }
+                    if let Some(request) = thread_start {
+                        let started = drive_operation(
+                            state.start_thread(request, &sink),
+                            &mut receiver,
+                            &cancellation,
+                        )
+                        .await;
+                        active_operation.release();
+                        let OperationDrive::Completed {
+                            output: started_thread_id,
+                            deferred,
+                        } = started
+                        else {
+                            break 'observer;
+                        };
+                        if let Some(deferred) = deferred {
+                            following.merge(deferred);
+                        }
+                        if let Some(thread_id) = started_thread_id {
+                            watched_thread = Some(thread_id);
+                            let now = TokioInstant::now();
+                            threads_due = now;
+                            conversation_due = Some(now + CONVERSATION_POLL_INTERVAL);
+                            live_emit_due = None;
+                        }
+                    }
                     if let Some(request) = turn {
                         if watched_thread.as_deref() != Some(request.thread_id.as_str()) {
                             let OperationDrive::Completed { deferred, .. } = drive_operation(
@@ -922,7 +1006,7 @@ pub(super) async fn run_observer(
                         else {
                             break 'observer;
                         };
-                        turn_active.store(false, Ordering::Release);
+                        active_operation.release();
                         if let Some(update) = deferred {
                             following.merge(update);
                         }
@@ -946,7 +1030,7 @@ pub(super) async fn run_observer(
             None => break,
         }
     }
-    turn_active.store(false, Ordering::Release);
+    active_operation.release();
     state.shutdown().await;
 }
 

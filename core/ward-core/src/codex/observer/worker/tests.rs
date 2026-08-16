@@ -15,8 +15,128 @@ use ward_codex::{
 use super::super::test_support::{CapturedEvent, event_sink, thread};
 use super::*;
 use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
-use crate::codex::observer::commands::{CommandUpdate, ObserverCommand};
+use crate::codex::observer::commands::{CommandUpdate, ObserverCommand, ThreadStartRequest};
 use crate::codex::wire;
+
+#[cfg(unix)]
+#[path = "../../../../../test-support/fake_codex_app_server.rs"]
+mod fake_codex_app_server;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn starts_a_persisted_thread_and_adopts_its_writer() {
+    use fake_codex_app_server::{FakeCodexAppServer, ThreadStartScenario};
+
+    let fake_app_server = FakeCodexAppServer::create(ThreadStartScenario {
+        request_ephemeral: false,
+        response_ephemeral: false,
+    });
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(
+        fake_app_server.executable().to_owned(),
+        CodexHistoryCancellation::new(),
+    );
+
+    let started_thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await;
+
+    assert_eq!(started_thread_id.as_deref(), Some("thread-new"));
+    assert_eq!(
+        state.writer.as_ref().map(CodexThreadWriter::thread_id),
+        Some("thread-new")
+    );
+    assert_eq!(state.live.runtime(), LiveRuntimeState::Idle);
+
+    {
+        let captured = captured.lock().unwrap();
+        assert_eq!(captured.events.len(), 4);
+        assert_eq!(
+            captured.events[0].kind,
+            wire::HistoryEventKind::ThreadStarted as i32
+        );
+        assert_eq!(captured.events[0].thread_id.as_deref(), Some("thread-new"));
+        let Some(wire::history_event::Body::Conversation(conversation)) =
+            captured.events[0].body.as_ref()
+        else {
+            panic!("the start event must contain the initial conversation");
+        };
+        assert!(conversation.timeline.is_empty());
+        assert_eq!(
+            captured.events[1].kind,
+            wire::HistoryEventKind::PendingInteractionsUpdated as i32
+        );
+        assert_eq!(
+            captured.events[2].kind,
+            wire::HistoryEventKind::ThreadRuntimeStateChanged as i32
+        );
+        assert_eq!(
+            captured.events[3].kind,
+            wire::HistoryEventKind::ThreadWriteStateChanged as i32
+        );
+    }
+
+    state.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn preserves_the_current_writer_when_a_new_thread_fails_to_start() {
+    use fake_codex_app_server::{FakeCodexAppServer, ThreadStartScenario};
+
+    let fake_app_server = FakeCodexAppServer::create(ThreadStartScenario {
+        request_ephemeral: false,
+        response_ephemeral: false,
+    });
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(
+        fake_app_server.executable().to_owned(),
+        CodexHistoryCancellation::new(),
+    );
+    let _ = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await;
+    captured.lock().unwrap().events.clear();
+    state.executable = PathBuf::from("/craftward-tests/missing-codex");
+
+    let started_thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace/two"),
+            },
+            &sink,
+        )
+        .await;
+
+    assert_eq!(started_thread_id, None);
+    assert_eq!(
+        state.writer.as_ref().map(CodexThreadWriter::thread_id),
+        Some("thread-new")
+    );
+    assert_eq!(state.live.runtime(), LiveRuntimeState::Idle);
+    {
+        let captured = captured.lock().unwrap();
+        assert_eq!(captured.events.len(), 1);
+        assert_eq!(
+            captured.events[0].kind,
+            wire::HistoryEventKind::ThreadStartError as i32
+        );
+    }
+
+    state.shutdown().await;
+}
 
 #[test]
 fn publishes_pending_interactions_as_a_replaceable_snapshot() {
@@ -264,6 +384,57 @@ fn classifies_an_active_writer_conflict_as_busy_write_access() {
     );
 
     assert!(matches!(effect, WriteAccessEffect::Busy));
+}
+
+#[test]
+fn classifies_thread_start_failures_and_cancellation() {
+    let start_error = || CodexError::Server {
+        method: "thread/start",
+        code: -1,
+        message: "start failed".to_owned(),
+    };
+
+    assert!(matches!(
+        classify_thread_start_result(Err(start_error()), false),
+        ThreadStartEffect::Failed(message) if message.ends_with("start failed")
+    ));
+    assert!(matches!(
+        classify_thread_start_result(Err(start_error()), true),
+        ThreadStartEffect::Cancelled
+    ));
+}
+
+#[tokio::test]
+async fn emits_a_dedicated_thread_start_error() {
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(
+        PathBuf::from("/craftward-tests/missing-codex"),
+        CodexHistoryCancellation::new(),
+    );
+
+    let started_thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await;
+
+    assert_eq!(started_thread_id, None);
+    assert!(state.writer.is_none());
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.events.len(), 1);
+    assert_eq!(
+        captured.events[0].kind,
+        wire::HistoryEventKind::ThreadStartError as i32
+    );
+    assert!(matches!(
+        captured.events[0].body.as_ref(),
+        Some(wire::history_event::Body::ErrorMessage(message))
+            if message.contains("missing-codex")
+    ));
 }
 
 #[tokio::test]

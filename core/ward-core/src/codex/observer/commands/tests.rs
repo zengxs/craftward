@@ -17,6 +17,12 @@ fn turn_request(thread_id: &str, prompt: &str) -> TurnRequest {
     }
 }
 
+fn thread_start_request(working_directory: &str) -> ThreadStartRequest {
+    ThreadStartRequest {
+        working_directory: working_directory.into(),
+    }
+}
+
 #[test]
 fn coalesces_commands_and_prioritizes_stop() {
     let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
@@ -38,6 +44,7 @@ fn coalesces_commands_and_prioritizes_stop() {
             watched_thread: Some("thread-2".to_owned()),
             refresh: true,
             write_access: Some(WriteAccessRequest::Acquire("thread-2".to_owned())),
+            thread_start: None,
             turn: Some(turn_request("thread-2", "Continue")),
             controls: vec![],
         })
@@ -48,6 +55,49 @@ fn coalesces_commands_and_prioritizes_stop() {
         drain_commands(ObserverCommand::Refresh, &mut receiver),
         DrainedCommands::Stop
     );
+}
+
+#[test]
+fn reserves_only_the_first_thread_start() {
+    let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    sender
+        .try_send(ObserverCommand::StartThread(thread_start_request(
+            "/workspace/two",
+        )))
+        .unwrap();
+
+    assert_eq!(
+        drain_commands(
+            ObserverCommand::StartThread(thread_start_request("/workspace/one")),
+            &mut receiver,
+        ),
+        DrainedCommands::Update(CommandUpdate {
+            thread_start: Some(thread_start_request("/workspace/one")),
+            ..CommandUpdate::default()
+        })
+    );
+}
+
+#[test]
+fn recognizes_an_update_with_exactly_one_exclusive_operation() {
+    let start = CommandUpdate {
+        thread_start: Some(thread_start_request("/workspace")),
+        ..CommandUpdate::default()
+    };
+    let turn = CommandUpdate {
+        turn: Some(turn_request("thread-1", "Continue")),
+        ..CommandUpdate::default()
+    };
+    let both = CommandUpdate {
+        thread_start: Some(thread_start_request("/workspace")),
+        turn: Some(turn_request("thread-1", "Continue")),
+        ..CommandUpdate::default()
+    };
+
+    assert!(start.is_exclusive_operation_only());
+    assert!(turn.is_exclusive_operation_only());
+    assert!(!both.is_exclusive_operation_only());
+    assert!(!CommandUpdate::default().is_exclusive_operation_only());
 }
 
 #[test]
@@ -103,6 +153,7 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
         watched_thread: Some("thread-1".to_owned()),
         refresh: false,
         write_access: Some(WriteAccessRequest::Acquire("thread-1".to_owned())),
+        thread_start: Some(thread_start_request("/workspace/one")),
         turn: Some(turn_request("thread-1", "First")),
         controls: vec![],
     };
@@ -111,6 +162,7 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
         watched_thread: Some("thread-2".to_owned()),
         refresh: true,
         write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
+        thread_start: Some(thread_start_request("/workspace/two")),
         turn: Some(turn_request("thread-2", "Second")),
         controls: vec![],
     });
@@ -121,6 +173,7 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
             watched_thread: Some("thread-2".to_owned()),
             refresh: true,
             write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
+            thread_start: Some(thread_start_request("/workspace/one")),
             turn: Some(turn_request("thread-1", "First")),
             controls: vec![],
         }

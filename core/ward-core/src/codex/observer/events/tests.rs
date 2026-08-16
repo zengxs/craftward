@@ -56,6 +56,35 @@ fn serializes_conversations_for_the_callback_duration() {
 }
 
 #[test]
+fn serializes_thread_start_outcomes() {
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+
+    sink.emit_thread_started("thread-1", thread());
+    sink.emit_thread_start_error("start failed");
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.events.len(), 2);
+    let started = &captured.events[0];
+    assert_eq!(started.kind, wire::HistoryEventKind::ThreadStarted as i32);
+    assert_eq!(started.thread_id.as_deref(), Some("thread-1"));
+    let Some(wire::history_event::Body::Conversation(conversation)) = started.body.as_ref() else {
+        panic!("the started event must contain its initial conversation");
+    };
+    assert_eq!(conversation.title, "Example");
+
+    let failed = &captured.events[1];
+    assert_eq!(failed.kind, wire::HistoryEventKind::ThreadStartError as i32);
+    assert_eq!(failed.thread_id, None);
+    assert_eq!(
+        failed.body,
+        Some(wire::history_event::Body::ErrorMessage(
+            "start failed".to_owned()
+        ))
+    );
+}
+
+#[test]
 fn serializes_thread_write_state_for_the_selected_thread() {
     let captured = Mutex::new(CapturedEvent::default());
     event_sink(&captured).emit_thread_write_state(

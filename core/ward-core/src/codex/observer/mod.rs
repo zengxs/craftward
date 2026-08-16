@@ -4,7 +4,7 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use prost::Message as _;
 use tokio::runtime::Handle;
@@ -14,7 +14,7 @@ use ward_codex::{
     CodexHistoryCancellation, InteractionResponse, TurnMode, TurnOptions, TurnPermissionPreset,
 };
 
-use self::commands::{ObserverCommand, TurnRequest};
+use self::commands::{ObserverCommand, ThreadStartRequest, TurnRequest};
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
 use super::{WardBuffer, clear_error, required_string, wire};
@@ -31,6 +31,46 @@ mod tests;
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum ObserverOperation {
+    Idle,
+    ThreadStart,
+    Turn,
+}
+
+struct ObserverOperationGate(AtomicU8);
+
+impl ObserverOperationGate {
+    const fn new() -> Self {
+        Self(AtomicU8::new(ObserverOperation::Idle as u8))
+    }
+
+    fn reserve(&self, requested: ObserverOperation) -> Result<(), ObserverOperation> {
+        debug_assert!(!matches!(requested, ObserverOperation::Idle));
+        self.0
+            .compare_exchange(
+                ObserverOperation::Idle as u8,
+                requested as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map(drop)
+            .map_err(|active| match active {
+                active if active == ObserverOperation::ThreadStart as u8 => {
+                    ObserverOperation::ThreadStart
+                }
+                active if active == ObserverOperation::Turn as u8 => ObserverOperation::Turn,
+                _ => unreachable!("the observer operation gate contains an invalid state"),
+            })
+    }
+
+    fn release(&self) {
+        self.0
+            .store(ObserverOperation::Idle as u8, Ordering::Release);
+    }
+}
+
 type WardCodexHistoryEventCallback =
     unsafe extern "C" fn(context: *mut c_void, event: *const WardBuffer);
 
@@ -39,7 +79,7 @@ type WardCodexHistoryEventCallback =
 pub struct WardCodexHistoryObserver {
     commands: Sender<ObserverCommand>,
     cancellation: CodexHistoryCancellation,
-    turn_active: Arc<AtomicBool>,
+    active_operation: Arc<ObserverOperationGate>,
     runtime: Handle,
     worker: Option<JoinHandle<()>>,
 }
@@ -95,19 +135,19 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
 
     let (commands, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     let cancellation = CodexHistoryCancellation::new();
-    let turn_active = Arc::new(AtomicBool::new(false));
+    let active_operation = Arc::new(ObserverOperationGate::new());
     let sink = HistoryEventSink::new(callback, callback_context);
     let runtime = runtime.handle();
     let worker = runtime.spawn({
         let cancellation = cancellation.clone();
-        let turn_active = Arc::clone(&turn_active);
+        let active_operation = Arc::clone(&active_operation);
         async move {
             run_observer(
                 PathBuf::from(executable),
                 receiver,
                 sink,
                 cancellation,
-                turn_active,
+                active_operation,
             )
             .await;
         }
@@ -116,7 +156,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
     Box::into_raw(Box::new(WardCodexHistoryObserver {
         commands,
         cancellation,
-        turn_active,
+        active_operation,
         runtime,
         worker: Some(worker),
     }))
@@ -152,6 +192,55 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_watch(
     };
 
     send_command(observer, ObserverCommand::Watch(thread_id), output_error)
+}
+
+/// Starts and observes one persisted Codex thread.
+///
+/// The asynchronous result is emitted as either a thread-started event or a
+/// thread-start-error event. A successful start also grants writing access and
+/// makes the new thread the observer's selected thread.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `working_directory` must point to
+/// a NUL-terminated string. `output_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_start_thread(
+    observer: *mut WardCodexHistoryObserver,
+    working_directory: *const c_char,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointer.
+    let Some(working_directory) = (unsafe {
+        required_string(
+            working_directory,
+            "the Codex working directory",
+            output_error,
+        )
+    }) else {
+        return false;
+    };
+    if working_directory.trim().is_empty() {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex working directory is empty") };
+        return false;
+    }
+    send_exclusive_command(
+        observer,
+        ObserverOperation::ThreadStart,
+        ObserverCommand::StartThread(ThreadStartRequest {
+            working_directory: PathBuf::from(working_directory),
+        }),
+        output_error,
+    )
 }
 
 /// Requests an immediate history refresh while preserving the observer.
@@ -305,34 +394,57 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
         }
     };
 
-    if observer
-        .turn_active
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        // SAFETY: The caller supplied the optional error output pointer.
-        unsafe {
-            write_error(
-                output_error,
-                "a Codex turn is already queued or running for this observer",
-            )
-        };
-        return false;
-    }
-
-    let sent = send_command(
+    send_exclusive_command(
         observer,
+        ObserverOperation::Turn,
         ObserverCommand::StartTurn(TurnRequest {
             thread_id,
             prompt,
             options,
         }),
         output_error,
-    );
+    )
+}
+
+fn send_exclusive_command(
+    observer: &WardCodexHistoryObserver,
+    operation: ObserverOperation,
+    command: ObserverCommand,
+    output_error: *mut *mut WardError,
+) -> bool {
+    if !reserve_operation(observer, operation, output_error) {
+        return false;
+    }
+
+    let sent = send_command(observer, command, output_error);
     if !sent {
-        observer.turn_active.store(false, Ordering::Release);
+        observer.active_operation.release();
     }
     sent
+}
+
+fn reserve_operation(
+    observer: &WardCodexHistoryObserver,
+    requested: ObserverOperation,
+    output_error: *mut *mut WardError,
+) -> bool {
+    match observer.active_operation.reserve(requested) {
+        Ok(()) => true,
+        Err(active) => {
+            let message = match active {
+                ObserverOperation::ThreadStart => {
+                    "a Codex thread start is already queued or running for this observer"
+                }
+                ObserverOperation::Turn => {
+                    "a Codex turn is already queued or running for this observer"
+                }
+                ObserverOperation::Idle => unreachable!("an idle observer operation was reserved"),
+            };
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, message) };
+            false
+        }
+    }
 }
 
 fn decode_turn_options(

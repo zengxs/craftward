@@ -49,6 +49,22 @@ impl HistoryEventSink {
         });
     }
 
+    pub(super) fn emit_thread_started(&self, thread_id: &str, thread: Thread) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadStarted as i32,
+            thread_id: Some(thread_id.to_owned()),
+            body: Some(wire::history_event::Body::Conversation(thread.into())),
+        });
+    }
+
+    pub(super) fn emit_thread_start_error(&self, message: &str) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadStartError as i32,
+            thread_id: None,
+            body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
+        });
+    }
+
     pub(super) fn emit_threads_recovered(&self) {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadsRecovered as i32,
