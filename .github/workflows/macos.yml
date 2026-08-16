@@ -9,38 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Rust tests
-    runs-on: macos-26
-    timeout-minutes: 15
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          submodules: 'true'
-          lfs: 'true'
-
-      - name: Install build dependencies
-        run: brew install protobuf
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Check synchronized product version
-        run: cargo run --manifest-path xtask/Cargo.toml --locked -- version check
-
-      - name: Test core
-        working-directory: core
-        run: cargo test --workspace --all-targets --locked
-
-      - name: Test xtask
-        run: |
-          cargo test --manifest-path xtask/Cargo.toml --all-targets --locked
-          cargo run --manifest-path xtask/Cargo.toml --locked -- licenses check
-
-  build:
-    name: Build universal DMG
+  verify:
+    name: Verify and package
     runs-on: macos-26
     timeout-minutes: 60
 
@@ -90,8 +60,8 @@ jobs:
             -m qtgrpc qtimageformats qttasktree
           echo "QT6_ROOT=$HOME/Library/Qt/6.11.1/macos" >> "$GITHUB_ENV"
 
-      - name: Test QML
-        run: task app:test:qml
+      - name: Test
+        run: task test BUILD_TYPE=Release SIGN_IDENTITY=-
 
       - name: Build and package
         run: task app:deploy BUILD_TYPE=Release SIGN_IDENTITY=-
