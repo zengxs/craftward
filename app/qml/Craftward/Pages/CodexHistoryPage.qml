@@ -5,6 +5,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import Craftward.Codex
 import Craftward.Components
@@ -13,6 +14,13 @@ Page {
     id: root
 
     required property CodexHistoryController controller
+
+    FolderDialog {
+        id: workingDirectoryDialog
+
+        title: qsTr("Choose a working directory for the new conversation")
+        onAccepted: root.controller.startThread(selectedFolder)
+    }
 
     background: Rectangle {
         color: root.palette.window
@@ -60,13 +68,19 @@ Page {
                     BusyIndicator {
                         Layout.preferredWidth: 20
                         Layout.preferredHeight: 20
-                        running: root.controller.loadingThreads
+                        running: root.controller.loadingThreads || root.controller.startingThread
                         visible: running
                     }
 
                     Button {
+                        text: qsTr("New…")
+                        enabled: !root.controller.startingThread && !root.controller.turnInFlight && !root.controller.loadingConversation
+                        onClicked: workingDirectoryDialog.open()
+                    }
+
+                    Button {
                         text: qsTr("Refresh")
-                        enabled: !root.controller.loadingThreads && !root.controller.turnInFlight
+                        enabled: !root.controller.loadingThreads && !root.controller.startingThread && !root.controller.turnInFlight
                         onClicked: root.controller.refresh()
                     }
                 }
@@ -100,7 +114,7 @@ Page {
                         width: ListView.view.width
                         checkable: true
                         checked: root.controller.selectedThreadId === threadId
-                        enabled: !root.controller.turnInFlight
+                        enabled: !root.controller.startingThread && !root.controller.turnInFlight
                         hoverEnabled: true
                         leftPadding: 12
                         rightPadding: 12
@@ -140,7 +154,7 @@ Page {
                     Label {
                         anchors.centerIn: parent
                         width: Math.min(parent.width - 32, 240)
-                        text: root.controller.loadingThreads ? qsTr("Loading conversations…") : qsTr("No persisted conversations were found.")
+                        text: root.controller.startingThread ? qsTr("Starting a new conversation…") : (root.controller.loadingThreads ? qsTr("Loading conversations…") : qsTr("No persisted conversations were found."))
                         color: root.palette.placeholderText
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
@@ -227,7 +241,7 @@ Page {
                     BusyIndicator {
                         Layout.preferredWidth: 22
                         Layout.preferredHeight: 22
-                        running: root.controller.loadingConversation || root.controller.turnInFlight
+                        running: root.controller.loadingConversation || root.controller.startingThread || root.controller.turnInFlight
                         visible: running
                     }
                 }
@@ -241,6 +255,7 @@ Page {
                     clip: true
                     spacing: 8
                     model: root.controller.interactions
+                    enabled: !root.controller.startingThread
                     visible: count > 0
                     ScrollBar.vertical: OverlayScrollBar {}
 
@@ -304,6 +319,7 @@ Page {
                 CodexComposer {
                     Layout.fillWidth: true
                     controller: root.controller
+                    enabled: !root.controller.startingThread
                     onTurnSubmitted: timelineView.followLatest()
                 }
             }

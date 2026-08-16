@@ -89,6 +89,23 @@ impl CodexError {
             } if message.contains("already has an active writer")
         )
     }
+
+    /// Returns whether a thread read failed because the requested thread is
+    /// not loaded by that app-server process yet.
+    #[must_use]
+    pub fn is_thread_not_loaded(&self, thread_id: &str) -> bool {
+        !thread_id.is_empty()
+            && matches!(
+                self,
+                Self::Server {
+                    method: "thread/read",
+                    code: -32600,
+                    message,
+                } if message
+                    .strip_prefix("thread not loaded:")
+                    .is_some_and(|reported_id| reported_id.trim() == thread_id)
+            )
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +153,42 @@ mod tests {
                 message: "the thread is unavailable".to_owned(),
             }
             .is_thread_writer_conflict()
+        );
+    }
+
+    #[test]
+    fn recognizes_only_the_requested_thread_not_loaded_error() {
+        assert!(
+            CodexError::Server {
+                method: "thread/read",
+                code: -32600,
+                message: "thread not loaded: thread-new".to_owned(),
+            }
+            .is_thread_not_loaded("thread-new")
+        );
+        assert!(
+            !CodexError::Server {
+                method: "thread/read",
+                code: -32600,
+                message: "thread not loaded: thread-other".to_owned(),
+            }
+            .is_thread_not_loaded("thread-new")
+        );
+        assert!(
+            !CodexError::Server {
+                method: "thread/resume",
+                code: -32600,
+                message: "thread not loaded: thread-new".to_owned(),
+            }
+            .is_thread_not_loaded("thread-new")
+        );
+        assert!(
+            !CodexError::Server {
+                method: "thread/read",
+                code: -32600,
+                message: "invalid thread identifier".to_owned(),
+            }
+            .is_thread_not_loaded("thread-new")
         );
     }
 }

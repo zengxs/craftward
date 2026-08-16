@@ -186,10 +186,8 @@ impl LiveThreadProjection {
             self.conversation = Some(snapshot);
             return changed;
         };
-        if snapshot
-            .turns
-            .iter()
-            .find(|turn| turn.id == retained.turn.id)
+        if find_snapshot_turn_index(&snapshot.turns, &retained)
+            .and_then(|index| snapshot.turns.get(index))
             .is_some_and(|turn| turn_covers(turn, &retained.turn))
         {
             let changed = self.conversation.as_ref() != Some(&snapshot);
@@ -427,8 +425,7 @@ fn thread_item_id(item: &ThreadItem) -> &str {
 }
 
 fn turn_covers(snapshot: &Turn, retained: &Turn) -> bool {
-    snapshot.id == retained.id
-        && snapshot.status == retained.status
+    snapshot.status == retained.status
         && retained.items.iter().all(|retained_item| {
             snapshot.items.iter().any(|snapshot_item| {
                 thread_item_id(snapshot_item) == thread_item_id(retained_item)
@@ -437,12 +434,67 @@ fn turn_covers(snapshot: &Turn, retained: &Turn) -> bool {
         })
 }
 
-fn merge_retained_live_turn(mut snapshot: Thread, retained: &mut RetainedLiveTurn) -> Thread {
-    if let Some(index) = snapshot
-        .turns
+fn turns_share_stable_identity(left: &Turn, right: &Turn) -> bool {
+    // Live and persisted snapshots can report different turn identifiers for
+    // the first turn while retaining the same stable item identifiers.
+    left.id == right.id
+        || left.items.iter().any(|left_item| {
+            let left_id = thread_item_id(left_item);
+            !left_id.is_empty()
+                && right
+                    .items
+                    .iter()
+                    .any(|right_item| thread_item_id(right_item) == left_id)
+        })
+}
+
+fn turns_have_equivalent_message_sequence(left: &Turn, right: &Turn) -> bool {
+    let left_messages = left
+        .items
         .iter()
-        .position(|turn| turn.id == retained.turn.id)
-    {
+        .filter(|item| {
+            matches!(
+                item,
+                ThreadItem::UserMessage { .. } | ThreadItem::AgentMessage { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    let right_messages = right
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item,
+                ThreadItem::UserMessage { .. } | ThreadItem::AgentMessage { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    !left_messages.is_empty()
+        && left_messages.len() == right_messages.len()
+        && left_messages
+            .into_iter()
+            .zip(right_messages)
+            .all(|(left, right)| messages_represent_same_logical_item(left, right))
+}
+
+fn find_snapshot_turn_index(turns: &[Turn], retained: &RetainedLiveTurn) -> Option<usize> {
+    turns
+        .iter()
+        .position(|turn| turns_share_stable_identity(turn, &retained.turn))
+        .or_else(|| {
+            // Only the first live turn is known to receive a provisional turn
+            // identifier. Keep the content fallback at that same turn slot so
+            // equal messages in later turns cannot be matched across turns.
+            (retained.index == 0)
+                .then(|| turns.first())
+                .flatten()
+                .filter(|turn| turns_have_equivalent_message_sequence(turn, &retained.turn))
+                .map(|_| 0)
+        })
+}
+
+fn merge_retained_live_turn(mut snapshot: Thread, retained: &mut RetainedLiveTurn) -> Thread {
+    if let Some(index) = find_snapshot_turn_index(&snapshot.turns, retained) {
         let merged = merge_snapshot_turn(snapshot.turns[index].clone(), &retained.turn);
         snapshot.turns[index] = merged.clone();
         retained.index = index;
@@ -462,25 +514,79 @@ fn merge_snapshot_turn(mut snapshot: Turn, retained: &Turn) -> Turn {
         snapshot.status = retained.status.clone();
     }
 
-    for (retained_index, retained_item) in retained.items.iter().enumerate() {
-        if let Some(snapshot_index) = snapshot
+    let mut matched_snapshot_items = vec![false; snapshot.items.len()];
+    let mut snapshot_cursor = 0;
+    for retained_item in &retained.items {
+        let retained_id = thread_item_id(retained_item);
+        let snapshot_index = snapshot
             .items
             .iter()
-            .position(|item| thread_item_id(item) == thread_item_id(retained_item))
-        {
+            .enumerate()
+            .position(|(index, item)| {
+                !matched_snapshot_items[index]
+                    && !retained_id.is_empty()
+                    && thread_item_id(item) == retained_id
+            })
+            .or_else(|| {
+                // History reads can renumber messages that were already seen
+                // on the live stream. Match them once and in turn order.
+                snapshot
+                    .items
+                    .iter()
+                    .enumerate()
+                    .skip(snapshot_cursor.min(snapshot.items.len()))
+                    .find(|(index, item)| {
+                        !matched_snapshot_items[*index]
+                            && messages_represent_same_logical_item(item, retained_item)
+                    })
+                    .map(|(index, _)| index)
+            });
+        if let Some(snapshot_index) = snapshot_index {
+            matched_snapshot_items[snapshot_index] = true;
+            snapshot_cursor = snapshot_cursor.max(snapshot_index + 1);
             snapshot.items[snapshot_index] = merge_snapshot_item(
                 snapshot.items[snapshot_index].clone(),
                 retained_item,
                 snapshot_is_terminal,
             );
         } else {
-            snapshot.items.insert(
-                retained_index.min(snapshot.items.len()),
-                retained_item.clone(),
-            );
+            let insertion_index = snapshot_cursor.min(snapshot.items.len());
+            snapshot
+                .items
+                .insert(insertion_index, retained_item.clone());
+            matched_snapshot_items.insert(insertion_index, true);
+            snapshot_cursor = insertion_index + 1;
         }
     }
     snapshot
+}
+
+fn messages_represent_same_logical_item(left: &ThreadItem, right: &ThreadItem) -> bool {
+    match (left, right) {
+        (
+            ThreadItem::UserMessage {
+                content: left_content,
+                ..
+            },
+            ThreadItem::UserMessage {
+                content: right_content,
+                ..
+            },
+        ) => left_content == right_content,
+        (
+            ThreadItem::AgentMessage {
+                text: left_text,
+                phase: left_phase,
+                ..
+            },
+            ThreadItem::AgentMessage {
+                text: right_text,
+                phase: right_phase,
+                ..
+            },
+        ) => left_text == right_text && left_phase == right_phase,
+        _ => false,
+    }
 }
 
 fn merge_snapshot_item(
@@ -491,6 +597,11 @@ fn merge_snapshot_item(
     match (snapshot, retained) {
         (ThreadItem::Activity(snapshot), ThreadItem::Activity(retained)) => {
             ThreadItem::Activity(merge_snapshot_activity(snapshot, retained))
+        }
+        (snapshot @ ThreadItem::UserMessage { .. }, ThreadItem::UserMessage { .. })
+            if snapshot_turn_is_terminal =>
+        {
+            snapshot
         }
         (
             snapshot @ ThreadItem::AgentMessage { .. },
@@ -973,6 +1084,275 @@ mod tests {
                     if id == "final-2" && text == "Done"
             )
         }));
+    }
+
+    #[test]
+    fn new_thread_snapshot_does_not_duplicate_live_first_turn() {
+        let mut initial = thread();
+        initial.turns.clear();
+        let mut projection = LiveThreadProjection::default();
+        projection.attach(ThreadSubscription {
+            thread: initial,
+            runtime_status: ThreadRuntimeStatus::Idle,
+        });
+        let items = vec![ThreadItem::UserMessage {
+            id: "user-1".to_owned(),
+            content: vec![UserInput::Text("Hello".to_owned())],
+        }];
+        projection.apply_event(
+            &ThreadStreamEvent::TurnCompleted {
+                thread_id: "thread-1".to_owned(),
+                turn: Turn {
+                    id: "live-turn".to_owned(),
+                    status: TurnStatus::Completed,
+                    items: items.clone(),
+                },
+            },
+            "thread-1",
+        );
+
+        let mut persisted = thread();
+        persisted.turns = vec![Turn {
+            id: "persisted-turn".to_owned(),
+            status: TurnStatus::Completed,
+            items,
+        }];
+        assert!(projection.accept_snapshot(persisted));
+
+        let turns = &projection.conversation().unwrap().turns;
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "persisted-turn");
+    }
+
+    #[test]
+    fn new_thread_snapshot_does_not_duplicate_equivalent_items_when_all_ids_differ() {
+        let mut initial = thread();
+        initial.turns.clear();
+        let mut projection = LiveThreadProjection::default();
+        projection.attach(ThreadSubscription {
+            thread: initial,
+            runtime_status: ThreadRuntimeStatus::Idle,
+        });
+        projection.apply_event(
+            &ThreadStreamEvent::TurnStarted {
+                thread_id: "thread-1".to_owned(),
+                turn: Turn {
+                    id: "turn-1".to_owned(),
+                    status: TurnStatus::InProgress,
+                    items: vec![],
+                },
+            },
+            "thread-1",
+        );
+        projection.apply_event(
+            &ThreadStreamEvent::ItemCompleted {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-1".to_owned(),
+                item: ThreadItem::UserMessage {
+                    id: "live-user".to_owned(),
+                    content: vec![UserInput::Text("Hello".to_owned())],
+                },
+            },
+            "thread-1",
+        );
+        projection.apply_event(
+            &ThreadStreamEvent::ItemCompleted {
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-1".to_owned(),
+                item: ThreadItem::AgentMessage {
+                    id: "live-agent".to_owned(),
+                    text: "Hi".to_owned(),
+                    phase: Some(AgentMessagePhase::FinalAnswer),
+                },
+            },
+            "thread-1",
+        );
+        projection.apply_event(
+            &ThreadStreamEvent::TurnCompleted {
+                thread_id: "thread-1".to_owned(),
+                turn: Turn {
+                    id: "turn-1".to_owned(),
+                    status: TurnStatus::Completed,
+                    items: vec![],
+                },
+            },
+            "thread-1",
+        );
+
+        let mut persisted = thread();
+        persisted.turns = vec![Turn {
+            id: "persisted-turn".to_owned(),
+            status: TurnStatus::Completed,
+            items: vec![
+                ThreadItem::UserMessage {
+                    id: "item-1".to_owned(),
+                    content: vec![UserInput::Text("Hello".to_owned())],
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-2".to_owned(),
+                    text: "Hi".to_owned(),
+                    phase: Some(AgentMessagePhase::FinalAnswer),
+                },
+            ],
+        }];
+        assert!(projection.accept_snapshot(persisted));
+
+        let turns = &projection.conversation().unwrap().turns;
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "persisted-turn");
+        assert_eq!(turns[0].items.len(), 2);
+        assert_eq!(thread_item_id(&turns[0].items[0]), "item-1");
+        assert_eq!(thread_item_id(&turns[0].items[1]), "item-2");
+    }
+
+    #[test]
+    fn renamed_message_matching_preserves_repeated_messages() {
+        let snapshot = Turn {
+            id: "turn-1".to_owned(),
+            status: TurnStatus::Completed,
+            items: vec![ThreadItem::AgentMessage {
+                id: "item-1".to_owned(),
+                text: "Same".to_owned(),
+                phase: Some(AgentMessagePhase::Commentary),
+            }],
+        };
+        let retained = Turn {
+            id: "turn-1".to_owned(),
+            status: TurnStatus::Completed,
+            items: vec![
+                ThreadItem::AgentMessage {
+                    id: "live-1".to_owned(),
+                    text: "Same".to_owned(),
+                    phase: Some(AgentMessagePhase::Commentary),
+                },
+                ThreadItem::AgentMessage {
+                    id: "live-2".to_owned(),
+                    text: "Same".to_owned(),
+                    phase: Some(AgentMessagePhase::Commentary),
+                },
+            ],
+        };
+
+        let merged = merge_snapshot_turn(snapshot, &retained);
+
+        assert_eq!(merged.items.len(), 2);
+        assert_eq!(thread_item_id(&merged.items[0]), "item-1");
+        assert_eq!(thread_item_id(&merged.items[1]), "live-2");
+    }
+
+    #[test]
+    fn renamed_message_matching_preserves_snapshot_only_prefix_order() {
+        let snapshot = Turn {
+            id: "turn-1".to_owned(),
+            status: TurnStatus::Completed,
+            items: vec![
+                ThreadItem::Other {
+                    id: "persisted-only".to_owned(),
+                    kind: "futureItem".to_owned(),
+                },
+                ThreadItem::UserMessage {
+                    id: "item-1".to_owned(),
+                    content: vec![UserInput::Text("Hello".to_owned())],
+                },
+            ],
+        };
+        let retained = Turn {
+            id: "turn-1".to_owned(),
+            status: TurnStatus::Completed,
+            items: vec![
+                ThreadItem::UserMessage {
+                    id: "live-user".to_owned(),
+                    content: vec![UserInput::Text("Hello".to_owned())],
+                },
+                ThreadItem::AgentMessage {
+                    id: "live-agent".to_owned(),
+                    text: "Hi".to_owned(),
+                    phase: Some(AgentMessagePhase::FinalAnswer),
+                },
+            ],
+        };
+
+        let merged = merge_snapshot_turn(snapshot, &retained);
+        let item_ids = merged.items.iter().map(thread_item_id).collect::<Vec<_>>();
+
+        assert_eq!(item_ids, ["persisted-only", "item-1", "live-agent"]);
+    }
+
+    #[test]
+    fn new_thread_snapshot_keeps_distinct_turns_without_shared_items() {
+        let mut initial = thread();
+        initial.turns.clear();
+        let mut projection = LiveThreadProjection::default();
+        projection.attach(ThreadSubscription {
+            thread: initial,
+            runtime_status: ThreadRuntimeStatus::Idle,
+        });
+        projection.apply_event(
+            &ThreadStreamEvent::TurnCompleted {
+                thread_id: "thread-1".to_owned(),
+                turn: Turn {
+                    id: "live-turn".to_owned(),
+                    status: TurnStatus::Completed,
+                    items: vec![ThreadItem::UserMessage {
+                        id: "live-user".to_owned(),
+                        content: vec![UserInput::Text("First".to_owned())],
+                    }],
+                },
+            },
+            "thread-1",
+        );
+
+        let mut persisted = thread();
+        persisted.turns = vec![Turn {
+            id: "persisted-turn".to_owned(),
+            status: TurnStatus::Completed,
+            items: vec![ThreadItem::UserMessage {
+                id: "persisted-user".to_owned(),
+                content: vec![UserInput::Text("Second".to_owned())],
+            }],
+        }];
+        assert!(projection.accept_snapshot(persisted));
+
+        assert_eq!(projection.conversation().unwrap().turns.len(), 2);
+    }
+
+    #[test]
+    fn semantic_turn_matching_does_not_cross_later_turns() {
+        let mut projection = attached_projection();
+        projection.apply_event(
+            &ThreadStreamEvent::TurnCompleted {
+                thread_id: "thread-1".to_owned(),
+                turn: Turn {
+                    id: "live-turn".to_owned(),
+                    status: TurnStatus::Completed,
+                    items: vec![ThreadItem::UserMessage {
+                        id: "live-user".to_owned(),
+                        content: vec![UserInput::Text("Same".to_owned())],
+                    }],
+                },
+            },
+            "thread-1",
+        );
+
+        let mut persisted = thread();
+        persisted.turns.push(Turn {
+            id: "persisted-turn".to_owned(),
+            status: TurnStatus::Completed,
+            items: vec![ThreadItem::UserMessage {
+                id: "persisted-user".to_owned(),
+                content: vec![UserInput::Text("Same".to_owned())],
+            }],
+        });
+        assert!(projection.accept_snapshot(persisted));
+
+        let turn_ids = projection
+            .conversation()
+            .unwrap()
+            .turns
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(turn_ids, ["turn-1", "live-turn", "persisted-turn"]);
     }
 
     #[test]

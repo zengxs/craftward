@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,6 +45,41 @@ enum OperationDrive<T> {
 enum PollSample<T> {
     Updated(T),
     Unchanged,
+}
+
+#[derive(Default)]
+struct InitialConversationReads {
+    pending: HashSet<String>,
+}
+
+impl InitialConversationReads {
+    fn mark_started(&mut self, thread_id: &str) {
+        self.pending.insert(thread_id.to_owned());
+    }
+
+    fn classify(
+        &mut self,
+        thread_id: &str,
+        result: Result<ThreadPoll, CodexError>,
+    ) -> Result<PollSample<Thread>, CodexError> {
+        match result {
+            Ok(poll) => {
+                self.pending.remove(thread_id);
+                Ok(match poll {
+                    ThreadPoll::Baseline(thread) | ThreadPoll::Changed(thread) => {
+                        PollSample::Updated(thread)
+                    }
+                    _ => PollSample::Unchanged,
+                })
+            }
+            Err(error)
+                if self.pending.contains(thread_id) && error.is_thread_not_loaded(thread_id) =>
+            {
+                Ok(PollSample::Unchanged)
+            }
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -105,6 +141,7 @@ struct ObserverState {
     writer: Option<CodexThreadWriter>,
     thread_page_health: PollHealth,
     conversation_health: PollHealth,
+    initial_conversation_reads: InitialConversationReads,
     live: LiveThreadProjection,
     terminal_error: Option<String>,
     pending_conversation_emit: bool,
@@ -137,6 +174,7 @@ impl ObserverState {
             writer: None,
             thread_page_health: PollHealth::default(),
             conversation_health: PollHealth::default(),
+            initial_conversation_reads: InitialConversationReads::default(),
             live: LiveThreadProjection::default(),
             terminal_error: None,
             pending_conversation_emit: false,
@@ -175,6 +213,7 @@ impl ObserverState {
                 self.select_thread().await;
                 self.live.attach(subscription);
                 self.writer = Some(writer);
+                self.initial_conversation_reads.mark_started(&thread_id);
                 self.refresh();
 
                 let thread = self
@@ -295,12 +334,8 @@ impl ObserverState {
     }
 
     async fn poll_conversation(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
-        let result = self.poll_thread(thread_id).await.map(|poll| match poll {
-            ThreadPoll::Baseline(thread) | ThreadPoll::Changed(thread) => {
-                PollSample::Updated(thread)
-            }
-            _ => PollSample::Unchanged,
-        });
+        let result = self.poll_thread(thread_id).await;
+        let result = self.initial_conversation_reads.classify(thread_id, result);
         let effect = self
             .conversation_health
             .observe(result, self.cancellation.is_cancelled());

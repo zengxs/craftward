@@ -11,6 +11,10 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
     using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKind;
 
     if (!decodingError.isEmpty()) {
+        if (startingThread_) {
+            setThreadStartErrorMessage(decodingError);
+            setStartingThread(false);
+        }
         finishThreadLoading(decodingError);
         if (!selectedThreadId_.isEmpty())
             finishConversationLoading(decodingError);
@@ -35,6 +39,37 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_ERROR: {
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             finishThreadLoading(message.isEmpty() ? tr("The Codex conversation list could not be observed.") : message);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED: {
+            if (threadId.isEmpty() || !event.hasConversation()) {
+                setThreadStartErrorMessage(
+                  tr("Ward Core returned a started Codex conversation without its initial state."));
+                setStartingThread(false);
+                break;
+            }
+
+            const auto& conversation = event.conversation();
+            selectedThreadId_ = threadId;
+            selectedThreadTitle_ = conversation.title();
+            auto timeline = conversation.timeline();
+            timelineModel_.reconcileTimeline(std::move(timeline));
+            interactionModel_.clear();
+            setActivityHistoryPartial(conversation.activityHistoryIsPartial());
+            setTurnState(TurnState::Detached);
+            setWriteAvailability(WriteAvailability::NotRequested);
+            setConversationErrorMessage({});
+            setInterruptRequested(false);
+            emit selectionChanged();
+            setThreadStartErrorMessage({});
+            setStartingThread(false);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_START_ERROR: {
+            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
+            setThreadStartErrorMessage(message.isEmpty() ? tr("The Codex conversation could not be started.")
+                                                         : message);
+            setStartingThread(false);
             break;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED: {

@@ -22,7 +22,7 @@ Pane {
 
     function releaseWriteAccessWhenHidden() {
         const window = root.ApplicationWindow.window;
-        if (window && !window.visible && !root.controller.turnInFlight && root.controller.writeAvailability === CodexHistoryController.Writable)
+        if (window && !window.visible && !root.controller.startingThread && !root.controller.turnInFlight && root.controller.writeAvailability === CodexHistoryController.Writable)
             root.controller.releaseWriteAccess();
     }
 
@@ -223,6 +223,10 @@ Pane {
         target: root.controller
 
         function onTurnStateChanged() {
+            root.releaseWriteAccessWhenHidden();
+        }
+
+        function onStartingThreadChanged() {
             root.releaseWriteAccessWhenHidden();
         }
 

@@ -9,6 +9,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QUrl>
 #include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
 
@@ -37,6 +38,7 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool loadingThreads READ loadingThreads NOTIFY loadingChanged)
     Q_PROPERTY(bool loadingConversation READ loadingConversation NOTIFY loadingChanged)
+    Q_PROPERTY(bool startingThread READ startingThread NOTIFY startingThreadChanged)
     Q_PROPERTY(bool activityHistoryPartial READ activityHistoryPartial NOTIFY activityHistoryPartialChanged)
     Q_PROPERTY(TurnState turnState READ turnState NOTIFY turnStateChanged)
     Q_PROPERTY(bool turnInFlight READ turnInFlight NOTIFY turnStateChanged)
@@ -124,6 +126,7 @@ class CodexHistoryController : public QObject
     [[nodiscard]] QString errorMessage() const;
     [[nodiscard]] bool loadingThreads() const;
     [[nodiscard]] bool loadingConversation() const;
+    [[nodiscard]] bool startingThread() const;
     [[nodiscard]] bool activityHistoryPartial() const;
     [[nodiscard]] TurnState turnState() const;
     [[nodiscard]] bool turnInFlight() const;
@@ -141,6 +144,7 @@ class CodexHistoryController : public QObject
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void selectThread(const QString& threadId, const QString& title);
+    Q_INVOKABLE bool startThread(const QUrl& workingDirectory);
     Q_INVOKABLE void acquireWriteAccess();
     Q_INVOKABLE void releaseWriteAccess();
     Q_INVOKABLE bool startTurn(const QString& prompt);
@@ -153,6 +157,7 @@ class CodexHistoryController : public QObject
     void selectionChanged();
     void errorMessageChanged();
     void loadingChanged();
+    void startingThreadChanged();
     void activityHistoryPartialChanged();
     void turnStateChanged();
     void interruptRequestedChanged();
@@ -173,7 +178,9 @@ class CodexHistoryController : public QObject
 
     void setErrorMessage(const QString& message);
     void setThreadErrorMessage(const QString& message);
+    void setThreadStartErrorMessage(const QString& message);
     void setConversationErrorMessage(const QString& message);
+    void setStartingThread(bool starting);
     void setActivityHistoryPartial(bool partial);
     void setTurnState(TurnState state,
                       const QString& activeTurnId = {},
@@ -197,10 +204,12 @@ class CodexHistoryController : public QObject
     QString selectedThreadTitle_;
     QString errorMessage_;
     QString threadErrorMessage_;
+    QString threadStartErrorMessage_;
     QString conversationErrorMessage_;
     std::uint64_t observerGeneration_ = 0;
     bool loadingThreads_ = true;
     bool loadingConversation_ = false;
+    bool startingThread_ = false;
     bool activityHistoryPartial_ = false;
     TurnRuntimeState turnRuntimeState_;
     bool interruptRequested_ = false;

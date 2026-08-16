@@ -349,6 +349,69 @@ fn classifies_poll_health_transitions() {
     );
 }
 
+#[test]
+fn initial_read_grace_ends_after_the_first_successful_snapshot() {
+    let thread_not_loaded = |thread_id: &str| CodexError::Server {
+        method: "thread/read",
+        code: -32600,
+        message: format!("thread not loaded: {thread_id}"),
+    };
+    let mut initial_reads = InitialConversationReads::default();
+    initial_reads.mark_started("thread-new");
+
+    assert!(matches!(
+        initial_reads.classify("thread-new", Err(thread_not_loaded("thread-new"))),
+        Ok(PollSample::Unchanged)
+    ));
+    assert!(matches!(
+        initial_reads.classify("thread-old", Err(thread_not_loaded("thread-old"))),
+        Err(CodexError::Server { .. })
+    ));
+    assert!(matches!(
+        initial_reads.classify("thread-new", Err(thread_not_loaded("thread-other"))),
+        Err(CodexError::Server { .. })
+    ));
+    assert!(matches!(
+        initial_reads.classify(
+            "thread-new",
+            Err(CodexError::Server {
+                method: "thread/read",
+                code: -32600,
+                message: "invalid thread identifier".to_owned(),
+            }),
+        ),
+        Err(CodexError::Server { .. })
+    ));
+    assert!(matches!(
+        initial_reads.classify("thread-new", Ok(ThreadPoll::Unchanged)),
+        Ok(PollSample::Unchanged)
+    ));
+    assert!(matches!(
+        initial_reads.classify("thread-new", Err(thread_not_loaded("thread-new"))),
+        Err(CodexError::Server { .. })
+    ));
+}
+
+#[tokio::test]
+async fn initial_read_grace_survives_switching_threads() {
+    let mut state = ObserverState::new(PathBuf::from("/codex"), CodexHistoryCancellation::new());
+    state.initial_conversation_reads.mark_started("thread-new");
+
+    state.select_thread().await;
+
+    assert!(matches!(
+        state.initial_conversation_reads.classify(
+            "thread-new",
+            Err(CodexError::Server {
+                method: "thread/read",
+                code: -32600,
+                message: "thread not loaded: thread-new".to_owned(),
+            }),
+        ),
+        Ok(PollSample::Unchanged)
+    ));
+}
+
 #[tokio::test]
 async fn suppresses_repeated_identical_errors_for_each_target() {
     let captured = Mutex::new(CapturedEvent::default());

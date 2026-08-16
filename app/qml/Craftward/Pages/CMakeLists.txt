@@ -19,4 +19,5 @@ target_link_libraries(CraftwardPages
         CraftwardCodexplugin
         Qt6::Quick
         Qt6::QuickControls2
+        Qt6::QuickDialogs2
 )
