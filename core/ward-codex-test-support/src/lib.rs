@@ -24,8 +24,22 @@ const LIVE_TURN_ID: &str = "live-turn-1";
 const LIVE_USER_ID: &str = "live-user-1";
 const LIVE_STEER_USER_ID: &str = "live-steer-user-1";
 const LIVE_AGENT_ID: &str = "live-agent-1";
+const LIVE_COMMAND_ID: &str = "live-command-1";
+const COMMAND_APPROVAL_REQUEST_ID: &str = "command-approval-1";
 
-/// Observable persistence behaviors supported by the fake app-server.
+/// Mutually exclusive turn behaviors supported by the fake app-server.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FakeTurnScenario {
+    /// Complete the turn without waiting for client input.
+    #[default]
+    Complete,
+    /// Keep the turn active until the client supplies guidance.
+    WaitForGuidance,
+    /// Request approval for a command before completing the turn.
+    RequestCommandApproval,
+}
+
+/// Observable behaviors supported by the fake app-server.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FakeCodexAppServerOptions {
     /// Whether the app-server confirms ephemeral thread starts as ephemeral.
@@ -36,8 +50,8 @@ pub struct FakeCodexAppServerOptions {
     /// Whether persisted history assigns different identifiers to the first
     /// live turn and its messages.
     pub renumber_persisted_first_turn: bool,
-    /// Whether the first turn remains active until it receives guidance.
-    pub wait_for_turn_steer: bool,
+    /// Behavior exercised by the first turn.
+    pub turn_scenario: FakeTurnScenario,
 }
 
 impl Default for FakeCodexAppServerOptions {
@@ -46,7 +60,7 @@ impl Default for FakeCodexAppServerOptions {
             confirm_ephemeral_thread_starts: true,
             initial_thread_read_failures: 0,
             renumber_persisted_first_turn: false,
-            wait_for_turn_steer: false,
+            turn_scenario: FakeTurnScenario::default(),
         }
     }
 }
@@ -142,7 +156,7 @@ async fn serve_connection(stream: DuplexStream, state: Arc<Mutex<FakeState>>) {
         let Ok(request) = serde_json::from_str::<Value>(&line) else {
             return;
         };
-        let messages = handle_request(request, &state);
+        let messages = handle_client_message(request, &state);
         for message in messages {
             if write_message(&mut writer, &message).await.is_err() {
                 return;
@@ -189,10 +203,12 @@ async fn write_message(
     writer.flush().await
 }
 
-fn handle_request(request: Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let method = request.get("method").and_then(Value::as_str).unwrap_or("");
-    let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+fn handle_client_message(message: Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
+    let id = message.get("id").cloned().unwrap_or(Value::Null);
+    let Some(method) = message.get("method").and_then(Value::as_str) else {
+        return handle_client_response(&message, state);
+    };
+    let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
     match method {
         "thread/list" => vec![thread_list_response(id, state)],
         "thread/read" => vec![thread_read_response(id, &params, state)],
@@ -206,6 +222,52 @@ fn handle_request(request: Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
             "error": { "code": -32601, "message": format!("unsupported fake method: {method}") }
         })],
     }
+}
+
+fn handle_client_response(response: &Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
+    if response.get("id").and_then(Value::as_str) != Some(COMMAND_APPROVAL_REQUEST_ID) {
+        return vec![];
+    }
+    let (answer, command_status, command_output) =
+        match response.pointer("/result/decision").and_then(Value::as_str) {
+            Some("accept") => ("Command approved.", "completed", Some("/workspace\n")),
+            Some("decline") => ("Command declined.", "declined", None),
+            _ => return vec![],
+        };
+
+    {
+        let mut state = state.lock().unwrap();
+        if state.options.turn_scenario != FakeTurnScenario::RequestCommandApproval {
+            return vec![];
+        }
+        let Some(turn) = state
+            .thread
+            .as_mut()
+            .and_then(|thread| thread.turn.as_mut())
+            .filter(|turn| !turn.completed)
+        else {
+            return vec![];
+        };
+        turn.answer = answer.to_owned();
+        turn.completed = true;
+    }
+
+    let command = command_item(command_status, command_output);
+    let mut messages = vec![];
+    if let Some(output) = command_output {
+        messages.push(json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {
+                "threadId": THREAD_ID,
+                "turnId": LIVE_TURN_ID,
+                "itemId": LIVE_COMMAND_ID,
+                "delta": output
+            }
+        }));
+    }
+    messages.push(item_notification("item/completed", LIVE_TURN_ID, command));
+    messages.extend(turn_completion_messages(answer));
+    messages
 }
 
 fn thread_list_response(id: Value, state: &Arc<Mutex<FakeState>>) -> Value {
@@ -305,18 +367,18 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let wait_for_turn_steer = {
+    let turn_scenario = {
         let mut state = state.lock().unwrap();
-        let wait_for_turn_steer = state.options.wait_for_turn_steer;
+        let turn_scenario = state.options.turn_scenario;
         if let Some(thread) = state.thread.as_mut() {
             thread.turn = Some(FakeTurn {
                 prompt: prompt.clone(),
                 guidance: vec![],
                 answer: "Done.".to_owned(),
-                completed: !wait_for_turn_steer,
+                completed: turn_scenario == FakeTurnScenario::Complete,
             });
         }
-        wait_for_turn_steer
+        turn_scenario
     };
 
     let user = json!({
@@ -332,10 +394,48 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
         item_notification("item/started", LIVE_TURN_ID, user.clone()),
         item_notification("item/completed", LIVE_TURN_ID, user),
     ];
-    if !wait_for_turn_steer {
-        messages.extend(turn_completion_messages("Done."));
+    match turn_scenario {
+        FakeTurnScenario::Complete => messages.extend(turn_completion_messages("Done.")),
+        FakeTurnScenario::WaitForGuidance => {}
+        FakeTurnScenario::RequestCommandApproval => {
+            messages.extend([
+                item_notification(
+                    "item/started",
+                    LIVE_TURN_ID,
+                    command_item("inProgress", None),
+                ),
+                json!({
+                    "id": COMMAND_APPROVAL_REQUEST_ID,
+                    "method": "item/commandExecution/requestApproval",
+                    "params": {
+                        "threadId": THREAD_ID,
+                        "turnId": LIVE_TURN_ID,
+                        "itemId": LIVE_COMMAND_ID,
+                        "command": "pwd",
+                        "cwd": "/workspace",
+                        "reason": "Verify the workspace",
+                        "startedAtMs": 42
+                    }
+                }),
+            ]);
+        }
     }
     messages
+}
+
+fn command_item(status: &str, output: Option<&str>) -> Value {
+    let mut command = json!({
+        "id": LIVE_COMMAND_ID,
+        "type": "commandExecution",
+        "command": "pwd",
+        "commandActions": [],
+        "cwd": "/workspace",
+        "status": status
+    });
+    if let Some(output) = output {
+        command["aggregatedOutput"] = json!(output);
+    }
+    command
 }
 
 fn turn_steer_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {

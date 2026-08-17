@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 use ward_codex::{
     Activity, ActivityKind, ActivityStatus, CodexError, CodexHistoryCancellation,
-    InteractionDecision, InteractionId, PendingInteraction, PendingInteractionKind,
-    ThreadActiveFlag, ThreadItem, ThreadStreamEvent, ThreadSubscription, Turn, TurnOptions,
-    TurnStatus,
+    InteractionDecision, InteractionId, InteractionResponse, InteractionResponseBody,
+    PendingInteraction, PendingInteractionKind, ThreadActiveFlag, ThreadItem, ThreadStreamEvent,
+    ThreadSubscription, Turn, TurnOptions, TurnStatus,
 };
-use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions};
+use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions, FakeTurnScenario};
 
 use super::super::test_support::{CapturedEvent, event_sink, thread};
 use super::*;
@@ -169,7 +169,7 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
 async fn steers_an_active_turn_and_reports_the_outcome() {
     let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
         renumber_persisted_first_turn: true,
-        wait_for_turn_steer: true,
+        turn_scenario: FakeTurnScenario::WaitForGuidance,
         ..FakeCodexAppServerOptions::default()
     });
     let captured = Mutex::new(CapturedEvent::default());
@@ -286,6 +286,120 @@ async fn steers_an_active_turn_and_reports_the_outcome() {
                 "persisted-steer-user-1",
                 "persisted-agent-1"
             ]
+        );
+    }
+
+    state.shutdown().await;
+}
+
+#[tokio::test]
+async fn publishes_and_clears_command_approval_before_the_turn_completes() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        turn_scenario: FakeTurnScenario::RequestCommandApproval,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let captured = Arc::new(Mutex::new(CapturedEvent::default()));
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    captured.lock().unwrap().events.clear();
+    let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let producer_capture = Arc::clone(&captured);
+    let producer = tokio::spawn(async move {
+        let interaction_id = loop {
+            let interaction_id = {
+                let captured = producer_capture.lock().unwrap();
+                captured.events.iter().find_map(|event| {
+                    let Some(wire::history_event::Body::PendingInteractions(page)) =
+                        event.body.as_ref()
+                    else {
+                        return None;
+                    };
+                    page.interactions
+                        .first()
+                        .map(|interaction| interaction.interaction_id)
+                })
+            };
+            if let Some(interaction_id) = interaction_id {
+                break interaction_id;
+            }
+            tokio::task::yield_now().await;
+        };
+        sender
+            .send(ObserverCommand::ResolveInteraction(InteractionResponse {
+                interaction_id: InteractionId::new(interaction_id).unwrap(),
+                body: InteractionResponseBody::Decision(InteractionDecision::Accept),
+            }))
+            .await
+            .unwrap();
+        std::future::pending::<()>().await;
+    });
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        state.run_turn(
+            TurnRequest {
+                thread_id: thread_id.clone(),
+                prompt: "Run pwd".to_owned(),
+                options: TurnOptions::default(),
+            },
+            &sink,
+            &mut receiver,
+            vec![],
+        ),
+    )
+    .await
+    .expect("the approved turn should not remain blocked");
+    producer.abort();
+
+    assert!(matches!(
+        result,
+        OperationDrive::Completed {
+            output: true,
+            deferred: None,
+        }
+    ));
+    {
+        let captured = captured.lock().unwrap();
+        let interaction_snapshots = captured
+            .events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| {
+                let Some(wire::history_event::Body::PendingInteractions(page)) =
+                    event.body.as_ref()
+                else {
+                    return None;
+                };
+                Some((index, page.interactions.len()))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(interaction_snapshots.len(), 2);
+        assert_eq!(interaction_snapshots[0].1, 1);
+        assert_eq!(interaction_snapshots[1].1, 0);
+        let completed_index = captured
+            .events
+            .iter()
+            .position(|event| event.kind == wire::HistoryEventKind::TurnCompleted as i32)
+            .expect("the approved turn should report completion");
+        assert!(interaction_snapshots[0].0 < interaction_snapshots[1].0);
+        assert!(interaction_snapshots[1].0 < completed_index);
+
+        let conversation = latest_conversation(&captured);
+        assert_eq!(conversation.timeline.len(), 3);
+        assert!(
+            conversation
+                .timeline
+                .iter()
+                .all(|item| item.turn_id == "live-turn-1")
         );
     }
 
