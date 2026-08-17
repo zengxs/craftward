@@ -300,6 +300,30 @@ pub(crate) struct TurnStartResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct TurnSteerParams<'a> {
+    pub(crate) thread_id: &'a str,
+    pub(crate) expected_turn_id: &'a str,
+    input: Vec<TextTurnInput<'a>>,
+}
+
+impl<'a> TurnSteerParams<'a> {
+    pub(crate) fn text(thread_id: &'a str, expected_turn_id: &'a str, text: &'a str) -> Self {
+        Self {
+            thread_id,
+            expected_turn_id,
+            input: vec![TextTurnInput { kind: "text", text }],
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TurnSteerResponse {
+    pub(crate) turn_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TurnInterruptParams<'a> {
     pub(crate) thread_id: &'a str,
     pub(crate) turn_id: &'a str,

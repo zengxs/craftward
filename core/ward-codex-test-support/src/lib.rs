@@ -22,6 +22,7 @@ const STREAM_CAPACITY: usize = 64 * 1024;
 const THREAD_ID: &str = "thread-new";
 const LIVE_TURN_ID: &str = "live-turn-1";
 const LIVE_USER_ID: &str = "live-user-1";
+const LIVE_STEER_USER_ID: &str = "live-steer-user-1";
 const LIVE_AGENT_ID: &str = "live-agent-1";
 
 /// Observable persistence behaviors supported by the fake app-server.
@@ -35,6 +36,8 @@ pub struct FakeCodexAppServerOptions {
     /// Whether persisted history assigns different identifiers to the first
     /// live turn and its messages.
     pub renumber_persisted_first_turn: bool,
+    /// Whether the first turn remains active until it receives guidance.
+    pub wait_for_turn_steer: bool,
 }
 
 impl Default for FakeCodexAppServerOptions {
@@ -43,6 +46,7 @@ impl Default for FakeCodexAppServerOptions {
             confirm_ephemeral_thread_starts: true,
             initial_thread_read_failures: 0,
             renumber_persisted_first_turn: false,
+            wait_for_turn_steer: false,
         }
     }
 }
@@ -122,7 +126,9 @@ struct FakeThread {
 
 struct FakeTurn {
     prompt: String,
+    guidance: Vec<String>,
     answer: String,
+    completed: bool,
 }
 
 async fn serve_connection(stream: DuplexStream, state: Arc<Mutex<FakeState>>) {
@@ -193,6 +199,7 @@ fn handle_request(request: Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
         "thread/start" => vec![thread_start_response(id, &params, state)],
         "thread/resume" => vec![thread_resume_response(id, &params, state)],
         "turn/start" => turn_start_messages(id, &params, state),
+        "turn/steer" => turn_steer_messages(id, &params, state),
         "turn/interrupt" => vec![json!({ "id": id, "result": {} })],
         _ => vec![json!({
             "id": id,
@@ -298,21 +305,90 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    {
+    let wait_for_turn_steer = {
         let mut state = state.lock().unwrap();
+        let wait_for_turn_steer = state.options.wait_for_turn_steer;
         if let Some(thread) = state.thread.as_mut() {
             thread.turn = Some(FakeTurn {
                 prompt: prompt.clone(),
+                guidance: vec![],
                 answer: "Done.".to_owned(),
+                completed: !wait_for_turn_steer,
             });
         }
-    }
+        wait_for_turn_steer
+    };
 
     let user = json!({
         "id": LIVE_USER_ID,
         "type": "userMessage",
         "content": [{ "type": "text", "text": prompt }]
     });
+    let mut messages = vec![
+        json!({
+            "id": id,
+            "result": { "turn": { "id": LIVE_TURN_ID, "status": "inProgress", "items": [] } }
+        }),
+        item_notification("item/started", LIVE_TURN_ID, user.clone()),
+        item_notification("item/completed", LIVE_TURN_ID, user),
+    ];
+    if !wait_for_turn_steer {
+        messages.extend(turn_completion_messages("Done."));
+    }
+    messages
+}
+
+fn turn_steer_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
+    let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
+    let expected_turn_id = params
+        .get("expectedTurnId")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let guidance = params
+        .get("input")
+        .and_then(Value::as_array)
+        .and_then(|input| input.first())
+        .and_then(|input| input.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    {
+        let mut state = state.lock().unwrap();
+        let Some(turn) = state
+            .thread
+            .as_mut()
+            .filter(|_| requested_thread_id == THREAD_ID)
+            .and_then(|thread| thread.turn.as_mut())
+            .filter(|turn| expected_turn_id == LIVE_TURN_ID && !turn.completed)
+        else {
+            return vec![json!({
+                "id": id,
+                "error": {
+                    "code": -32600,
+                    "message": format!("turn is not active: {expected_turn_id}")
+                }
+            })];
+        };
+        turn.guidance.push(guidance.clone());
+        turn.answer = "Adjusted.".to_owned();
+        turn.completed = true;
+    }
+
+    let user = json!({
+        "id": LIVE_STEER_USER_ID,
+        "type": "userMessage",
+        "content": [{ "type": "text", "text": guidance }]
+    });
+    let mut messages = vec![
+        json!({ "id": id, "result": { "turnId": LIVE_TURN_ID } }),
+        item_notification("item/started", LIVE_TURN_ID, user.clone()),
+        item_notification("item/completed", LIVE_TURN_ID, user),
+    ];
+    messages.extend(turn_completion_messages("Adjusted."));
+    messages
+}
+
+fn turn_completion_messages(answer: &str) -> Vec<Value> {
     let agent_started = json!({
         "id": LIVE_AGENT_ID,
         "type": "agentMessage",
@@ -322,16 +398,10 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
     let agent_completed = json!({
         "id": LIVE_AGENT_ID,
         "type": "agentMessage",
-        "text": "Done.",
+        "text": answer,
         "phase": "final_answer"
     });
     vec![
-        json!({
-            "id": id,
-            "result": { "turn": { "id": LIVE_TURN_ID, "status": "inProgress", "items": [] } }
-        }),
-        item_notification("item/started", LIVE_TURN_ID, user.clone()),
-        item_notification("item/completed", LIVE_TURN_ID, user),
         item_notification("item/started", LIVE_TURN_ID, agent_started),
         json!({
             "method": "item/agentMessage/delta",
@@ -339,7 +409,7 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
                 "threadId": THREAD_ID,
                 "turnId": LIVE_TURN_ID,
                 "itemId": LIVE_AGENT_ID,
-                "delta": "Done."
+                "delta": answer
             }
         }),
         item_notification("item/completed", LIVE_TURN_ID, agent_completed),
@@ -370,6 +440,11 @@ fn thread_json(thread: &FakeThread, options: FakeCodexAppServerOptions, persiste
         .as_ref()
         .map(|turn| vec![turn_json(turn, options, persisted)])
         .unwrap_or_default();
+    let status = if thread.turn.as_ref().is_some_and(|turn| !turn.completed) {
+        json!({ "type": "active", "activeFlags": [] })
+    } else {
+        json!({ "type": "idle" })
+    };
     json!({
         "id": THREAD_ID,
         "name": null,
@@ -378,7 +453,7 @@ fn thread_json(thread: &FakeThread, options: FakeCodexAppServerOptions, persiste
         "createdAt": 10,
         "updatedAt": if thread.turn.is_some() { 20 } else { 10 },
         "ephemeral": thread.ephemeral,
-        "status": { "type": "idle" },
+        "status": status,
         "turns": turns
     })
 }
@@ -400,18 +475,34 @@ fn turn_json(turn: &FakeTurn, options: FakeCodexAppServerOptions, persisted: boo
     } else {
         LIVE_AGENT_ID
     };
-    json!({
-        "id": turn_id,
-        "status": "completed",
-        "items": [{
-            "id": user_id,
+    let steer_user_id = if renumber {
+        "persisted-steer-user-1"
+    } else {
+        LIVE_STEER_USER_ID
+    };
+    let mut items = vec![json!({
+        "id": user_id,
+        "type": "userMessage",
+        "content": [{ "type": "text", "text": turn.prompt }]
+    })];
+    items.extend(turn.guidance.iter().map(|guidance| {
+        json!({
+            "id": steer_user_id,
             "type": "userMessage",
-            "content": [{ "type": "text", "text": turn.prompt }]
-        }, {
+            "content": [{ "type": "text", "text": guidance }]
+        })
+    }));
+    if turn.completed {
+        items.push(json!({
             "id": agent_id,
             "type": "agentMessage",
             "text": turn.answer,
             "phase": "final_answer"
-        }]
+        }));
+    }
+    json!({
+        "id": turn_id,
+        "status": if turn.completed { "completed" } else { "inProgress" },
+        "items": items
     })
 }

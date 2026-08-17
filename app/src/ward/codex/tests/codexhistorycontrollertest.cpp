@@ -3,6 +3,7 @@
 
 #include "ward/codex/codexhistorycontroller.h"
 
+#include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
 namespace {
@@ -42,6 +43,17 @@ conversationEvent(HistoryEventKind kind, QList<TimelineItem> timeline)
     event.setConversation(std::move(conversation));
     return event;
 }
+
+HistoryEvent
+turnOutcomeEvent(HistoryEventKind kind, const QString& errorMessage = {})
+{
+    HistoryEvent event;
+    event.setKind(kind);
+    event.setThreadId(QStringLiteral("thread-new"));
+    if (!errorMessage.isEmpty())
+        event.setErrorMessage(errorMessage);
+    return event;
+}
 }
 
 class CodexHistoryControllerTest : public QObject
@@ -50,6 +62,8 @@ class CodexHistoryControllerTest : public QObject
 
   private slots:
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
+    void confirmsAcceptedTurnGuidance();
+    void reportsRejectedTurnGuidanceWithoutConfirmation();
 };
 
 void
@@ -101,6 +115,37 @@ CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()
     QCOMPARE(timeline->data(timeline->index(1), CodexTimelineModel::EntryIdRole).toString(),
              QStringLiteral("message:persisted-turn-1:persisted-agent-1"));
     QCOMPARE(timeline->data(timeline->index(1), CodexTimelineModel::TextRole).toString(), QStringLiteral("Done."));
+}
+
+void
+CodexHistoryControllerTest::confirmsAcceptedTurnGuidance()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    QSignalSpy steeredSpy(&controller, &CodexHistoryController::turnSteered);
+    controller.setSteeringTurn(true);
+
+    controller.applyHistoryEvent(turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_TURN_STEERED), {});
+
+    QVERIFY(!controller.steeringTurn());
+    QCOMPARE(steeredSpy.count(), 1);
+}
+
+void
+CodexHistoryControllerTest::reportsRejectedTurnGuidanceWithoutConfirmation()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    QSignalSpy steeredSpy(&controller, &CodexHistoryController::turnSteered);
+    controller.setSteeringTurn(true);
+
+    controller.applyHistoryEvent(
+      turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_TURN_STEER_ERROR, QStringLiteral("The turn finished.")),
+      {});
+
+    QVERIFY(!controller.steeringTurn());
+    QCOMPARE(steeredSpy.count(), 0);
+    QCOMPARE(controller.errorMessage(), QStringLiteral("The turn finished."));
 }
 
 QTEST_APPLESS_MAIN(CodexHistoryControllerTest)

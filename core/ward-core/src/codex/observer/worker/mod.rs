@@ -19,7 +19,7 @@ use super::super::wire;
 use super::ObserverOperationGate;
 use super::commands::{
     CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, ThreadStartRequest,
-    TurnRequest, WriteAccessRequest, drain_commands, merge_command,
+    TurnRequest, TurnSteerRequest, WriteAccessRequest, drain_commands, merge_command,
 };
 use super::events::HistoryEventSink;
 
@@ -410,12 +410,12 @@ impl ObserverState {
 
         let incremental = event_is_incremental(&event);
         let effect = self.live.apply_event(&event, thread_id);
-        if effect.runtime_changed {
-            sink.emit_thread_runtime_state(thread_id, self.live.runtime());
-        }
         if effect.started_turn_id.is_some() {
             self.terminal_error = None;
             sink.emit_turn_started(thread_id);
+        }
+        if effect.runtime_changed {
+            sink.emit_thread_runtime_state(thread_id, self.live.runtime());
         }
         if effect.conversation_changed {
             if incremental {
@@ -496,6 +496,42 @@ impl ObserverState {
         sink: &HistoryEventSink,
     ) {
         match control {
+            ThreadControlRequest::Steer(request) => {
+                let TurnSteerRequest {
+                    thread_id,
+                    expected_turn_id,
+                    prompt,
+                } = request;
+                let active_turn_matches = matches!(
+                    self.live.runtime(),
+                    LiveRuntimeState::Active {
+                        turn_id: Some(turn_id),
+                        ..
+                    } if turn_id == expected_turn_id
+                );
+                if !active_turn_matches {
+                    sink.emit_turn_steer_error(
+                        &thread_id,
+                        "The active Codex turn changed before the guidance could be sent.",
+                    );
+                    return;
+                }
+                let Some(writer) = self
+                    .writer
+                    .as_mut()
+                    .filter(|writer| writer.thread_id() == thread_id)
+                else {
+                    sink.emit_turn_steer_error(
+                        &thread_id,
+                        "Writing access is no longer available for this conversation.",
+                    );
+                    return;
+                };
+                match writer.steer_text_turn(&expected_turn_id, &prompt).await {
+                    Ok(()) => sink.emit_turn_steered(&thread_id),
+                    Err(error) => sink.emit_turn_steer_error(&thread_id, &error.to_string()),
+                }
+            }
             ThreadControlRequest::Interrupt(thread_id) => {
                 let turn_id = match self.live.runtime() {
                     LiveRuntimeState::Active {

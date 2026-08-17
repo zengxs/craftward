@@ -113,6 +113,18 @@ impl HistoryEventSink {
         self.emit_turn_event(wire::HistoryEventKind::TurnNotice, thread_id, Some(message));
     }
 
+    pub(super) fn emit_turn_steered(&self, thread_id: &str) {
+        self.emit_turn_event(wire::HistoryEventKind::TurnSteered, thread_id, None);
+    }
+
+    pub(super) fn emit_turn_steer_error(&self, thread_id: &str, message: &str) {
+        self.emit_turn_event(
+            wire::HistoryEventKind::TurnSteerError,
+            thread_id,
+            Some(message),
+        );
+    }
+
     pub(super) fn emit_thread_write_state(
         &self,
         thread_id: &str,

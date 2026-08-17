@@ -17,6 +17,14 @@ fn turn_request(thread_id: &str, prompt: &str) -> TurnRequest {
     }
 }
 
+fn steer_request(thread_id: &str, turn_id: &str, prompt: &str) -> TurnSteerRequest {
+    TurnSteerRequest {
+        thread_id: thread_id.to_owned(),
+        expected_turn_id: turn_id.to_owned(),
+        prompt: prompt.to_owned(),
+    }
+}
+
 fn thread_start_request(working_directory: &str) -> ThreadStartRequest {
     ThreadStartRequest {
         working_directory: working_directory.into(),
@@ -128,6 +136,13 @@ fn preserves_immediate_turn_controls_in_arrival_order() {
             body: InteractionResponseBody::Decision(InteractionDecision::Decline),
         }))
         .unwrap();
+    sender
+        .try_send(ObserverCommand::SteerTurn(steer_request(
+            "thread-1",
+            "turn-2",
+            "Use the existing seam",
+        )))
+        .unwrap();
 
     assert_eq!(
         drain_commands(
@@ -141,6 +156,11 @@ fn preserves_immediate_turn_controls_in_arrival_order() {
                     interaction_id: InteractionId::new(8).unwrap(),
                     body: InteractionResponseBody::Decision(InteractionDecision::Decline),
                 }),
+                ThreadControlRequest::Steer(steer_request(
+                    "thread-1",
+                    "turn-2",
+                    "Use the existing seam",
+                )),
             ],
             ..CommandUpdate::default()
         })

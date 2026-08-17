@@ -198,6 +198,12 @@ CodexHistoryController::waitingOnUserInput() const
 }
 
 bool
+CodexHistoryController::steeringTurn() const
+{
+    return steeringTurn_;
+}
+
+bool
 CodexHistoryController::interruptRequested() const
 {
     return interruptRequested_;
@@ -440,6 +446,35 @@ CodexHistoryController::startTurn(const QString& prompt)
 }
 
 bool
+CodexHistoryController::steerTurn(const QString& prompt)
+{
+    if (prompt.trimmed().isEmpty() || selectedThreadId_.isEmpty() || !turnRunning() || activeTurnId().isEmpty() ||
+        steeringTurn_ || interruptRequested_ || writeAvailability_ != WriteAvailability::Writable)
+        return false;
+    if (historyObserver_ == nullptr) {
+        setConversationErrorMessage(tr("The Codex history observer is unavailable."));
+        return false;
+    }
+
+    const QByteArray threadId = selectedThreadId_.toUtf8();
+    const QByteArray turnId = activeTurnId().toUtf8();
+    const QByteArray encodedPrompt = prompt.toUtf8();
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_steer_turn(
+          historyObserver_, threadId.constData(), turnId.constData(), encodedPrompt.constData(), &rawError)) {
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("The Codex turn could not be guided.");
+        setConversationErrorMessage(message);
+        return false;
+    }
+
+    setConversationErrorMessage({});
+    setSteeringTurn(true);
+    return true;
+}
+
+bool
 CodexHistoryController::interruptTurn()
 {
     if (startingThread_ || !turnInFlight() || selectedThreadId_.isEmpty() || interruptRequested_ ||
@@ -613,6 +648,8 @@ CodexHistoryController::setTurnState(TurnState state,
                                      bool waitingOnApproval,
                                      bool waitingOnUserInput)
 {
+    if (state != TurnState::Running)
+        setSteeringTurn(false);
     if (state != TurnState::Starting && state != TurnState::Running)
         setInterruptRequested(false);
     if (turnRuntimeState_.status == state && turnRuntimeState_.activeTurnId == activeTurnId &&
@@ -626,6 +663,15 @@ CodexHistoryController::setTurnState(TurnState state,
         .waitingOnUserInput = waitingOnUserInput,
     };
     emit turnStateChanged();
+}
+
+void
+CodexHistoryController::setSteeringTurn(bool steering)
+{
+    if (steeringTurn_ == steering)
+        return;
+    steeringTurn_ = steering;
+    emit steeringTurnChanged();
 }
 
 void

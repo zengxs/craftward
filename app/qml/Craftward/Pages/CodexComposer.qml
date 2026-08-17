@@ -16,7 +16,8 @@ Pane {
     signal turnSubmitted
 
     function submitPrompt() {
-        if (root.controller.startTurn(promptEditor.text))
+        const accepted = root.controller.turnRunning ? root.controller.steerTurn(promptEditor.text) : root.controller.startTurn(promptEditor.text);
+        if (accepted)
             root.turnSubmitted();
     }
 
@@ -128,8 +129,8 @@ Pane {
 
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(Math.max(contentHeight + topPadding + bottomPadding, 44), 120)
-                placeholderText: qsTr("Ask Codex to continue this conversation…")
-                enabled: !root.controller.turnInFlight
+                placeholderText: root.controller.turnRunning ? qsTr("Guide Codex while it works…") : qsTr("Ask Codex to continue this conversation…")
+                enabled: turnControlState.inputEnabled
                 wrapMode: TextEdit.Wrap
                 selectByMouse: true
                 onTextChanged: composerState.saveDraft(text)
@@ -147,9 +148,16 @@ Pane {
             }
 
             Button {
-                text: turnControlState.label
-                enabled: turnControlState.enabled
-                onClicked: turnControlState.activate()
+                text: turnControlState.sendLabel
+                enabled: turnControlState.sendEnabled
+                onClicked: turnControlState.send()
+            }
+
+            Button {
+                text: turnControlState.stopLabel
+                enabled: turnControlState.stopEnabled
+                visible: turnControlState.stopVisible
+                onClicked: turnControlState.stop()
             }
         }
 
@@ -204,6 +212,8 @@ Pane {
         id: turnControlState
 
         turnInFlight: root.controller.turnInFlight
+        turnRunning: root.controller.turnRunning
+        steerPending: root.controller.steeringTurn
         interruptPending: root.controller.interruptRequested
         writable: root.controller.writeAvailability === CodexHistoryController.Writable
         promptReady: promptEditor.text.trim().length > 0
@@ -231,7 +241,11 @@ Pane {
         }
 
         function onTurnStarted() {
-            composerState.confirmTurnStarted();
+            composerState.confirmSubmission();
+        }
+
+        function onTurnSteered() {
+            composerState.confirmSubmission();
         }
     }
 }

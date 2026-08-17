@@ -96,13 +96,13 @@ Item {
             compare(suite.state.draft, "Second draft");
         }
 
-        function test_draftIsClearedOnlyAfterTurnStarts() {
+        function test_draftIsClearedOnlyAfterSubmissionIsConfirmed() {
             suite.state.threadId = "thread-1";
             suite.state.saveDraft("Continue from here");
 
             compare(suite.state.draft, "Continue from here");
             compare(suite.state.draftCount(), 1);
-            suite.state.confirmTurnStarted();
+            suite.state.confirmSubmission();
             compare(suite.state.draft, "");
             compare(suite.state.draftCount(), 0);
         }

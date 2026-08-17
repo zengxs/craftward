@@ -393,6 +393,20 @@ impl CodexThreadWriter {
         self.client.pending_interactions(&self.thread_id)
     }
 
+    /// Adds text guidance to the expected active turn.
+    pub async fn steer_text_turn(
+        &mut self,
+        expected_turn_id: &str,
+        text: &str,
+    ) -> Result<(), CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        self.client
+            .steer_text_turn(&self.thread_id, expected_turn_id, text)
+            .await
+    }
+
     /// Requests interruption of the active turn.
     pub async fn interrupt_turn(&mut self, turn_id: &str) -> Result<(), CodexError> {
         if self.cancellation.is_cancelled() {

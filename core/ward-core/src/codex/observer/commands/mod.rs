@@ -17,6 +17,7 @@ pub(super) enum ObserverCommand {
     ReleaseWrite(String),
     StartThread(ThreadStartRequest),
     StartTurn(TurnRequest),
+    SteerTurn(TurnSteerRequest),
     InterruptTurn(String),
     ResolveInteraction(InteractionResponse),
     Stop,
@@ -24,6 +25,7 @@ pub(super) enum ObserverCommand {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum ThreadControlRequest {
+    Steer(TurnSteerRequest),
     Interrupt(String),
     ResolveInteraction(InteractionResponse),
 }
@@ -39,6 +41,13 @@ pub(super) struct TurnRequest {
     pub(super) thread_id: String,
     pub(super) prompt: String,
     pub(super) options: TurnOptions,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct TurnSteerRequest {
+    pub(super) thread_id: String,
+    pub(super) expected_turn_id: String,
+    pub(super) prompt: String,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -139,6 +148,9 @@ pub(super) fn merge_command(update: &mut CommandUpdate, command: ObserverCommand
             update.turn = Some(request);
         }
         ObserverCommand::StartTurn(_) => {}
+        ObserverCommand::SteerTurn(request) => {
+            update.controls.push(ThreadControlRequest::Steer(request));
+        }
         ObserverCommand::InterruptTurn(thread_id) => {
             update
                 .controls

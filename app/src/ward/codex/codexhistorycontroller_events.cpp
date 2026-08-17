@@ -11,6 +11,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
     using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKind;
 
     if (!decodingError.isEmpty()) {
+        setSteeringTurn(false);
         if (startingThread_) {
             setThreadStartErrorMessage(decodingError);
             setStartingThread(false);
@@ -112,9 +113,26 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             if (threadId != selectedThreadId_)
                 return;
             break;
+        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STEERED:
+            if (threadId != selectedThreadId_)
+                return;
+            if (!steeringTurn_)
+                break;
+            setSteeringTurn(false);
+            emit turnSteered();
+            break;
+        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STEER_ERROR: {
+            if (threadId != selectedThreadId_)
+                return;
+            setSteeringTurn(false);
+            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
+            setConversationErrorMessage(message.isEmpty() ? tr("The Codex turn could not be guided.") : message);
+            break;
+        }
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_ERROR: {
             if (threadId != selectedThreadId_)
                 return;
+            setSteeringTurn(false);
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             setConversationErrorMessage(message.isEmpty() ? tr("The Codex turn failed.") : message);
             break;

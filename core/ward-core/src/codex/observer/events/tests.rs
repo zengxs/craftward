@@ -85,6 +85,34 @@ fn serializes_thread_start_outcomes() {
 }
 
 #[test]
+fn serializes_turn_steer_outcomes_for_the_selected_thread() {
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+
+    sink.emit_turn_steered("thread-1");
+    sink.emit_turn_steer_error("thread-1", "turn completed");
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.events.len(), 2);
+    assert_eq!(
+        captured.events[0].kind,
+        wire::HistoryEventKind::TurnSteered as i32
+    );
+    assert_eq!(captured.events[0].thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(captured.events[0].body, None);
+    assert_eq!(
+        captured.events[1].kind,
+        wire::HistoryEventKind::TurnSteerError as i32
+    );
+    assert_eq!(
+        captured.events[1].body,
+        Some(wire::history_event::Body::ErrorMessage(
+            "turn completed".to_owned()
+        ))
+    );
+}
+
+#[test]
 fn serializes_thread_write_state_for_the_selected_thread() {
     let captured = Mutex::new(CapturedEvent::default());
     event_sink(&captured).emit_thread_write_state(

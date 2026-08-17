@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::{
     InitializeParams, ThreadReadResponse, ThreadResumeResponse, ThreadStartParams,
-    ThreadStartResponse, TurnStartParams, turn_stream_event,
+    ThreadStartResponse, TurnStartParams, TurnSteerParams, turn_stream_event,
 };
 use crate::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
@@ -614,6 +614,23 @@ fn serializes_a_text_turn_start_request() {
                     "reasoning_effort": null
                 }
             }
+        })
+    );
+}
+
+#[test]
+fn serializes_text_guidance_for_the_expected_active_turn() {
+    assert_eq!(
+        serde_json::to_value(TurnSteerParams::text(
+            "thread-1",
+            "turn-2",
+            "Use the existing test seam",
+        ))
+        .unwrap(),
+        serde_json::json!({
+            "threadId": "thread-1",
+            "expectedTurnId": "turn-2",
+            "input": [{ "type": "text", "text": "Use the existing test seam" }]
         })
     );
 }

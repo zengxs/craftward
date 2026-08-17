@@ -17,7 +17,9 @@ use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions};
 use super::super::test_support::{CapturedEvent, event_sink, thread};
 use super::*;
 use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
-use crate::codex::observer::commands::{CommandUpdate, ObserverCommand, ThreadStartRequest};
+use crate::codex::observer::commands::{
+    CommandUpdate, ObserverCommand, ThreadStartRequest, TurnSteerRequest,
+};
 use crate::codex::wire;
 
 #[tokio::test]
@@ -163,6 +165,133 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
     state.shutdown().await;
 }
 
+#[tokio::test]
+async fn steers_an_active_turn_and_reports_the_outcome() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        renumber_persisted_first_turn: true,
+        wait_for_turn_steer: true,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    let (_commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+
+    let result = state
+        .run_turn(
+            TurnRequest {
+                thread_id: thread_id.clone(),
+                prompt: "Implement the change".to_owned(),
+                options: TurnOptions::default(),
+            },
+            &sink,
+            &mut receiver,
+            vec![ThreadControlRequest::Steer(TurnSteerRequest {
+                thread_id: thread_id.clone(),
+                expected_turn_id: "live-turn-1".to_owned(),
+                prompt: "Use the existing test seam".to_owned(),
+            })],
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        OperationDrive::Completed {
+            output: true,
+            deferred: None,
+        }
+    ));
+    assert!(state.poll_conversation(&thread_id, &sink).await);
+    {
+        let captured = captured.lock().unwrap();
+        let steered_index = captured
+            .events
+            .iter()
+            .position(|event| {
+                event.kind == wire::HistoryEventKind::TurnSteered as i32
+                    && event.thread_id.as_deref() == Some("thread-new")
+            })
+            .expect("the accepted guidance should be confirmed");
+        let idle_index = captured
+            .events
+            .iter()
+            .enumerate()
+            .skip(steered_index + 1)
+            .find_map(|(index, event)| match event.body.as_ref() {
+                Some(wire::history_event::Body::ThreadRuntimeState(state))
+                    if state.status == wire::ThreadRuntimeStatus::Idle as i32 =>
+                {
+                    Some(index)
+                }
+                _ => None,
+            })
+            .expect("the guided turn should become idle after confirmation");
+        let completed_index = captured
+            .events
+            .iter()
+            .position(|event| event.kind == wire::HistoryEventKind::TurnCompleted as i32)
+            .expect("the guided turn should report completion");
+
+        assert!(steered_index < idle_index);
+        assert!(steered_index < completed_index);
+        assert!(
+            captured
+                .events
+                .iter()
+                .all(|event| event.kind != wire::HistoryEventKind::TurnSteerError as i32)
+        );
+        let conversation = latest_conversation(&captured);
+        assert_eq!(conversation.timeline.len(), 3);
+        assert!(
+            conversation
+                .timeline
+                .iter()
+                .all(|item| item.turn_id == "persisted-turn-1")
+        );
+        let messages = conversation
+            .timeline
+            .iter()
+            .filter_map(|item| match item.body.as_ref() {
+                Some(wire::timeline_item::Body::Message(message)) => Some(message),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Implement the change",
+                "Use the existing test seam",
+                "Adjusted."
+            ]
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.message_id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "persisted-user-1",
+                "persisted-steer-user-1",
+                "persisted-agent-1"
+            ]
+        );
+    }
+
+    state.shutdown().await;
+}
+
 fn latest_conversation(captured: &CapturedEvent) -> &wire::Conversation {
     captured
         .events
@@ -268,6 +397,40 @@ fn publishes_pending_interactions_as_a_replaceable_snapshot() {
     assert_eq!(page.interactions.len(), 1);
     assert_eq!(page.interactions[0].interaction_id, 17);
     assert_eq!(page.interactions[0].command.as_deref(), Some("cargo test"));
+}
+
+#[test]
+fn confirms_a_turn_start_before_publishing_its_active_runtime_state() {
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(PathBuf::from("/codex"), CodexHistoryCancellation::new());
+    state.live.attach(ThreadSubscription {
+        thread: thread(),
+        runtime_status: ward_codex::ThreadRuntimeStatus::Idle,
+    });
+
+    state.accept_writer_event(
+        "thread-1",
+        ThreadStreamEvent::TurnStarted {
+            thread_id: "thread-1".to_owned(),
+            turn: Turn {
+                id: "turn-2".to_owned(),
+                status: TurnStatus::InProgress,
+                items: vec![],
+            },
+        },
+        &sink,
+    );
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(
+        captured.events[0].kind,
+        wire::HistoryEventKind::TurnStarted as i32
+    );
+    assert_eq!(
+        captured.events[1].kind,
+        wire::HistoryEventKind::ThreadRuntimeStateChanged as i32
+    );
 }
 
 #[test]

@@ -21,7 +21,7 @@ QtObject {
         return root.drafts.length;
     }
 
-    function confirmTurnStarted() {
+    function confirmSubmission() {
         root.saveDraft("");
     }
 

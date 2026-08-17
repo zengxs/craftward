@@ -51,34 +51,106 @@ Item {
         }
 
         function test_sendRequiresWritableNonemptyPrompt() {
-            compare(suite.state.label, "Send");
-            verify(!suite.state.enabled);
+            compare(suite.state.sendLabel, "Send");
+            verify(!suite.state.sendEnabled);
 
             suite.state.writable = true;
             suite.state.promptReady = true;
-            verify(suite.state.enabled);
-            suite.state.activate();
+            verify(suite.state.sendEnabled);
+            suite.state.send();
             compare(sendSpy.count, 1);
             compare(stopSpy.count, 0);
         }
 
-        function test_runningTurnOffersStopEvenWithoutPrompt() {
-            suite.state.turnInFlight = true;
-            compare(suite.state.label, "Stop");
-            verify(suite.state.enabled);
+        function test_inputFollowsTheSubmissionLifecycle() {
+            verify(suite.state.inputEnabled);
 
-            suite.state.activate();
+            suite.state.turnInFlight = true;
+            verify(!suite.state.inputEnabled);
+
+            suite.state.turnRunning = true;
+            verify(suite.state.inputEnabled);
+
+            suite.state.steerPending = true;
+            verify(!suite.state.inputEnabled);
+
+            suite.state.steerPending = false;
+            suite.state.interruptPending = true;
+            verify(!suite.state.inputEnabled);
+        }
+
+        function test_runningTurnOffersGuidanceAndIndependentStop() {
+            suite.state.turnInFlight = true;
+            suite.state.turnRunning = true;
+            suite.state.writable = true;
+            suite.state.promptReady = true;
+            compare(suite.state.sendLabel, "Guide");
+            verify(suite.state.sendEnabled);
+            verify(suite.state.stopVisible);
+            verify(suite.state.stopEnabled);
+
+            suite.state.send();
+            suite.state.stop();
+            compare(sendSpy.count, 1);
+            compare(stopSpy.count, 1);
+        }
+
+        function test_runningTurnCanStopWithoutGuidance() {
+            suite.state.turnInFlight = true;
+            suite.state.turnRunning = true;
+            suite.state.writable = true;
+
+            verify(!suite.state.sendEnabled);
+            verify(suite.state.stopEnabled);
+            suite.state.stop();
+            compare(stopSpy.count, 1);
+        }
+
+        function test_startingTurnCanStopWhileGuidanceStaysDisabled() {
+            suite.state.turnInFlight = true;
+            suite.state.writable = true;
+            suite.state.promptReady = true;
+
+            compare(suite.state.sendLabel, "Starting…");
+            verify(!suite.state.sendEnabled);
+            verify(suite.state.stopVisible);
+            verify(suite.state.stopEnabled);
+
+            suite.state.send();
+            suite.state.stop();
             compare(sendSpy.count, 0);
             compare(stopSpy.count, 1);
         }
 
-        function test_pendingInterruptDisablesRepeatedStop() {
+        function test_pendingGuidancePreventsDuplicateSendButKeepsStop() {
             suite.state.turnInFlight = true;
-            suite.state.interruptPending = true;
-            compare(suite.state.label, "Stopping…");
-            verify(!suite.state.enabled);
+            suite.state.turnRunning = true;
+            suite.state.writable = true;
+            suite.state.promptReady = true;
+            suite.state.steerPending = true;
+            compare(suite.state.sendLabel, "Guiding…");
+            verify(!suite.state.sendEnabled);
+            verify(suite.state.stopEnabled);
 
-            suite.state.activate();
+            suite.state.send();
+            suite.state.stop();
+            compare(sendSpy.count, 0);
+            compare(stopSpy.count, 1);
+        }
+
+        function test_pendingInterruptDisablesGuidanceAndRepeatedStop() {
+            suite.state.turnInFlight = true;
+            suite.state.turnRunning = true;
+            suite.state.writable = true;
+            suite.state.promptReady = true;
+            suite.state.interruptPending = true;
+            compare(suite.state.stopLabel, "Stopping…");
+            verify(!suite.state.sendEnabled);
+            verify(!suite.state.stopEnabled);
+
+            suite.state.send();
+            suite.state.stop();
+            compare(sendSpy.count, 0);
             compare(stopSpy.count, 0);
         }
     }

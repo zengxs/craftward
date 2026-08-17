@@ -52,6 +52,10 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_THREAD_STARTED = 14;
   // Carries an error_message without a thread identifier.
   HISTORY_EVENT_KIND_THREAD_START_ERROR = 15;
+  // Confirms that guidance was accepted for the selected active turn.
+  HISTORY_EVENT_KIND_TURN_STEERED = 16;
+  // Carries an error_message when guidance was not accepted.
+  HISTORY_EVENT_KIND_TURN_STEER_ERROR = 17;
 }
 
 // The selected thread's writer availability for this Craftward observer.

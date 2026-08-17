@@ -46,6 +46,7 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(QString activeTurnId READ activeTurnId NOTIFY turnStateChanged)
     Q_PROPERTY(bool waitingOnApproval READ waitingOnApproval NOTIFY turnStateChanged)
     Q_PROPERTY(bool waitingOnUserInput READ waitingOnUserInput NOTIFY turnStateChanged)
+    Q_PROPERTY(bool steeringTurn READ steeringTurn NOTIFY steeringTurnChanged)
     Q_PROPERTY(bool interruptRequested READ interruptRequested NOTIFY interruptRequestedChanged)
     Q_PROPERTY(TurnMode turnMode READ turnMode WRITE setTurnMode NOTIFY turnOptionsChanged)
     Q_PROPERTY(
@@ -134,6 +135,7 @@ class CodexHistoryController : public QObject
     [[nodiscard]] QString activeTurnId() const;
     [[nodiscard]] bool waitingOnApproval() const;
     [[nodiscard]] bool waitingOnUserInput() const;
+    [[nodiscard]] bool steeringTurn() const;
     [[nodiscard]] bool interruptRequested() const;
     [[nodiscard]] TurnMode turnMode() const;
     void setTurnMode(TurnMode mode);
@@ -148,6 +150,7 @@ class CodexHistoryController : public QObject
     Q_INVOKABLE void acquireWriteAccess();
     Q_INVOKABLE void releaseWriteAccess();
     Q_INVOKABLE bool startTurn(const QString& prompt);
+    Q_INVOKABLE bool steerTurn(const QString& prompt);
     Q_INVOKABLE bool interruptTurn();
     Q_INVOKABLE bool respondToApproval(const QString& interactionId, InteractionDecision decision);
     Q_INVOKABLE bool respondToUserInput(const QString& interactionId, const QVariantMap& answers);
@@ -160,9 +163,11 @@ class CodexHistoryController : public QObject
     void startingThreadChanged();
     void activityHistoryPartialChanged();
     void turnStateChanged();
+    void steeringTurnChanged();
     void interruptRequestedChanged();
     void turnOptionsChanged();
     void turnStarted();
+    void turnSteered();
     void writeAvailabilityChanged();
 
   private:
@@ -188,6 +193,7 @@ class CodexHistoryController : public QObject
                       const QString& activeTurnId = {},
                       bool waitingOnApproval = false,
                       bool waitingOnUserInput = false);
+    void setSteeringTurn(bool steering);
     void setWriteAvailability(WriteAvailability availability, const QString& message = {});
     void setInterruptRequested(bool requested);
     bool sendInteractionResponse(const QString& interactionId,
@@ -214,6 +220,7 @@ class CodexHistoryController : public QObject
     bool startingThread_ = false;
     bool activityHistoryPartial_ = false;
     TurnRuntimeState turnRuntimeState_;
+    bool steeringTurn_ = false;
     bool interruptRequested_ = false;
     TurnMode turnMode_ = TurnMode::DefaultMode;
     PermissionPreset permissionPreset_ = PermissionPreset::InheritPermissions;

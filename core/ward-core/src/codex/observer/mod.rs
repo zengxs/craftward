@@ -15,7 +15,7 @@ use ward_codex::{
     TurnPermissionPreset,
 };
 
-use self::commands::{ObserverCommand, ThreadStartRequest, TurnRequest};
+use self::commands::{ObserverCommand, ThreadStartRequest, TurnRequest, TurnSteerRequest};
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
 use super::{WardBuffer, clear_error, required_string, wire};
@@ -402,6 +402,71 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
             thread_id,
             prompt,
             options,
+        }),
+        output_error,
+    )
+}
+
+/// Adds text guidance to the selected thread's expected active Codex turn.
+///
+/// The asynchronous result is emitted as either a turn-steered event or a
+/// turn-steer-error event.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `thread_id`, `expected_turn_id`,
+/// and `prompt` must point to NUL-terminated strings. `output_error`, when
+/// non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_steer_turn(
+    observer: *mut WardCodexHistoryObserver,
+    thread_id: *const c_char,
+    expected_turn_id: *const c_char,
+    prompt: *const c_char,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointers.
+    let Some(thread_id) =
+        (unsafe { required_string(thread_id, "the Codex thread identifier", output_error) })
+    else {
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointers.
+    let Some(expected_turn_id) = (unsafe {
+        required_string(
+            expected_turn_id,
+            "the expected Codex turn identifier",
+            output_error,
+        )
+    }) else {
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointers.
+    let Some(prompt) = (unsafe { required_string(prompt, "the Codex guidance", output_error) })
+    else {
+        return false;
+    };
+    if thread_id.trim().is_empty() || expected_turn_id.trim().is_empty() || prompt.trim().is_empty()
+    {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex guidance target or text is empty") };
+        return false;
+    }
+
+    send_command(
+        observer,
+        ObserverCommand::SteerTurn(TurnSteerRequest {
+            thread_id,
+            expected_turn_id,
+            prompt,
         }),
         output_error,
     )

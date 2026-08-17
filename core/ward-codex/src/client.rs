@@ -17,11 +17,11 @@ use crate::app_server::{AppServerReader, AppServerShutdown, AppServerWriter};
 use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
     THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, THREAD_START_METHOD,
-    TURN_INTERRUPT_METHOD, TURN_START_METHOD, ThreadListParams, ThreadListResponse,
-    ThreadReadParams, ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse,
-    ThreadStartParams, ThreadStartResponse, TurnInterruptParams, TurnInterruptResponse,
-    TurnStartParams, TurnStartResponse, interaction_result, pending_interaction,
-    resolved_server_request, turn_stream_event,
+    TURN_INTERRUPT_METHOD, TURN_START_METHOD, TURN_STEER_METHOD, ThreadListParams,
+    ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
+    ThreadResumeResponse, ThreadStartParams, ThreadStartResponse, TurnInterruptParams,
+    TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnSteerParams, TurnSteerResponse,
+    interaction_result, pending_interaction, resolved_server_request, turn_stream_event,
 };
 use crate::{
     CodexAppServerSource, CodexError, InteractionId, InteractionResponse, PendingInteraction,
@@ -436,6 +436,31 @@ impl CodexClient {
 
     pub(crate) fn pending_interactions(&self, thread_id: &str) -> Vec<PendingInteraction> {
         self.subscription_state.pending_for(thread_id)
+    }
+
+    /// Adds text guidance to the expected active turn on this subscribed thread.
+    pub async fn steer_text_turn(
+        &mut self,
+        thread_id: &str,
+        expected_turn_id: &str,
+        text: &str,
+    ) -> Result<(), CodexError> {
+        let response: TurnSteerResponse = self
+            .request(
+                TURN_STEER_METHOD,
+                &TurnSteerParams::text(thread_id, expected_turn_id, text),
+            )
+            .await?;
+        if response.turn_id != expected_turn_id {
+            return Err(CodexError::UnexpectedMessage {
+                method: TURN_STEER_METHOD,
+                description: format!(
+                    "the app-server confirmed guidance for turn {} instead of {expected_turn_id}",
+                    response.turn_id
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// Requests interruption of the active turn on this subscribed thread.
