@@ -25,7 +25,9 @@ const LIVE_USER_ID: &str = "live-user-1";
 const LIVE_STEER_USER_ID: &str = "live-steer-user-1";
 const LIVE_AGENT_ID: &str = "live-agent-1";
 const LIVE_COMMAND_ID: &str = "live-command-1";
+const LIVE_TOOL_ID: &str = "live-tool-1";
 const COMMAND_APPROVAL_REQUEST_ID: &str = "command-approval-1";
+const USER_INPUT_REQUEST_ID: &str = "user-input-1";
 
 /// Mutually exclusive turn behaviors supported by the fake app-server.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -37,6 +39,8 @@ pub enum FakeTurnScenario {
     WaitForGuidance,
     /// Request approval for a command before completing the turn.
     RequestCommandApproval,
+    /// Request structured user input before completing the turn.
+    RequestUserInput,
 }
 
 /// Observable behaviors supported by the fake app-server.
@@ -225,6 +229,9 @@ fn handle_client_message(message: Value, state: &Arc<Mutex<FakeState>>) -> Vec<V
 }
 
 fn handle_client_response(response: &Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
+    if response.get("id").and_then(Value::as_str) == Some(USER_INPUT_REQUEST_ID) {
+        return handle_user_input_response(response, state);
+    }
     if response.get("id").and_then(Value::as_str) != Some(COMMAND_APPROVAL_REQUEST_ID) {
         return vec![];
     }
@@ -235,21 +242,8 @@ fn handle_client_response(response: &Value, state: &Arc<Mutex<FakeState>>) -> Ve
             _ => return vec![],
         };
 
-    {
-        let mut state = state.lock().unwrap();
-        if state.options.turn_scenario != FakeTurnScenario::RequestCommandApproval {
-            return vec![];
-        }
-        let Some(turn) = state
-            .thread
-            .as_mut()
-            .and_then(|thread| thread.turn.as_mut())
-            .filter(|turn| !turn.completed)
-        else {
-            return vec![];
-        };
-        turn.answer = answer.to_owned();
-        turn.completed = true;
+    if !complete_active_turn(state, FakeTurnScenario::RequestCommandApproval, answer) {
+        return vec![];
     }
 
     let command = command_item(command_status, command_output);
@@ -268,6 +262,50 @@ fn handle_client_response(response: &Value, state: &Arc<Mutex<FakeState>>) -> Ve
     messages.push(item_notification("item/completed", LIVE_TURN_ID, command));
     messages.extend(turn_completion_messages(answer));
     messages
+}
+
+fn handle_user_input_response(response: &Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
+    let Some(scope) = response
+        .pointer("/result/answers/scope/answers/0")
+        .and_then(Value::as_str)
+    else {
+        return vec![];
+    };
+    let Some(note) = response
+        .pointer("/result/answers/note/answers/0")
+        .and_then(Value::as_str)
+    else {
+        return vec![];
+    };
+    let answer = format!("Scope: {scope}; note: {note}.");
+
+    if !complete_active_turn(state, FakeTurnScenario::RequestUserInput, &answer) {
+        return vec![];
+    }
+
+    turn_completion_messages(&answer)
+}
+
+fn complete_active_turn(
+    state: &Arc<Mutex<FakeState>>,
+    expected_scenario: FakeTurnScenario,
+    answer: &str,
+) -> bool {
+    let mut state = state.lock().unwrap();
+    if state.options.turn_scenario != expected_scenario {
+        return false;
+    }
+    let Some(turn) = state
+        .thread
+        .as_mut()
+        .and_then(|thread| thread.turn.as_mut())
+        .filter(|turn| !turn.completed)
+    else {
+        return false;
+    };
+    turn.answer = answer.to_owned();
+    turn.completed = true;
+    true
 }
 
 fn thread_list_response(id: Value, state: &Arc<Mutex<FakeState>>) -> Value {
@@ -418,6 +456,45 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
                     }
                 }),
             ]);
+        }
+        FakeTurnScenario::RequestUserInput => {
+            messages.push(json!({
+                "id": USER_INPUT_REQUEST_ID,
+                "method": "item/tool/requestUserInput",
+                "params": {
+                    "threadId": THREAD_ID,
+                    "turnId": LIVE_TURN_ID,
+                    "itemId": LIVE_TOOL_ID,
+                    "isBlocking": true,
+                    "questions": [
+                        {
+                            "id": "scope",
+                            "header": "Scope",
+                            "question": "Which scope should be used?",
+                            "options": [
+                                {
+                                    "label": "Current",
+                                    "description": "Only the current turn"
+                                },
+                                {
+                                    "label": "All",
+                                    "description": "The whole conversation"
+                                }
+                            ],
+                            "isOther": true,
+                            "isSecret": false
+                        },
+                        {
+                            "id": "note",
+                            "header": "Note",
+                            "question": "What should Codex remember?",
+                            "options": [],
+                            "isOther": false,
+                            "isSecret": false
+                        }
+                    ]
+                }
+            }));
         }
     }
     messages

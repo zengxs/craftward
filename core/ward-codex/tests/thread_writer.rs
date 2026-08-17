@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use ward_codex::{
     ActivityKind, ActivityStatus, CodexError, CodexHistoryCancellation, CodexHistorySession,
-    CodexThreadWriter, InteractionDecision, InteractionId, InteractionResponse,
+    CodexThreadWriter, InteractionAnswer, InteractionDecision, InteractionResponse,
     InteractionResponseBody, PendingInteraction, PendingInteractionKind, ThreadItem, ThreadPoll,
     ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnOptions, TurnStatus, UserInput,
 };
@@ -89,16 +89,16 @@ async fn rejects_an_ephemeral_thread_without_app_server_confirmation() {
     }
 }
 
-struct CommandApprovalOutcome {
-    command_status: ActivityStatus,
+struct FakeTurnOutcome {
+    command_status: Option<ActivityStatus>,
     streamed_answer: String,
     answer: String,
     turn_id: String,
 }
 
-async fn start_command_approval_turn() -> CodexThreadWriter {
+async fn start_fake_turn(turn_scenario: FakeTurnScenario, prompt: &str) -> CodexThreadWriter {
     let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
-        turn_scenario: FakeTurnScenario::RequestCommandApproval,
+        turn_scenario,
         ..FakeCodexAppServerOptions::default()
     });
     let source = fake_app_server.source();
@@ -111,7 +111,7 @@ async fn start_command_approval_turn() -> CodexThreadWriter {
     .await
     .expect("the public writer seam should start a thread");
     let started = writer
-        .begin_text_turn("Run pwd", TurnOptions::default())
+        .begin_text_turn(prompt, TurnOptions::default())
         .await
         .expect("the turn should start");
     assert!(matches!(
@@ -121,7 +121,7 @@ async fn start_command_approval_turn() -> CodexThreadWriter {
     writer
 }
 
-async fn next_command_approval(writer: &mut CodexThreadWriter) -> PendingInteraction {
+async fn next_pending_interaction(writer: &mut CodexThreadWriter) -> PendingInteraction {
     loop {
         match next_fake_turn_event(writer).await {
             ThreadStreamEvent::PendingInteractionsUpdated {
@@ -135,25 +135,21 @@ async fn next_command_approval(writer: &mut CodexThreadWriter) -> PendingInterac
                 return interaction.clone();
             }
             ThreadStreamEvent::TurnCompleted { .. } => {
-                panic!("the turn must wait for command approval");
+                panic!("the turn must wait for the pending interaction");
             }
             _ => {}
         }
     }
 }
 
-async fn resolve_command_approval(
+async fn resolve_pending_interaction(
     writer: &mut CodexThreadWriter,
-    interaction_id: InteractionId,
-    decision: InteractionDecision,
+    response: InteractionResponse,
 ) {
     let cleared = writer
-        .resolve_interaction(InteractionResponse {
-            interaction_id,
-            body: InteractionResponseBody::Decision(decision),
-        })
+        .resolve_interaction(response)
         .await
-        .expect("the command approval decision should resolve");
+        .expect("the pending interaction response should resolve");
     assert!(matches!(
         cleared,
         ThreadStreamEvent::PendingInteractionsUpdated { interactions, .. }
@@ -161,7 +157,7 @@ async fn resolve_command_approval(
     ));
 }
 
-async fn finish_command_approval_turn(writer: &mut CodexThreadWriter) -> CommandApprovalOutcome {
+async fn finish_fake_turn(writer: &mut CodexThreadWriter) -> FakeTurnOutcome {
     let mut command_status = None;
     let mut streamed_answer = String::new();
     let mut answer = None;
@@ -184,9 +180,8 @@ async fn finish_command_approval_turn(writer: &mut CodexThreadWriter) -> Command
             _ => {}
         }
         if let ThreadStreamEvent::TurnCompleted { turn, .. } = event {
-            return CommandApprovalOutcome {
-                command_status: command_status
-                    .expect("the command should finish before the turn completes"),
+            return FakeTurnOutcome {
+                command_status,
                 streamed_answer,
                 answer: answer.expect("the agent should answer before the turn completes"),
                 turn_id: turn.id,
@@ -204,8 +199,8 @@ async fn next_fake_turn_event(writer: &mut CodexThreadWriter) -> ThreadStreamEve
 
 #[tokio::test]
 async fn accepts_a_command_approval_and_completes_the_same_turn_through_the_public_writer_seam() {
-    let mut writer = start_command_approval_turn().await;
-    let interaction = next_command_approval(&mut writer).await;
+    let mut writer = start_fake_turn(FakeTurnScenario::RequestCommandApproval, "Run pwd").await;
+    let interaction = next_pending_interaction(&mut writer).await;
     assert_eq!(interaction.thread_id, "thread-new");
     assert_eq!(interaction.turn_id.as_deref(), Some("live-turn-1"));
     assert_eq!(interaction.item_id.as_deref(), Some("live-command-1"));
@@ -217,9 +212,16 @@ async fn accepts_a_command_approval_and_completes_the_same_turn_through_the_publ
     );
     assert_eq!(interaction.reason.as_deref(), Some("Verify the workspace"));
 
-    resolve_command_approval(&mut writer, interaction.id, InteractionDecision::Accept).await;
-    let outcome = finish_command_approval_turn(&mut writer).await;
-    assert_eq!(outcome.command_status, ActivityStatus::Completed);
+    resolve_pending_interaction(
+        &mut writer,
+        InteractionResponse {
+            interaction_id: interaction.id,
+            body: InteractionResponseBody::Decision(InteractionDecision::Accept),
+        },
+    )
+    .await;
+    let outcome = finish_fake_turn(&mut writer).await;
+    assert_eq!(outcome.command_status, Some(ActivityStatus::Completed));
     assert_eq!(outcome.streamed_answer, "Command approved.");
     assert_eq!(outcome.answer, "Command approved.");
     assert_eq!(outcome.turn_id, "live-turn-1");
@@ -228,13 +230,82 @@ async fn accepts_a_command_approval_and_completes_the_same_turn_through_the_publ
 
 #[tokio::test]
 async fn declines_a_command_approval_and_completes_the_same_turn_through_the_public_writer_seam() {
-    let mut writer = start_command_approval_turn().await;
-    let interaction = next_command_approval(&mut writer).await;
-    resolve_command_approval(&mut writer, interaction.id, InteractionDecision::Decline).await;
-    let outcome = finish_command_approval_turn(&mut writer).await;
-    assert_eq!(outcome.command_status, ActivityStatus::Declined);
+    let mut writer = start_fake_turn(FakeTurnScenario::RequestCommandApproval, "Run pwd").await;
+    let interaction = next_pending_interaction(&mut writer).await;
+    resolve_pending_interaction(
+        &mut writer,
+        InteractionResponse {
+            interaction_id: interaction.id,
+            body: InteractionResponseBody::Decision(InteractionDecision::Decline),
+        },
+    )
+    .await;
+    let outcome = finish_fake_turn(&mut writer).await;
+    assert_eq!(outcome.command_status, Some(ActivityStatus::Declined));
     assert_eq!(outcome.streamed_answer, "Command declined.");
     assert_eq!(outcome.answer, "Command declined.");
+    assert_eq!(outcome.turn_id, "live-turn-1");
+    writer.shutdown().await;
+}
+
+#[tokio::test]
+async fn answers_structured_user_input_and_completes_the_same_turn_through_the_public_writer_seam()
+{
+    let mut writer = start_fake_turn(FakeTurnScenario::RequestUserInput, "Plan the change").await;
+    let interaction = next_pending_interaction(&mut writer).await;
+    assert_eq!(interaction.thread_id, "thread-new");
+    assert_eq!(interaction.turn_id.as_deref(), Some("live-turn-1"));
+    assert_eq!(interaction.item_id.as_deref(), Some("live-tool-1"));
+    assert_eq!(interaction.kind, PendingInteractionKind::UserInput);
+    assert!(interaction.user_input_is_blocking);
+    assert!(interaction.available_decisions.is_empty());
+    let [scope, note] = interaction.questions.as_slice() else {
+        panic!("the interaction should contain the two advertised questions");
+    };
+    assert_eq!(scope.id, "scope");
+    assert_eq!(scope.header, "Scope");
+    assert_eq!(scope.prompt, "Which scope should be used?");
+    assert_eq!(scope.options.len(), 2);
+    assert_eq!(scope.options[0].label, "Current");
+    assert_eq!(scope.options[0].description, "Only the current turn");
+    assert_eq!(scope.options[1].label, "All");
+    assert_eq!(scope.options[1].description, "The whole conversation");
+    assert!(scope.allows_other);
+    assert!(!scope.secret);
+    assert_eq!(note.id, "note");
+    assert_eq!(note.header, "Note");
+    assert_eq!(note.prompt, "What should Codex remember?");
+    assert!(note.options.is_empty());
+    assert!(!note.allows_other);
+    assert!(!note.secret);
+
+    resolve_pending_interaction(
+        &mut writer,
+        InteractionResponse {
+            interaction_id: interaction.id,
+            body: InteractionResponseBody::UserInput(vec![
+                InteractionAnswer {
+                    question_id: "note".to_owned(),
+                    answers: vec!["Keep changes focused".to_owned()],
+                },
+                InteractionAnswer {
+                    question_id: "scope".to_owned(),
+                    answers: vec!["Current".to_owned()],
+                },
+            ]),
+        },
+    )
+    .await;
+    let outcome = finish_fake_turn(&mut writer).await;
+
+    assert_eq!(
+        outcome.streamed_answer,
+        "Scope: Current; note: Keep changes focused."
+    );
+    assert_eq!(
+        outcome.answer,
+        "Scope: Current; note: Keep changes focused."
+    );
     assert_eq!(outcome.turn_id, "live-turn-1");
     writer.shutdown().await;
 }
