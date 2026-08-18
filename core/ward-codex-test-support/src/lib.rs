@@ -139,6 +139,7 @@ impl FakeState {
 struct FakeThread {
     cwd: String,
     ephemeral: bool,
+    name: Option<String>,
     turn: Option<FakeTurn>,
 }
 
@@ -218,6 +219,7 @@ fn handle_client_message(message: Value, state: &Arc<Mutex<FakeState>>) -> Vec<V
         "thread/read" => vec![thread_read_response(id, &params, state)],
         "thread/start" => vec![thread_start_response(id, &params, state)],
         "thread/resume" => vec![thread_resume_response(id, &params, state)],
+        "thread/name/set" => vec![thread_set_name_response(id, &params, state)],
         "turn/start" => turn_start_messages(id, &params, state),
         "turn/steer" => turn_steer_messages(id, &params, state),
         "turn/interrupt" => vec![json!({ "id": id, "result": {} })],
@@ -342,6 +344,29 @@ fn thread_read_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>
     json!({ "id": id, "result": { "thread": thread } })
 }
 
+fn thread_set_name_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
+    let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
+    let Some(name) = params.get("name").and_then(Value::as_str) else {
+        return json!({
+            "id": id,
+            "error": { "code": -32600, "message": "the thread name is missing" }
+        });
+    };
+    let mut state = state.lock().unwrap();
+    let Some(thread) = state
+        .thread
+        .as_mut()
+        .filter(|_| requested_thread_id == THREAD_ID)
+    else {
+        return json!({
+            "id": id,
+            "error": { "code": -32600, "message": format!("thread not loaded: {requested_thread_id}") }
+        });
+    };
+    thread.name = Some(name.to_owned());
+    json!({ "id": id, "result": {} })
+}
+
 fn thread_start_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
     let cwd = params
         .get("cwd")
@@ -357,6 +382,7 @@ fn thread_start_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>
     state.thread = Some(FakeThread {
         cwd,
         ephemeral,
+        name: None,
         turn: None,
     });
     state.remaining_thread_read_failures = state.options.initial_thread_read_failures;
@@ -624,7 +650,7 @@ fn thread_json(thread: &FakeThread, options: FakeCodexAppServerOptions, persiste
     };
     json!({
         "id": THREAD_ID,
-        "name": null,
+        "name": thread.name,
         "preview": thread.turn.as_ref().map(|turn| turn.prompt.as_str()).unwrap_or(""),
         "cwd": thread.cwd,
         "createdAt": 10,

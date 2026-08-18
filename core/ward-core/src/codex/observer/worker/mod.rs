@@ -18,8 +18,9 @@ use super::super::live::{LiveRuntimeState, LiveThreadProjection, event_is_increm
 use super::super::wire;
 use super::ObserverOperationGate;
 use super::commands::{
-    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, ThreadStartRequest,
-    TurnRequest, TurnSteerRequest, WriteAccessRequest, drain_commands, merge_command,
+    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, ThreadRenameRequest,
+    ThreadStartRequest, TurnRequest, TurnSteerRequest, WriteAccessRequest, drain_commands,
+    merge_command,
 };
 use super::events::HistoryEventSink;
 
@@ -308,6 +309,35 @@ impl ObserverState {
         if let Some(session) = self.session.as_mut() {
             session.reset_thread_page_baseline();
             session.reset_thread_baseline();
+        }
+    }
+
+    async fn rename_thread(
+        &mut self,
+        request: ThreadRenameRequest,
+        sink: &HistoryEventSink,
+    ) -> bool {
+        let ThreadRenameRequest { thread_id, name } = request;
+        let result = match self.ensure_session().await {
+            Ok(()) => {
+                self.session
+                    .as_mut()
+                    .expect("the history session was initialized above")
+                    .rename_thread(&thread_id, &name)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(()) => {
+                self.refresh();
+                true
+            }
+            Err(_) if self.cancellation.is_cancelled() => false,
+            Err(error) => {
+                sink.emit_conversation_error(&thread_id, &error.to_string());
+                false
+            }
         }
     }
 
@@ -958,6 +988,7 @@ pub(super) async fn run_observer(
                         watched_thread: requested_thread,
                         refresh,
                         write_access,
+                        thread_rename,
                         thread_start,
                         turn,
                         controls,
@@ -986,6 +1017,30 @@ pub(super) async fn run_observer(
                         threads_due = now;
                         if watched_thread.is_some() {
                             conversation_due = Some(now);
+                        }
+                    }
+                    if let Some(request) = thread_rename {
+                        let renamed_thread_id = request.thread_id.clone();
+                        let OperationDrive::Completed {
+                            output: renamed,
+                            deferred,
+                        } = drive_operation(
+                            state.rename_thread(*request, &sink),
+                            &mut receiver,
+                            &cancellation,
+                        )
+                        .await
+                        else {
+                            break 'observer;
+                        };
+                        if let Some(deferred) = deferred {
+                            following.merge(deferred);
+                        }
+                        if renamed {
+                            threads_due = now;
+                            if watched_thread.as_deref() == Some(renamed_thread_id.as_str()) {
+                                conversation_due = Some(now);
+                            }
                         }
                     }
                     if let Some(request) = write_access {

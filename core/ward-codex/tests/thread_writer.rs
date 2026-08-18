@@ -7,8 +7,9 @@ use std::time::Duration;
 use ward_codex::{
     ActivityKind, ActivityStatus, CodexError, CodexHistoryCancellation, CodexHistorySession,
     CodexThreadWriter, InteractionAnswer, InteractionDecision, InteractionResponse,
-    InteractionResponseBody, PendingInteraction, PendingInteractionKind, ThreadItem, ThreadPoll,
-    ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnOptions, TurnStatus, UserInput,
+    InteractionResponseBody, PendingInteraction, PendingInteractionKind, ThreadItem,
+    ThreadListOptions, ThreadPagePoll, ThreadPoll, ThreadRuntimeStatus, ThreadStartOptions,
+    ThreadStreamEvent, TurnOptions, TurnStatus, UserInput,
 };
 use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions, FakeTurnScenario};
 
@@ -87,6 +88,51 @@ async fn rejects_an_ephemeral_thread_without_app_server_confirmation() {
         }
         Err(error) => panic!("the thread start returned an unexpected error: {error}"),
     }
+}
+
+#[tokio::test]
+async fn renames_a_persisted_thread_through_the_public_history_session() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let (writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the thread should start before it is renamed");
+    writer.shutdown().await;
+
+    let mut history = CodexHistorySession::connect(source)
+        .await
+        .expect("the public history session should connect");
+    let ThreadPagePoll::Baseline(page) = history
+        .poll_thread_page(&ThreadListOptions::default())
+        .await
+        .expect("the initial thread page should load")
+    else {
+        panic!("the first thread-page poll should establish a baseline");
+    };
+    assert_eq!(page.threads.len(), 1);
+    assert_eq!(page.threads[0].name, None);
+
+    history
+        .rename_thread("thread-new", "Focused work")
+        .await
+        .expect("the persisted thread should be renamed");
+
+    let ThreadPagePoll::Changed(page) = history
+        .poll_thread_page(&ThreadListOptions::default())
+        .await
+        .expect("the renamed thread page should load")
+    else {
+        panic!("renaming should change the tracked thread page");
+    };
+    assert_eq!(page.threads.len(), 1);
+    assert_eq!(page.threads[0].name.as_deref(), Some("Focused work"));
+
+    history.shutdown().await;
 }
 
 struct FakeTurnOutcome {

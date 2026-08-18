@@ -146,6 +146,7 @@ class CodexHistoryController : public QObject
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void selectThread(const QString& threadId, const QString& title);
+    Q_INVOKABLE bool renameSelectedThread(const QString& name);
     Q_INVOKABLE bool startThread(const QUrl& workingDirectory);
     Q_INVOKABLE void acquireWriteAccess();
     Q_INVOKABLE void releaseWriteAccess();

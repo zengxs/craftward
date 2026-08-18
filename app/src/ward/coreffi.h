@@ -59,6 +59,10 @@ extern "C"
     bool ward_core_codex_history_observer_watch(WardCodexHistoryObserver* observer,
                                                 const char* thread_id,
                                                 WardError** error);
+    bool ward_core_codex_history_observer_rename_thread(WardCodexHistoryObserver* observer,
+                                                        const char* thread_id,
+                                                        const char* name,
+                                                        WardError** error);
     bool ward_core_codex_history_observer_start_thread(WardCodexHistoryObserver* observer,
                                                        const char* working_directory,
                                                        WardError** error);

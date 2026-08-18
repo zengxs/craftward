@@ -16,12 +16,13 @@ use tokio_util::sync::CancellationToken;
 use crate::app_server::{AppServerReader, AppServerShutdown, AppServerWriter};
 use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
-    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, THREAD_START_METHOD,
-    TURN_INTERRUPT_METHOD, TURN_START_METHOD, TURN_STEER_METHOD, ThreadListParams,
-    ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
-    ThreadResumeResponse, ThreadStartParams, ThreadStartResponse, TurnInterruptParams,
-    TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnSteerParams, TurnSteerResponse,
-    interaction_result, pending_interaction, resolved_server_request, turn_stream_event,
+    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, THREAD_SET_NAME_METHOD,
+    THREAD_START_METHOD, TURN_INTERRUPT_METHOD, TURN_START_METHOD, TURN_STEER_METHOD,
+    ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
+    ThreadResumeResponse, ThreadSetNameParams, ThreadSetNameResponse, ThreadStartParams,
+    ThreadStartResponse, TurnInterruptParams, TurnInterruptResponse, TurnStartParams,
+    TurnStartResponse, TurnSteerParams, TurnSteerResponse, interaction_result, pending_interaction,
+    resolved_server_request, turn_stream_event,
 };
 use crate::{
     CodexAppServerSource, CodexError, InteractionId, InteractionResponse, PendingInteraction,
@@ -329,6 +330,17 @@ impl CodexClient {
                 method: THREAD_READ_METHOD,
                 source,
             })
+    }
+
+    /// Sets the user-facing name of one persisted thread.
+    pub async fn rename_thread(&mut self, thread_id: &str, name: &str) -> Result<(), CodexError> {
+        let _: ThreadSetNameResponse = self
+            .request(
+                THREAD_SET_NAME_METHOD,
+                &ThreadSetNameParams { thread_id, name },
+            )
+            .await?;
+        Ok(())
     }
 
     /// Starts a thread in one app-server-visible working directory and

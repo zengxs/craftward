@@ -22,6 +22,17 @@ Page {
         onAccepted: root.controller.startThread(selectedFolder)
     }
 
+    CodexConversationRenameDialog {
+        id: renameDialog
+
+        currentName: root.controller.selectedThreadTitle
+        renameAllowed: root.controller.selectedThreadId.length > 0 && !root.controller.loadingConversation && !root.controller.startingThread && !root.controller.turnInFlight
+        onRenameRequested: name => {
+            if (root.controller.renameSelectedThread(name))
+                accept();
+        }
+    }
+
     background: Rectangle {
         color: root.palette.window
     }
@@ -184,6 +195,13 @@ Page {
                         font.pixelSize: 24
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
+                    }
+
+                    Button {
+                        text: qsTr("Rename…")
+                        visible: root.controller.selectedThreadId.length > 0
+                        enabled: renameDialog.renameAllowed
+                        onClicked: renameDialog.begin()
                     }
 
                     Rectangle {

@@ -15,7 +15,9 @@ use ward_codex::{
     TurnPermissionPreset,
 };
 
-use self::commands::{ObserverCommand, ThreadStartRequest, TurnRequest, TurnSteerRequest};
+use self::commands::{
+    ObserverCommand, ThreadRenameRequest, ThreadStartRequest, TurnRequest, TurnSteerRequest,
+};
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
 use super::{WardBuffer, clear_error, required_string, wire};
@@ -193,6 +195,54 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_watch(
     };
 
     send_command(observer, ObserverCommand::Watch(thread_id), output_error)
+}
+
+/// Renames one persisted Codex thread.
+///
+/// Updated thread and conversation snapshots are emitted asynchronously after
+/// the rename succeeds.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `thread_id` and `name` must point
+/// to NUL-terminated strings. `output_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_rename_thread(
+    observer: *mut WardCodexHistoryObserver,
+    thread_id: *const c_char,
+    name: *const c_char,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointers.
+    let Some(thread_id) =
+        (unsafe { required_string(thread_id, "the Codex thread identifier", output_error) })
+    else {
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointers.
+    let Some(name) = (unsafe { required_string(name, "the Codex thread name", output_error) })
+    else {
+        return false;
+    };
+    if thread_id.trim().is_empty() || name.trim().is_empty() {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex thread target or name is empty") };
+        return false;
+    }
+
+    send_command(
+        observer,
+        ObserverCommand::RenameThread(ThreadRenameRequest { thread_id, name }),
+        output_error,
+    )
 }
 
 /// Starts and observes one persisted Codex thread.

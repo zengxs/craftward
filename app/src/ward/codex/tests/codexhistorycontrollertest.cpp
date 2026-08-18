@@ -13,6 +13,8 @@ using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKi
 using Message = ward::codex::v1::Message;
 using MessagePhase = ward::codex::v1::MessagePhaseGadget::MessagePhase;
 using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
+using ThreadPage = ward::codex::v1::ThreadPage;
+using ThreadSummary = ward::codex::v1::ThreadSummary;
 using TimelineItem = ward::codex::v1::TimelineItem;
 
 TimelineItem
@@ -31,16 +33,35 @@ messageItem(const QString& turnId, const QString& messageId, MessageRole role, M
 }
 
 HistoryEvent
-conversationEvent(HistoryEventKind kind, QList<TimelineItem> timeline)
+conversationEvent(HistoryEventKind kind,
+                  QList<TimelineItem> timeline,
+                  const QString& title = QStringLiteral("New conversation"))
 {
     Conversation conversation;
-    conversation.setTitle(QStringLiteral("New conversation"));
+    conversation.setTitle(title);
     conversation.setTimeline(std::move(timeline));
 
     HistoryEvent event;
     event.setKind(kind);
     event.setThreadId(QStringLiteral("thread-new"));
     event.setConversation(std::move(conversation));
+    return event;
+}
+
+HistoryEvent
+threadPageEvent(const QString& name)
+{
+    ThreadSummary thread;
+    thread.setThreadId(QStringLiteral("thread-new"));
+    thread.setName(name);
+    thread.setPreview(QStringLiteral("New conversation"));
+
+    ThreadPage page;
+    page.setThreads({ std::move(thread) });
+
+    HistoryEvent event;
+    event.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED);
+    event.setThreadPage(std::move(page));
     return event;
 }
 
@@ -64,6 +85,8 @@ class CodexHistoryControllerTest : public QObject
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
     void confirmsAcceptedTurnGuidance();
     void reportsRejectedTurnGuidanceWithoutConfirmation();
+    void validatesConversationRenamesBeforeDispatch();
+    void appliesRenamedConversationTitles();
 };
 
 void
@@ -146,6 +169,44 @@ CodexHistoryControllerTest::reportsRejectedTurnGuidanceWithoutConfirmation()
     QVERIFY(!controller.steeringTurn());
     QCOMPARE(steeredSpy.count(), 0);
     QCOMPARE(controller.errorMessage(), QStringLiteral("The turn finished."));
+}
+
+void
+CodexHistoryControllerTest::validatesConversationRenamesBeforeDispatch()
+{
+    CodexHistoryController controller(nullptr);
+    controller.clearError();
+
+    QVERIFY(!controller.renameSelectedThread(QStringLiteral("Focused work")));
+    QVERIFY(controller.errorMessage().isEmpty());
+
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    QVERIFY(!controller.renameSelectedThread(QStringLiteral("   ")));
+    QVERIFY(!controller.renameSelectedThread(QStringLiteral("  New conversation  ")));
+    QVERIFY(controller.errorMessage().isEmpty());
+
+    QVERIFY(!controller.renameSelectedThread(QStringLiteral("Focused work")));
+    QCOMPARE(controller.errorMessage(), QStringLiteral("The Codex history observer is unavailable."));
+}
+
+void
+CodexHistoryControllerTest::appliesRenamedConversationTitles()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    QSignalSpy selectionSpy(&controller, &CodexHistoryController::selectionChanged);
+
+    controller.applyHistoryEvent(threadPageEvent(QStringLiteral("Focused work")), {});
+    controller.applyHistoryEvent(
+      conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED, {}, QStringLiteral("Focused work")),
+      {});
+
+    QCOMPARE(controller.threads()->rowCount(), 1);
+    QCOMPARE(controller.threads()->data(controller.threads()->index(0), CodexThreadModel::TitleRole).toString(),
+             QStringLiteral("Focused work"));
+    QCOMPARE(controller.selectedThreadTitle(), QStringLiteral("Focused work"));
+    QCOMPARE(selectionSpy.count(), 1);
 }
 
 QTEST_APPLESS_MAIN(CodexHistoryControllerTest)

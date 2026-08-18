@@ -18,7 +18,7 @@ use super::super::test_support::{CapturedEvent, event_sink, thread};
 use super::*;
 use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
 use crate::codex::observer::commands::{
-    CommandUpdate, ObserverCommand, ThreadStartRequest, TurnSteerRequest,
+    CommandUpdate, ObserverCommand, ThreadRenameRequest, ThreadStartRequest, TurnSteerRequest,
 };
 use crate::codex::wire;
 
@@ -71,6 +71,55 @@ async fn starts_a_persisted_thread_and_adopts_its_writer() {
             captured.events[3].kind,
             wire::HistoryEventKind::ThreadWriteStateChanged as i32
         );
+    }
+
+    state.shutdown().await;
+}
+
+#[tokio::test]
+async fn renames_a_persisted_thread_and_refreshes_its_public_snapshots() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    captured.lock().unwrap().events.clear();
+
+    assert!(
+        state
+            .rename_thread(
+                ThreadRenameRequest {
+                    thread_id: thread_id.clone(),
+                    name: "Focused work".to_owned(),
+                },
+                &sink,
+            )
+            .await
+    );
+    assert!(state.poll_threads(&sink).await);
+    assert!(state.poll_conversation(&thread_id, &sink).await);
+
+    {
+        let captured = captured.lock().unwrap();
+        let thread_page = captured
+            .events
+            .iter()
+            .find_map(|event| match event.body.as_ref() {
+                Some(wire::history_event::Body::ThreadPage(page)) => Some(page),
+                _ => None,
+            })
+            .expect("renaming should refresh the public thread page");
+        assert_eq!(thread_page.threads.len(), 1);
+        assert_eq!(thread_page.threads[0].name.as_deref(), Some("Focused work"));
+        assert_eq!(latest_conversation(&captured).title, "Focused work");
     }
 
     state.shutdown().await;

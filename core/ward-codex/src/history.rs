@@ -214,6 +214,24 @@ impl CodexHistorySession {
         Ok(self.thread_tracker.record(thread))
     }
 
+    /// Sets the user-facing name of one persisted thread.
+    ///
+    /// Repeating this operation with the same name is idempotent, so a lost
+    /// app-server connection is retried once after reconnecting.
+    pub async fn rename_thread(&mut self, thread_id: &str, name: &str) -> Result<(), CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        let result = self.client.rename_thread(thread_id, name).await;
+        match result {
+            Err(error) if error.is_connection_lost() && !self.cancellation.is_cancelled() => {
+                self.reconnect().await?;
+                self.client.rename_thread(thread_id, name).await
+            }
+            result => result,
+        }
+    }
+
     /// Makes the next successful poll establish a new baseline.
     ///
     /// The app-server connection remains alive. This is useful when a caller

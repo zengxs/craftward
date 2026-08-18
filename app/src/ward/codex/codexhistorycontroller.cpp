@@ -328,6 +328,34 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
 }
 
 bool
+CodexHistoryController::renameSelectedThread(const QString& name)
+{
+    const QString normalizedName = name.trimmed();
+    if (selectedThreadId_.isEmpty() || normalizedName.isEmpty() || normalizedName == selectedThreadTitle_.trimmed() ||
+        startingThread_ || turnInFlight() || loadingConversation_)
+        return false;
+    if (historyObserver_ == nullptr) {
+        setConversationErrorMessage(tr("The Codex history observer is unavailable."));
+        return false;
+    }
+
+    const QByteArray threadId = selectedThreadId_.toUtf8();
+    const QByteArray encodedName = normalizedName.toUtf8();
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_rename_thread(
+          historyObserver_, threadId.constData(), encodedName.constData(), &rawError)) {
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("The Codex conversation could not be renamed.");
+        setConversationErrorMessage(message);
+        return false;
+    }
+
+    setConversationErrorMessage({});
+    return true;
+}
+
+bool
 CodexHistoryController::startThread(const QUrl& workingDirectory)
 {
     if (startingThread_ || turnInFlight() || loadingConversation_)

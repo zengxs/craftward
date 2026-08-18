@@ -122,6 +122,16 @@ pub(crate) struct ThreadReadResponse {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadSetNameParams<'a> {
+    pub(crate) thread_id: &'a str,
+    pub(crate) name: &'a str,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ThreadSetNameResponse {}
+
+#[derive(Serialize)]
 pub(crate) struct ThreadStartParams<'a> {
     cwd: &'a Path,
     #[serde(skip_serializing_if = "is_false")]
