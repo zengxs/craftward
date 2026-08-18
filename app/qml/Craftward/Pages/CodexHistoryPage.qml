@@ -15,6 +15,18 @@ Page {
 
     required property CodexHistoryController controller
 
+    CodexHistoryActionState {
+        id: historyActionState
+
+        archived: root.controller.showingArchived
+        hasSelection: root.controller.selectedThreadId.length > 0
+        loadingThreads: root.controller.loadingThreads
+        loadingConversation: root.controller.loadingConversation
+        startingThread: root.controller.startingThread
+        turnInFlight: root.controller.turnInFlight
+        changingThreadLifecycle: root.controller.changingThreadLifecycle
+    }
+
     FolderDialog {
         id: workingDirectoryDialog
 
@@ -26,11 +38,20 @@ Page {
         id: renameDialog
 
         currentName: root.controller.selectedThreadTitle
-        renameAllowed: root.controller.selectedThreadId.length > 0 && !root.controller.loadingConversation && !root.controller.startingThread && !root.controller.turnInFlight
+        renameAllowed: historyActionState.renameAllowed
         onRenameRequested: name => {
             if (root.controller.renameSelectedThread(name))
                 accept();
         }
+    }
+
+    ConfirmationDialog {
+        id: archiveDialog
+
+        title: qsTr("Archive conversation?")
+        message: qsTr("This conversation will move out of Active history. You can restore it later from Archived.")
+        acceptText: qsTr("Archive")
+        onAccepted: root.controller.archiveSelectedThread()
     }
 
     background: Rectangle {
@@ -85,13 +106,14 @@ Page {
 
                     Button {
                         text: qsTr("New…")
-                        enabled: !root.controller.startingThread && !root.controller.turnInFlight && !root.controller.loadingConversation
+                        visible: !root.controller.showingArchived
+                        enabled: historyActionState.canStartThread
                         onClicked: workingDirectoryDialog.open()
                     }
 
                     Button {
                         text: qsTr("Refresh")
-                        enabled: !root.controller.loadingThreads && !root.controller.startingThread && !root.controller.turnInFlight
+                        enabled: !historyActionState.busy
                         onClicked: root.controller.refresh()
                     }
                 }
@@ -101,6 +123,35 @@ Page {
                     text: qsTr("Continue persisted conversations through the local Codex app-server.")
                     color: root.palette.placeholderText
                     wrapMode: Text.WordWrap
+                }
+
+                ButtonGroup {
+                    id: historyScopeGroup
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    Button {
+                        Layout.fillWidth: true
+                        text: qsTr("Active")
+                        checkable: true
+                        checked: !root.controller.showingArchived
+                        enabled: historyActionState.canSwitchScope
+                        ButtonGroup.group: historyScopeGroup
+                        onClicked: root.controller.showArchivedThreads(false)
+                    }
+
+                    Button {
+                        Layout.fillWidth: true
+                        text: qsTr("Archived")
+                        checkable: true
+                        checked: root.controller.showingArchived
+                        enabled: historyActionState.canSwitchScope
+                        ButtonGroup.group: historyScopeGroup
+                        onClicked: root.controller.showArchivedThreads(true)
+                    }
                 }
 
                 ListView {
@@ -125,7 +176,7 @@ Page {
                         width: ListView.view.width
                         checkable: true
                         checked: root.controller.selectedThreadId === threadId
-                        enabled: !root.controller.startingThread && !root.controller.turnInFlight
+                        enabled: !root.controller.startingThread && !root.controller.turnInFlight && !root.controller.changingThreadLifecycle
                         hoverEnabled: true
                         leftPadding: 12
                         rightPadding: 12
@@ -165,7 +216,7 @@ Page {
                     Label {
                         anchors.centerIn: parent
                         width: Math.min(parent.width - 32, 240)
-                        text: root.controller.startingThread ? qsTr("Starting a new conversation…") : (root.controller.loadingThreads ? qsTr("Loading conversations…") : qsTr("No persisted conversations were found."))
+                        text: root.controller.startingThread ? qsTr("Starting a new conversation…") : (root.controller.loadingThreads ? qsTr("Loading conversations…") : (root.controller.showingArchived ? qsTr("No archived conversations were found.") : qsTr("No active conversations were found.")))
                         color: root.palette.placeholderText
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
@@ -199,9 +250,21 @@ Page {
 
                     Button {
                         text: qsTr("Rename…")
-                        visible: root.controller.selectedThreadId.length > 0
+                        visible: root.controller.selectedThreadId.length > 0 && !root.controller.showingArchived
                         enabled: renameDialog.renameAllowed
                         onClicked: renameDialog.begin()
+                    }
+
+                    Button {
+                        text: root.controller.showingArchived ? qsTr("Restore") : qsTr("Archive…")
+                        visible: root.controller.selectedThreadId.length > 0
+                        enabled: root.controller.showingArchived ? historyActionState.canRestore : historyActionState.canArchive
+                        onClicked: {
+                            if (root.controller.showingArchived)
+                                root.controller.restoreSelectedThread();
+                            else
+                                archiveDialog.open();
+                        }
                     }
 
                     Rectangle {
@@ -233,6 +296,8 @@ Page {
 
                             Label {
                                 text: {
+                                    if (root.controller.showingArchived)
+                                        return qsTr("Archived · Read only");
                                     if (root.controller.turnState === CodexHistoryController.Starting)
                                         return qsTr("Starting…");
                                     if (root.controller.turnState === CodexHistoryController.Running) {
@@ -259,7 +324,7 @@ Page {
                     BusyIndicator {
                         Layout.preferredWidth: 22
                         Layout.preferredHeight: 22
-                        running: root.controller.loadingConversation || root.controller.startingThread || root.controller.turnInFlight
+                        running: root.controller.loadingConversation || root.controller.startingThread || root.controller.turnInFlight || root.controller.changingThreadLifecycle
                         visible: running
                     }
                 }
@@ -274,7 +339,7 @@ Page {
                     spacing: 8
                     model: root.controller.interactions
                     enabled: !root.controller.startingThread
-                    visible: count > 0
+                    visible: count > 0 && !root.controller.showingArchived
                     ScrollBar.vertical: OverlayScrollBar {}
 
                     delegate: CodexInteractionCard {
@@ -338,6 +403,7 @@ Page {
                     Layout.fillWidth: true
                     controller: root.controller
                     enabled: !root.controller.startingThread
+                    visible: historyActionState.composerVisible
                     onTurnSubmitted: timelineView.followLatest()
                 }
             }

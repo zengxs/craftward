@@ -33,12 +33,14 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(CodexThreadModel* threads READ threads CONSTANT)
     Q_PROPERTY(CodexTimelineModel* timeline READ timeline CONSTANT)
     Q_PROPERTY(CodexInteractionModel* interactions READ interactions CONSTANT)
+    Q_PROPERTY(bool showingArchived READ showingArchived NOTIFY historyScopeChanged)
     Q_PROPERTY(QString selectedThreadId READ selectedThreadId NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedThreadTitle READ selectedThreadTitle NOTIFY selectionChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool loadingThreads READ loadingThreads NOTIFY loadingChanged)
     Q_PROPERTY(bool loadingConversation READ loadingConversation NOTIFY loadingChanged)
     Q_PROPERTY(bool startingThread READ startingThread NOTIFY startingThreadChanged)
+    Q_PROPERTY(bool changingThreadLifecycle READ changingThreadLifecycle NOTIFY changingThreadLifecycleChanged)
     Q_PROPERTY(bool activityHistoryPartial READ activityHistoryPartial NOTIFY activityHistoryPartialChanged)
     Q_PROPERTY(TurnState turnState READ turnState NOTIFY turnStateChanged)
     Q_PROPERTY(bool turnInFlight READ turnInFlight NOTIFY turnStateChanged)
@@ -122,12 +124,14 @@ class CodexHistoryController : public QObject
     [[nodiscard]] CodexThreadModel* threads();
     [[nodiscard]] CodexTimelineModel* timeline();
     [[nodiscard]] CodexInteractionModel* interactions();
+    [[nodiscard]] bool showingArchived() const;
     [[nodiscard]] QString selectedThreadId() const;
     [[nodiscard]] QString selectedThreadTitle() const;
     [[nodiscard]] QString errorMessage() const;
     [[nodiscard]] bool loadingThreads() const;
     [[nodiscard]] bool loadingConversation() const;
     [[nodiscard]] bool startingThread() const;
+    [[nodiscard]] bool changingThreadLifecycle() const;
     [[nodiscard]] bool activityHistoryPartial() const;
     [[nodiscard]] TurnState turnState() const;
     [[nodiscard]] bool turnInFlight() const;
@@ -145,8 +149,11 @@ class CodexHistoryController : public QObject
     [[nodiscard]] QString writeAvailabilityMessage() const;
 
     Q_INVOKABLE void refresh();
+    Q_INVOKABLE bool showArchivedThreads(bool archived);
     Q_INVOKABLE void selectThread(const QString& threadId, const QString& title);
     Q_INVOKABLE bool renameSelectedThread(const QString& name);
+    Q_INVOKABLE bool archiveSelectedThread();
+    Q_INVOKABLE bool restoreSelectedThread();
     Q_INVOKABLE bool startThread(const QUrl& workingDirectory);
     Q_INVOKABLE void acquireWriteAccess();
     Q_INVOKABLE void releaseWriteAccess();
@@ -158,10 +165,12 @@ class CodexHistoryController : public QObject
     Q_INVOKABLE void clearError();
 
   signals:
+    void historyScopeChanged();
     void selectionChanged();
     void errorMessageChanged();
     void loadingChanged();
     void startingThreadChanged();
+    void changingThreadLifecycleChanged();
     void activityHistoryPartialChanged();
     void turnStateChanged();
     void steeringTurnChanged();
@@ -173,6 +182,12 @@ class CodexHistoryController : public QObject
 
   private:
     friend class CodexHistoryControllerTest;
+
+    enum class ThreadLifecycleAction
+    {
+        Archive,
+        Restore,
+    };
 
     struct TurnRuntimeState
     {
@@ -188,6 +203,9 @@ class CodexHistoryController : public QObject
     void setThreadErrorMessage(const QString& message);
     void setThreadStartErrorMessage(const QString& message);
     void setConversationErrorMessage(const QString& message);
+    void clearSelection();
+    bool changeSelectedThreadLifecycle(ThreadLifecycleAction action);
+    void setChangingThreadLifecycle(bool changing, const QString& threadId = {});
     void setStartingThread(bool starting);
     void setActivityHistoryPartial(bool partial);
     void setTurnState(TurnState state,
@@ -209,6 +227,7 @@ class CodexHistoryController : public QObject
     CodexInteractionModel interactionModel_;
     WardCodexHistoryObserver* historyObserver_ = nullptr;
     std::unique_ptr<CodexHistoryCallbackContext> callbackContext_;
+    bool showingArchived_ = false;
     QString selectedThreadId_;
     QString selectedThreadTitle_;
     QString errorMessage_;
@@ -219,6 +238,8 @@ class CodexHistoryController : public QObject
     bool loadingThreads_ = true;
     bool loadingConversation_ = false;
     bool startingThread_ = false;
+    bool changingThreadLifecycle_ = false;
+    QString pendingLifecycleThreadId_;
     bool activityHistoryPartial_ = false;
     TurnRuntimeState turnRuntimeState_;
     bool steeringTurn_ = false;

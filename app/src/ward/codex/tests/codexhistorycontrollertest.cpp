@@ -49,18 +49,20 @@ conversationEvent(HistoryEventKind kind,
 }
 
 HistoryEvent
-threadPageEvent(const QString& name)
+threadPageEvent(const QString& name, bool archived = false, bool includeThread = true)
 {
-    ThreadSummary thread;
-    thread.setThreadId(QStringLiteral("thread-new"));
-    thread.setName(name);
-    thread.setPreview(QStringLiteral("New conversation"));
-
     ThreadPage page;
-    page.setThreads({ std::move(thread) });
+    if (includeThread) {
+        ThreadSummary thread;
+        thread.setThreadId(QStringLiteral("thread-new"));
+        thread.setName(name);
+        thread.setPreview(QStringLiteral("New conversation"));
+        page.setThreads({ std::move(thread) });
+    }
 
     HistoryEvent event;
     event.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED);
+    event.setArchived(archived);
     event.setThreadPage(std::move(page));
     return event;
 }
@@ -75,6 +77,16 @@ turnOutcomeEvent(HistoryEventKind kind, const QString& errorMessage = {})
         event.setErrorMessage(errorMessage);
     return event;
 }
+
+HistoryEvent
+threadListErrorEvent(bool archived, const QString& errorMessage)
+{
+    HistoryEvent event;
+    event.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREADS_ERROR);
+    event.setArchived(archived);
+    event.setErrorMessage(errorMessage);
+    return event;
+}
 }
 
 class CodexHistoryControllerTest : public QObject
@@ -87,6 +99,12 @@ class CodexHistoryControllerTest : public QObject
     void reportsRejectedTurnGuidanceWithoutConfirmation();
     void validatesConversationRenamesBeforeDispatch();
     void appliesRenamedConversationTitles();
+    void ignoresStaleThreadPagesAndWaitsForLifecycleConfirmation();
+    void keepsLifecyclePendingAfterHistoryDecodingFailure();
+    void keepsLifecyclePendingAfterMalformedThreadUpdates();
+    void rejectsUnscopedThreadRecoveryAndErrorEvents();
+    void reportsDedicatedThreadLifecycleErrors();
+    void keepsArchivedConversationsReadOnly();
 };
 
 void
@@ -207,6 +225,173 @@ CodexHistoryControllerTest::appliesRenamedConversationTitles()
              QStringLiteral("Focused work"));
     QCOMPARE(controller.selectedThreadTitle(), QStringLiteral("Focused work"));
     QCOMPARE(selectionSpy.count(), 1);
+}
+
+void
+CodexHistoryControllerTest::ignoresStaleThreadPagesAndWaitsForLifecycleConfirmation()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
+    controller.changingThreadLifecycle_ = true;
+    controller.loadingThreads_ = true;
+
+    controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation"), true, false), {});
+    QCOMPARE(controller.threads()->rowCount(), 1);
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+
+    controller.applyHistoryEvent(threadListErrorEvent(true, QStringLiteral("Stale archived error")), {});
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+    QVERIFY(controller.errorMessage().isEmpty());
+
+    controller.applyHistoryEvent(turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_ERROR,
+                                                  QStringLiteral("Temporary conversation error")),
+                                 {});
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+    QCOMPARE(controller.errorMessage(), QStringLiteral("Temporary conversation error"));
+
+    controller.clearError();
+    controller.applyHistoryEvent(threadListErrorEvent(false, QStringLiteral("Temporary active error")), {});
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+    QCOMPARE(controller.errorMessage(), QStringLiteral("Temporary active error"));
+
+    controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
+    QCOMPARE(controller.threads()->rowCount(), 1);
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+
+    controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation"), false, false), {});
+    QCOMPARE(controller.threads()->rowCount(), 0);
+    QVERIFY(controller.selectedThreadId().isEmpty());
+    QCOMPARE(controller.timeline()->rowCount(), 0);
+    QVERIFY(!controller.changingThreadLifecycle());
+    QVERIFY(!controller.loadingThreads());
+}
+
+void
+CodexHistoryControllerTest::keepsLifecyclePendingAfterHistoryDecodingFailure()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
+    controller.changingThreadLifecycle_ = true;
+    controller.loadingThreads_ = true;
+
+    controller.applyHistoryEvent({}, QStringLiteral("Malformed history event"));
+
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+    QCOMPARE(controller.errorMessage(), QStringLiteral("Malformed history event"));
+}
+
+void
+CodexHistoryControllerTest::keepsLifecyclePendingAfterMalformedThreadUpdates()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
+    controller.changingThreadLifecycle_ = true;
+    controller.loadingThreads_ = true;
+
+    HistoryEvent missingScope;
+    missingScope.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED);
+    missingScope.setThreadPage({});
+    controller.applyHistoryEvent(std::move(missingScope), {});
+
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+
+    HistoryEvent missingPage;
+    missingPage.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED);
+    missingPage.setArchived(false);
+    controller.applyHistoryEvent(std::move(missingPage), {});
+
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+}
+
+void
+CodexHistoryControllerTest::rejectsUnscopedThreadRecoveryAndErrorEvents()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
+    controller.changingThreadLifecycle_ = true;
+    controller.loadingThreads_ = true;
+    controller.clearError();
+    const QString missingScopeError =
+      QStringLiteral("Ward Core returned a thread-list event without its history scope.");
+
+    HistoryEvent recovery;
+    recovery.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREADS_RECOVERED);
+    controller.applyHistoryEvent(std::move(recovery), {});
+
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+    QCOMPARE(controller.errorMessage(), missingScopeError);
+
+    controller.clearError();
+    HistoryEvent error;
+    error.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREADS_ERROR);
+    error.setErrorMessage(QStringLiteral("Unscoped list error"));
+    controller.applyHistoryEvent(std::move(error), {});
+
+    QVERIFY(controller.changingThreadLifecycle());
+    QVERIFY(controller.loadingThreads());
+    QCOMPARE(controller.errorMessage(), missingScopeError);
+}
+
+void
+CodexHistoryControllerTest::reportsDedicatedThreadLifecycleErrors()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
+    controller.changingThreadLifecycle_ = true;
+    controller.loadingThreads_ = true;
+
+    controller.applyHistoryEvent(
+      turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_LIFECYCLE_ERROR, QStringLiteral("Archive failed")),
+      {});
+
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(!controller.changingThreadLifecycle());
+    QVERIFY(!controller.loadingThreads());
+    QCOMPARE(controller.errorMessage(), QStringLiteral("Archive failed"));
+}
+
+void
+CodexHistoryControllerTest::keepsArchivedConversationsReadOnly()
+{
+    CodexHistoryController controller(nullptr);
+    controller.showingArchived_ = true;
+    controller.applyHistoryEvent(threadPageEvent(QStringLiteral("Archived conversation"), true), {});
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED,
+                                                   {},
+                                                   QStringLiteral("Archived conversation")),
+                                 {});
+    controller.clearError();
+
+    QVERIFY(controller.showingArchived());
+    QVERIFY(!controller.renameSelectedThread(QStringLiteral("Renamed")));
+    QVERIFY(!controller.startThread(QUrl::fromLocalFile(QStringLiteral("/workspace"))));
+    controller.acquireWriteAccess();
+    QCOMPARE(controller.writeAvailability(), CodexHistoryController::WriteAvailability::NotRequested);
+    controller.setWriteAvailability(CodexHistoryController::WriteAvailability::Writable);
+    QVERIFY(!controller.startTurn(QStringLiteral("Continue")));
+    QVERIFY(controller.errorMessage().isEmpty());
 }
 
 QTEST_APPLESS_MAIN(CodexHistoryControllerTest)

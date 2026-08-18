@@ -232,6 +232,28 @@ impl CodexHistorySession {
         }
     }
 
+    /// Moves one persisted thread out of the active history list.
+    ///
+    /// This mutation is not retried after a lost response because the
+    /// app-server may already have applied it.
+    pub async fn archive_thread(&mut self, thread_id: &str) -> Result<(), CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        self.client.archive_thread(thread_id).await
+    }
+
+    /// Restores one archived thread and returns its persisted snapshot.
+    ///
+    /// This mutation is not retried after a lost response because the
+    /// app-server may already have applied it.
+    pub async fn unarchive_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        self.client.unarchive_thread(thread_id).await
+    }
+
     /// Makes the next successful poll establish a new baseline.
     ///
     /// The app-server connection remains alive. This is useful when a caller

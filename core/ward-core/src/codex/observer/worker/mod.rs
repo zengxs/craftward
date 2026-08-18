@@ -18,9 +18,9 @@ use super::super::live::{LiveRuntimeState, LiveThreadProjection, event_is_increm
 use super::super::wire;
 use super::ObserverOperationGate;
 use super::commands::{
-    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, ThreadRenameRequest,
-    ThreadStartRequest, TurnRequest, TurnSteerRequest, WriteAccessRequest, drain_commands,
-    merge_command,
+    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, ThreadLifecycleAction,
+    ThreadLifecycleRequest, ThreadListScope, ThreadRenameRequest, ThreadStartRequest, TurnRequest,
+    TurnSteerRequest, WriteAccessRequest, drain_commands, merge_command,
 };
 use super::events::HistoryEventSink;
 
@@ -139,6 +139,7 @@ struct ObserverState {
     cancellation: CodexHistoryCancellation,
     session: Option<CodexHistorySession>,
     writer: Option<CodexThreadWriter>,
+    thread_list_scope: ThreadListScope,
     thread_page_health: PollHealth,
     conversation_health: PollHealth,
     initial_conversation_reads: InitialConversationReads,
@@ -175,6 +176,7 @@ impl ObserverState {
             cancellation,
             session: None,
             writer: None,
+            thread_list_scope: ThreadListScope::Active,
             thread_page_health: PollHealth::default(),
             conversation_health: PollHealth::default(),
             initial_conversation_reads: InitialConversationReads::default(),
@@ -197,11 +199,27 @@ impl ObserverState {
         }
     }
 
+    fn set_thread_list_scope(&mut self, scope: ThreadListScope) -> bool {
+        if self.thread_list_scope == scope {
+            return false;
+        }
+        self.thread_list_scope = scope;
+        self.thread_page_health.reset();
+        if let Some(session) = self.session.as_mut() {
+            session.reset_thread_page_baseline();
+        }
+        true
+    }
+
     async fn start_thread(
         &mut self,
         request: ThreadStartRequest,
         sink: &HistoryEventSink,
     ) -> Option<String> {
+        if self.thread_list_scope.is_archived() {
+            sink.emit_thread_start_error("Archived Codex history is read-only.");
+            return None;
+        }
         let result = CodexThreadWriter::start_on(
             &self.source,
             self.cancellation.clone(),
@@ -239,6 +257,14 @@ impl ObserverState {
     }
 
     async fn acquire_write(&mut self, thread_id: &str, sink: &HistoryEventSink) -> bool {
+        if self.thread_list_scope.is_archived() {
+            sink.emit_thread_write_state(
+                thread_id,
+                wire::ThreadWriteStatus::Unavailable,
+                Some("Archived Codex conversations are read-only."),
+            );
+            return false;
+        }
         if self
             .writer
             .as_ref()
@@ -318,6 +344,10 @@ impl ObserverState {
         sink: &HistoryEventSink,
     ) -> bool {
         let ThreadRenameRequest { thread_id, name } = request;
+        if self.thread_list_scope.is_archived() {
+            sink.emit_conversation_error(&thread_id, "Archived Codex conversations are read-only.");
+            return false;
+        }
         let result = match self.ensure_session().await {
             Ok(()) => {
                 self.session
@@ -341,6 +371,60 @@ impl ObserverState {
         }
     }
 
+    async fn change_thread_lifecycle(
+        &mut self,
+        request: ThreadLifecycleRequest,
+        sink: &HistoryEventSink,
+    ) -> bool {
+        let ThreadLifecycleRequest { thread_id, action } = request;
+        let valid_scope = matches!(
+            (self.thread_list_scope, action),
+            (ThreadListScope::Active, ThreadLifecycleAction::Archive)
+                | (ThreadListScope::Archived, ThreadLifecycleAction::Restore)
+        );
+        if !valid_scope {
+            sink.emit_thread_lifecycle_error(
+                &thread_id,
+                "The conversation no longer belongs to the displayed history.",
+            );
+            return false;
+        }
+
+        if self
+            .writer
+            .as_ref()
+            .is_some_and(|writer| writer.thread_id() == thread_id)
+        {
+            self.release_write(&thread_id, sink).await;
+        }
+        let result = match self.ensure_session().await {
+            Ok(()) => {
+                let session = self
+                    .session
+                    .as_mut()
+                    .expect("the history session was initialized above");
+                match action {
+                    ThreadLifecycleAction::Archive => session.archive_thread(&thread_id).await,
+                    ThreadLifecycleAction::Restore => {
+                        session.unarchive_thread(&thread_id).await.map(drop)
+                    }
+                }
+            }
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(()) => {
+                self.refresh();
+                true
+            }
+            Err(_) if self.cancellation.is_cancelled() => false,
+            Err(error) => {
+                sink.emit_thread_lifecycle_error(&thread_id, &error.to_string());
+                false
+            }
+        }
+    }
+
     async fn poll_threads(&mut self, sink: &HistoryEventSink) -> bool {
         let result = self.poll_thread_page().await.map(|poll| match poll {
             ThreadPagePoll::Baseline(page) | ThreadPagePoll::Changed(page) => {
@@ -353,9 +437,15 @@ impl ObserverState {
             .observe(result, self.cancellation.is_cancelled());
         let succeeded = effect.is_successful();
         match effect {
-            PollEffect::Updated(page) => sink.emit_threads_updated(page),
-            PollEffect::Recovered => sink.emit_threads_recovered(),
-            PollEffect::Error(message) => sink.emit_threads_error(&message),
+            PollEffect::Updated(page) => {
+                sink.emit_threads_updated(page, self.thread_list_scope.is_archived());
+            }
+            PollEffect::Recovered => {
+                sink.emit_threads_recovered(self.thread_list_scope.is_archived());
+            }
+            PollEffect::Error(message) => {
+                sink.emit_threads_error(&message, self.thread_list_scope.is_archived());
+            }
             PollEffect::Unchanged | PollEffect::RepeatedError | PollEffect::Cancelled => {}
         }
         succeeded
@@ -770,6 +860,7 @@ impl ObserverState {
             .expect("the history session was initialized above")
             .poll_thread_page(&ThreadListOptions {
                 limit: Some(THREAD_PAGE_LIMIT),
+                archived: Some(self.thread_list_scope.is_archived()),
                 ..ThreadListOptions::default()
             })
             .await
@@ -986,15 +1077,34 @@ pub(super) async fn run_observer(
                     let now = TokioInstant::now();
                     let CommandUpdate {
                         watched_thread: requested_thread,
+                        thread_list_scope,
                         refresh,
                         write_access,
                         thread_rename,
+                        thread_lifecycle,
                         thread_start,
                         turn,
                         controls,
                     } = update;
                     let mut following = CommandUpdate::default();
 
+                    if let Some(scope) = thread_list_scope
+                        && state.set_thread_list_scope(scope)
+                    {
+                        let OperationDrive::Completed { deferred, .. } =
+                            drive_operation(state.select_thread(), &mut receiver, &cancellation)
+                                .await
+                        else {
+                            break 'observer;
+                        };
+                        if let Some(deferred) = deferred {
+                            following.merge(deferred);
+                        }
+                        watched_thread = None;
+                        threads_due = now;
+                        conversation_due = None;
+                        live_emit_due = None;
+                    }
                     if let Some(thread_id) = requested_thread {
                         let OperationDrive::Completed { deferred, .. } =
                             drive_operation(state.select_thread(), &mut receiver, &cancellation)
@@ -1041,6 +1151,44 @@ pub(super) async fn run_observer(
                             if watched_thread.as_deref() == Some(renamed_thread_id.as_str()) {
                                 conversation_due = Some(now);
                             }
+                        }
+                    }
+                    for request in thread_lifecycle {
+                        let changed_thread_id = request.thread_id.clone();
+                        let OperationDrive::Completed {
+                            output: changed,
+                            deferred,
+                        } = drive_operation(
+                            state.change_thread_lifecycle(request, &sink),
+                            &mut receiver,
+                            &cancellation,
+                        )
+                        .await
+                        else {
+                            break 'observer;
+                        };
+                        if let Some(deferred) = deferred {
+                            following.merge(deferred);
+                        }
+                        if changed {
+                            if watched_thread.as_deref() == Some(changed_thread_id.as_str()) {
+                                let OperationDrive::Completed { deferred, .. } = drive_operation(
+                                    state.select_thread(),
+                                    &mut receiver,
+                                    &cancellation,
+                                )
+                                .await
+                                else {
+                                    break 'observer;
+                                };
+                                if let Some(deferred) = deferred {
+                                    following.merge(deferred);
+                                }
+                                watched_thread = None;
+                                conversation_due = None;
+                                live_emit_due = None;
+                            }
+                            threads_due = now;
                         }
                     }
                     if let Some(request) = write_access {

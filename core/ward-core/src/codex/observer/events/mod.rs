@@ -33,10 +33,11 @@ impl HistoryEventSink {
         Self { callback, context }
     }
 
-    pub(super) fn emit_threads_updated(&self, page: ThreadPage) {
+    pub(super) fn emit_threads_updated(&self, page: ThreadPage, archived: bool) {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadsUpdated as i32,
             thread_id: None,
+            archived: Some(archived),
             body: Some(wire::history_event::Body::ThreadPage(page.into())),
         });
     }
@@ -45,6 +46,7 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ConversationUpdated as i32,
             thread_id: Some(thread_id.to_owned()),
+            archived: None,
             body: Some(wire::history_event::Body::Conversation(thread.into())),
         });
     }
@@ -53,6 +55,7 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadStarted as i32,
             thread_id: Some(thread_id.to_owned()),
+            archived: None,
             body: Some(wire::history_event::Body::Conversation(thread.into())),
         });
     }
@@ -61,14 +64,25 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadStartError as i32,
             thread_id: None,
+            archived: None,
             body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
         });
     }
 
-    pub(super) fn emit_threads_recovered(&self) {
+    pub(super) fn emit_thread_lifecycle_error(&self, thread_id: &str, message: &str) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadLifecycleError as i32,
+            thread_id: Some(thread_id.to_owned()),
+            archived: None,
+            body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
+        });
+    }
+
+    pub(super) fn emit_threads_recovered(&self, archived: bool) {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadsRecovered as i32,
             thread_id: None,
+            archived: Some(archived),
             body: None,
         });
     }
@@ -77,14 +91,16 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ConversationRecovered as i32,
             thread_id: Some(thread_id.to_owned()),
+            archived: None,
             body: None,
         });
     }
 
-    pub(super) fn emit_threads_error(&self, message: &str) {
+    pub(super) fn emit_threads_error(&self, message: &str, archived: bool) {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadsError as i32,
             thread_id: None,
+            archived: Some(archived),
             body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
         });
     }
@@ -93,6 +109,7 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ConversationError as i32,
             thread_id: Some(thread_id.to_owned()),
+            archived: None,
             body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
         });
     }
@@ -134,6 +151,7 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadWriteStateChanged as i32,
             thread_id: Some(thread_id.to_owned()),
+            archived: None,
             body: Some(wire::history_event::Body::ThreadWriteState(
                 wire::ThreadWriteState {
                     status: status as i32,
@@ -162,6 +180,7 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadRuntimeStateChanged as i32,
             thread_id: Some(thread_id.to_owned()),
+            archived: None,
             body: Some(wire::history_event::Body::ThreadRuntimeState(
                 wire::ThreadRuntimeState {
                     status: status as i32,
@@ -180,6 +199,7 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::PendingInteractionsUpdated as i32,
             thread_id: Some(thread_id.to_owned()),
+            archived: None,
             body: Some(wire::history_event::Body::PendingInteractions(
                 wire::PendingInteractionPage {
                     interactions: interactions.into_iter().map(Into::into).collect(),
@@ -197,6 +217,7 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: kind as i32,
             thread_id: Some(thread_id.to_owned()),
+            archived: None,
             body: message
                 .map(|message| wire::history_event::Body::ErrorMessage(message.to_owned())),
         });

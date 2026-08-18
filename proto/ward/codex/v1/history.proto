@@ -56,6 +56,8 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_TURN_STEERED = 16;
   // Carries an error_message when guidance was not accepted.
   HISTORY_EVENT_KIND_TURN_STEER_ERROR = 17;
+  // Carries an error_message when a thread could not be archived or restored.
+  HISTORY_EVENT_KIND_THREAD_LIFECYCLE_ERROR = 18;
 }
 
 // The selected thread's writer availability for this Craftward observer.
@@ -101,6 +103,8 @@ message ThreadRuntimeState {
 message HistoryEvent {
   HistoryEventKind kind = 1;
   optional string thread_id = 2;
+  // The active/archived scope for every thread-list event.
+  optional bool archived = 9;
 
   oneof body {
     ThreadPage thread_page = 3;

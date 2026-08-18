@@ -16,13 +16,14 @@ use tokio_util::sync::CancellationToken;
 use crate::app_server::{AppServerReader, AppServerShutdown, AppServerWriter};
 use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
-    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, THREAD_SET_NAME_METHOD,
-    THREAD_START_METHOD, TURN_INTERRUPT_METHOD, TURN_START_METHOD, TURN_STEER_METHOD,
+    THREAD_ARCHIVE_METHOD, THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD,
+    THREAD_SET_NAME_METHOD, THREAD_START_METHOD, THREAD_UNARCHIVE_METHOD, TURN_INTERRUPT_METHOD,
+    TURN_START_METHOD, TURN_STEER_METHOD, ThreadArchiveParams, ThreadArchiveResponse,
     ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
     ThreadResumeResponse, ThreadSetNameParams, ThreadSetNameResponse, ThreadStartParams,
-    ThreadStartResponse, TurnInterruptParams, TurnInterruptResponse, TurnStartParams,
-    TurnStartResponse, TurnSteerParams, TurnSteerResponse, interaction_result, pending_interaction,
-    resolved_server_request, turn_stream_event,
+    ThreadStartResponse, ThreadUnarchiveParams, ThreadUnarchiveResponse, TurnInterruptParams,
+    TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnSteerParams, TurnSteerResponse,
+    interaction_result, pending_interaction, resolved_server_request, turn_stream_event,
 };
 use crate::{
     CodexAppServerSource, CodexError, InteractionId, InteractionResponse, PendingInteraction,
@@ -341,6 +342,30 @@ impl CodexClient {
             )
             .await?;
         Ok(())
+    }
+
+    /// Moves one persisted thread out of the active history list.
+    pub async fn archive_thread(&mut self, thread_id: &str) -> Result<(), CodexError> {
+        let _: ThreadArchiveResponse = self
+            .request(THREAD_ARCHIVE_METHOD, &ThreadArchiveParams { thread_id })
+            .await?;
+        Ok(())
+    }
+
+    /// Restores one archived thread and returns its persisted snapshot.
+    pub async fn unarchive_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
+        let response: ThreadUnarchiveResponse = self
+            .request(
+                THREAD_UNARCHIVE_METHOD,
+                &ThreadUnarchiveParams { thread_id },
+            )
+            .await?;
+        response
+            .into_thread()
+            .map_err(|source| CodexError::InvalidResponse {
+                method: THREAD_UNARCHIVE_METHOD,
+                source,
+            })
     }
 
     /// Starts a thread in one app-server-visible working directory and

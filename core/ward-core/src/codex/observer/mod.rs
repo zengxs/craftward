@@ -16,7 +16,8 @@ use ward_codex::{
 };
 
 use self::commands::{
-    ObserverCommand, ThreadRenameRequest, ThreadStartRequest, TurnRequest, TurnSteerRequest,
+    ObserverCommand, ThreadLifecycleAction, ThreadLifecycleRequest, ThreadListScope,
+    ThreadRenameRequest, ThreadStartRequest, TurnRequest, TurnSteerRequest,
 };
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
@@ -197,6 +198,41 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_watch(
     send_command(observer, ObserverCommand::Watch(thread_id), output_error)
 }
 
+/// Switches the observer between active and archived persisted history.
+///
+/// The next successful list read is emitted as a scope-tagged authoritative
+/// snapshot.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `output_error`, when non-null,
+/// must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_show_archived(
+    observer: *mut WardCodexHistoryObserver,
+    archived: bool,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    let scope = if archived {
+        ThreadListScope::Archived
+    } else {
+        ThreadListScope::Active
+    };
+    send_command(
+        observer,
+        ObserverCommand::SetThreadListScope(scope),
+        output_error,
+    )
+}
+
 /// Renames one persisted Codex thread.
 ///
 /// Updated thread and conversation snapshots are emitted asynchronously after
@@ -243,6 +279,60 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_rename_thread(
         ObserverCommand::RenameThread(ThreadRenameRequest { thread_id, name }),
         output_error,
     )
+}
+
+/// Moves one active persisted Codex thread into archived history.
+///
+/// The resulting active-history snapshot is emitted asynchronously.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
+/// NUL-terminated string. `output_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_archive_thread(
+    observer: *mut WardCodexHistoryObserver,
+    thread_id: *const c_char,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller upholds the private C interface contract documented
+    // above.
+    unsafe {
+        queue_thread_lifecycle(
+            observer,
+            thread_id,
+            ThreadLifecycleAction::Archive,
+            output_error,
+        )
+    }
+}
+
+/// Restores one archived persisted Codex thread to active history.
+///
+/// The resulting archived-history snapshot is emitted asynchronously.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
+/// NUL-terminated string. `output_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_restore_thread(
+    observer: *mut WardCodexHistoryObserver,
+    thread_id: *const c_char,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller upholds the private C interface contract documented
+    // above.
+    unsafe {
+        queue_thread_lifecycle(
+            observer,
+            thread_id,
+            ThreadLifecycleAction::Restore,
+            output_error,
+        )
+    }
 }
 
 /// Starts and observes one persisted Codex thread.
@@ -677,6 +767,38 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_resolve_interaction(
     send_command(
         observer,
         ObserverCommand::ResolveInteraction(response),
+        output_error,
+    )
+}
+
+unsafe fn queue_thread_lifecycle(
+    observer: *mut WardCodexHistoryObserver,
+    thread_id: *const c_char,
+    action: ThreadLifecycleAction,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointer.
+    let Some(thread_id) =
+        (unsafe { required_string(thread_id, "the Codex thread identifier", output_error) })
+    else {
+        return false;
+    };
+    if thread_id.trim().is_empty() {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex thread identifier is empty") };
+        return false;
+    }
+
+    send_command(
+        observer,
+        ObserverCommand::ChangeThreadLifecycle(ThreadLifecycleRequest { thread_id, action }),
         output_error,
     )
 }

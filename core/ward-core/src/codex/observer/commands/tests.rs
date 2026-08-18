@@ -57,9 +57,11 @@ fn coalesces_commands_and_prioritizes_stop() {
         drain_commands(ObserverCommand::Watch("thread-1".to_owned()), &mut receiver),
         DrainedCommands::Update(CommandUpdate {
             watched_thread: Some("thread-2".to_owned()),
+            thread_list_scope: None,
             refresh: true,
             write_access: Some(WriteAccessRequest::Acquire("thread-2".to_owned())),
             thread_rename: None,
+            thread_lifecycle: vec![],
             thread_start: None,
             turn: Some(turn_request("thread-2", "Continue")),
             controls: vec![],
@@ -158,6 +160,42 @@ fn keeps_only_the_latest_thread_rename() {
 }
 
 #[test]
+fn preserves_thread_lifecycle_changes_in_arrival_order() {
+    let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    sender
+        .try_send(ObserverCommand::ChangeThreadLifecycle(
+            ThreadLifecycleRequest {
+                thread_id: "thread-1".to_owned(),
+                action: ThreadLifecycleAction::Restore,
+            },
+        ))
+        .unwrap();
+
+    assert_eq!(
+        drain_commands(
+            ObserverCommand::ChangeThreadLifecycle(ThreadLifecycleRequest {
+                thread_id: "thread-1".to_owned(),
+                action: ThreadLifecycleAction::Archive,
+            }),
+            &mut receiver,
+        ),
+        DrainedCommands::Update(CommandUpdate {
+            thread_lifecycle: vec![
+                ThreadLifecycleRequest {
+                    thread_id: "thread-1".to_owned(),
+                    action: ThreadLifecycleAction::Archive,
+                },
+                ThreadLifecycleRequest {
+                    thread_id: "thread-1".to_owned(),
+                    action: ThreadLifecycleAction::Restore,
+                },
+            ],
+            ..CommandUpdate::default()
+        })
+    );
+}
+
+#[test]
 fn preserves_immediate_turn_controls_in_arrival_order() {
     let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     sender
@@ -201,9 +239,11 @@ fn preserves_immediate_turn_controls_in_arrival_order() {
 fn merges_deferred_updates_without_replacing_the_reserved_turn() {
     let mut deferred = CommandUpdate {
         watched_thread: Some("thread-1".to_owned()),
+        thread_list_scope: None,
         refresh: false,
         write_access: Some(WriteAccessRequest::Acquire("thread-1".to_owned())),
         thread_rename: None,
+        thread_lifecycle: vec![],
         thread_start: Some(thread_start_request("/workspace/one")),
         turn: Some(turn_request("thread-1", "First")),
         controls: vec![],
@@ -211,9 +251,11 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
 
     deferred.merge(CommandUpdate {
         watched_thread: Some("thread-2".to_owned()),
+        thread_list_scope: None,
         refresh: true,
         write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
         thread_rename: None,
+        thread_lifecycle: vec![],
         thread_start: Some(thread_start_request("/workspace/two")),
         turn: Some(turn_request("thread-2", "Second")),
         controls: vec![],
@@ -223,9 +265,11 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
         deferred,
         CommandUpdate {
             watched_thread: Some("thread-2".to_owned()),
+            thread_list_scope: None,
             refresh: true,
             write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
             thread_rename: None,
+            thread_lifecycle: vec![],
             thread_start: Some(thread_start_request("/workspace/one")),
             turn: Some(turn_request("thread-1", "First")),
             controls: vec![],

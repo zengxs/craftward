@@ -8,6 +8,7 @@ qt_add_qml_module(CraftwardPages
         CodexComposerState.qml
         CodexConversationRenameDialog.qml
         CodexConversationRenameState.qml
+        CodexHistoryActionState.qml
         CodexHistoryPage.qml
         CodexInteractionCard.qml
         CodexTimelineView.qml

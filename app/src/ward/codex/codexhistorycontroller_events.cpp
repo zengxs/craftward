@@ -3,6 +3,7 @@
 
 #include "ward/codex/codexhistorycontroller.h"
 
+#include <algorithm>
 #include <utility>
 
 void
@@ -16,30 +17,80 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             setThreadStartErrorMessage(decodingError);
             setStartingThread(false);
         }
-        finishThreadLoading(decodingError);
+        if (changingThreadLifecycle_)
+            setThreadErrorMessage(decodingError);
+        else
+            finishThreadLoading(decodingError);
         if (!selectedThreadId_.isEmpty())
             finishConversationLoading(decodingError);
         return;
     }
 
     const QString threadId = event.hasThreadId() ? event.threadId() : QString();
+    const auto rejectThreadListEvent = [this](const QString& message) {
+        if (changingThreadLifecycle_)
+            setThreadErrorMessage(message);
+        else
+            finishThreadLoading(message);
+    };
     switch (event.kind()) {
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED: {
-            if (!event.hasThreadPage()) {
-                finishThreadLoading(tr("Ward Core returned a thread update without a thread page."));
+            if (!event.hasArchived()) {
+                rejectThreadListEvent(tr("Ward Core returned a thread update without its history scope."));
                 break;
             }
-            auto threads = event.threadPage().threads();
+            if (event.archived() != showingArchived_)
+                return;
+            if (!event.hasThreadPage()) {
+                rejectThreadListEvent(tr("Ward Core returned a thread update without a thread page."));
+                break;
+            }
+            const auto& page = event.threadPage();
+            auto threads = page.threads();
+            const auto containsThread = [&threads](const QString& candidate) {
+                return std::any_of(threads.cbegin(), threads.cend(), [&candidate](const auto& thread) {
+                    return thread.threadId() == candidate;
+                });
+            };
+            const bool selectedThreadRemains = selectedThreadId_.isEmpty() || containsThread(selectedThreadId_);
+            const bool lifecycleTargetRemains = !changingThreadLifecycle_ || containsThread(pendingLifecycleThreadId_);
             threadModel_.reconcileThreads(std::move(threads));
+            setThreadErrorMessage({});
+            if (!selectedThreadRemains)
+                clearSelection();
+            if (!lifecycleTargetRemains)
+                setChangingThreadLifecycle(false);
+            if (changingThreadLifecycle_)
+                break;
             finishThreadLoading({});
             break;
         }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_RECOVERED:
-            finishThreadLoading({});
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_RECOVERED: {
+            if (!event.hasArchived()) {
+                rejectThreadListEvent(tr("Ward Core returned a thread-list event without its history scope."));
+                break;
+            }
+            if (event.archived() != showingArchived_)
+                return;
+            if (!changingThreadLifecycle_)
+                finishThreadLoading({});
             break;
+        }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_ERROR: {
+            if (!event.hasArchived()) {
+                rejectThreadListEvent(tr("Ward Core returned a thread-list event without its history scope."));
+                break;
+            }
+            if (event.archived() != showingArchived_)
+                return;
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            finishThreadLoading(message.isEmpty() ? tr("The Codex conversation list could not be observed.") : message);
+            const QString normalizedMessage =
+              message.isEmpty() ? tr("The Codex conversation list could not be observed.") : message;
+            if (changingThreadLifecycle_) {
+                setThreadErrorMessage(normalizedMessage);
+                break;
+            }
+            finishThreadLoading(normalizedMessage);
             break;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED: {
@@ -100,8 +151,25 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             if (threadId != selectedThreadId_)
                 return;
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            finishConversationLoading(message.isEmpty() ? tr("The Codex conversation could not be observed.")
-                                                        : message);
+            const QString normalizedMessage =
+              message.isEmpty() ? tr("The Codex conversation could not be observed.") : message;
+            finishConversationLoading(normalizedMessage);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_LIFECYCLE_ERROR: {
+            if (threadId != selectedThreadId_ || threadId != pendingLifecycleThreadId_)
+                return;
+            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
+            const QString normalizedMessage =
+              message.isEmpty() ? tr("The Codex conversation could not be archived or restored.") : message;
+            if (changingThreadLifecycle_) {
+                setChangingThreadLifecycle(false);
+                const bool wasLoadingThreads = std::exchange(loadingThreads_, false);
+                setConversationErrorMessage(normalizedMessage);
+                if (wasLoadingThreads)
+                    emit loadingChanged();
+            }
+            finishConversationLoading(normalizedMessage);
             break;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STARTED:

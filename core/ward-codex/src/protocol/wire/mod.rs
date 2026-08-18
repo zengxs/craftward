@@ -79,6 +79,15 @@ impl From<InitializeResponse> for ServerInfo {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadArchiveParams<'a> {
+    pub(crate) thread_id: &'a str,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ThreadArchiveResponse {}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadListParams<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     cursor: Option<&'a str>,
@@ -130,6 +139,23 @@ pub(crate) struct ThreadSetNameParams<'a> {
 
 #[derive(Deserialize)]
 pub(crate) struct ThreadSetNameResponse {}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadUnarchiveParams<'a> {
+    pub(crate) thread_id: &'a str,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ThreadUnarchiveResponse {
+    thread: WireThread,
+}
+
+impl ThreadUnarchiveResponse {
+    pub(crate) fn into_thread(self) -> Result<crate::Thread, serde_json::Error> {
+        self.thread.into_thread()
+    }
+}
 
 #[derive(Serialize)]
 pub(crate) struct ThreadStartParams<'a> {

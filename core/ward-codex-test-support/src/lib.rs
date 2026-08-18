@@ -139,6 +139,7 @@ impl FakeState {
 struct FakeThread {
     cwd: String,
     ephemeral: bool,
+    archived: bool,
     name: Option<String>,
     turn: Option<FakeTurn>,
 }
@@ -215,11 +216,13 @@ fn handle_client_message(message: Value, state: &Arc<Mutex<FakeState>>) -> Vec<V
     };
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
     match method {
-        "thread/list" => vec![thread_list_response(id, state)],
+        "thread/archive" => vec![thread_archive_response(id, &params, state)],
+        "thread/list" => vec![thread_list_response(id, &params, state)],
         "thread/read" => vec![thread_read_response(id, &params, state)],
         "thread/start" => vec![thread_start_response(id, &params, state)],
         "thread/resume" => vec![thread_resume_response(id, &params, state)],
         "thread/name/set" => vec![thread_set_name_response(id, &params, state)],
+        "thread/unarchive" => vec![thread_unarchive_response(id, &params, state)],
         "turn/start" => turn_start_messages(id, &params, state),
         "turn/steer" => turn_steer_messages(id, &params, state),
         "turn/interrupt" => vec![json!({ "id": id, "result": {} })],
@@ -310,11 +313,44 @@ fn complete_active_turn(
     true
 }
 
-fn thread_list_response(id: Value, state: &Arc<Mutex<FakeState>>) -> Value {
+fn requested_thread_mut<'a>(
+    response_id: &Value,
+    params: &Value,
+    state: &'a mut FakeState,
+) -> Result<&'a mut FakeThread, Value> {
+    let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
+    state
+        .thread
+        .as_mut()
+        .filter(|_| requested_thread_id == THREAD_ID)
+        .ok_or_else(|| {
+            json!({
+                "id": response_id,
+                "error": { "code": -32600, "message": format!("thread not loaded: {requested_thread_id}") }
+            })
+        })
+}
+
+fn thread_archive_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
+    let mut state = state.lock().unwrap();
+    let thread = match requested_thread_mut(&id, params, &mut state) {
+        Ok(thread) => thread,
+        Err(response) => return response,
+    };
+    thread.archived = true;
+    json!({ "id": id, "result": {} })
+}
+
+fn thread_list_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
     let state = state.lock().unwrap();
+    let archived = params
+        .get("archived")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let data = state
         .thread
         .as_ref()
+        .filter(|thread| !thread.ephemeral && thread.archived == archived)
         .map(|thread| vec![thread_json(thread, state.options, true)])
         .unwrap_or_default();
     json!({ "id": id, "result": { "data": data, "nextCursor": null } })
@@ -345,7 +381,6 @@ fn thread_read_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>
 }
 
 fn thread_set_name_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
-    let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return json!({
             "id": id,
@@ -353,18 +388,24 @@ fn thread_set_name_response(id: Value, params: &Value, state: &Arc<Mutex<FakeSta
         });
     };
     let mut state = state.lock().unwrap();
-    let Some(thread) = state
-        .thread
-        .as_mut()
-        .filter(|_| requested_thread_id == THREAD_ID)
-    else {
-        return json!({
-            "id": id,
-            "error": { "code": -32600, "message": format!("thread not loaded: {requested_thread_id}") }
-        });
+    let thread = match requested_thread_mut(&id, params, &mut state) {
+        Ok(thread) => thread,
+        Err(response) => return response,
     };
     thread.name = Some(name.to_owned());
     json!({ "id": id, "result": {} })
+}
+
+fn thread_unarchive_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
+    let mut state = state.lock().unwrap();
+    let options = state.options;
+    let thread = match requested_thread_mut(&id, params, &mut state) {
+        Ok(thread) => thread,
+        Err(response) => return response,
+    };
+    thread.archived = false;
+    let thread = thread_json(thread, options, true);
+    json!({ "id": id, "result": { "thread": thread } })
 }
 
 fn thread_start_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
@@ -382,6 +423,7 @@ fn thread_start_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>
     state.thread = Some(FakeThread {
         cwd,
         ephemeral,
+        archived: false,
         name: None,
         turn: None,
     });

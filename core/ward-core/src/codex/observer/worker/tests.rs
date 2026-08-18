@@ -18,7 +18,8 @@ use super::super::test_support::{CapturedEvent, event_sink, thread};
 use super::*;
 use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
 use crate::codex::observer::commands::{
-    CommandUpdate, ObserverCommand, ThreadRenameRequest, ThreadStartRequest, TurnSteerRequest,
+    CommandUpdate, ObserverCommand, ThreadLifecycleAction, ThreadLifecycleRequest, ThreadListScope,
+    ThreadRenameRequest, ThreadStartRequest, TurnSteerRequest,
 };
 use crate::codex::wire;
 
@@ -123,6 +124,230 @@ async fn renames_a_persisted_thread_and_refreshes_its_public_snapshots() {
     }
 
     state.shutdown().await;
+}
+
+#[tokio::test]
+async fn archives_and_restores_a_thread_with_scope_tagged_authoritative_snapshots() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    captured.lock().unwrap().events.clear();
+
+    assert!(state.poll_threads(&sink).await);
+    assert_thread_page(&captured, false, &[thread_id.as_str()]);
+
+    assert!(
+        state
+            .change_thread_lifecycle(
+                ThreadLifecycleRequest {
+                    thread_id: thread_id.clone(),
+                    action: ThreadLifecycleAction::Archive,
+                },
+                &sink,
+            )
+            .await
+    );
+    assert!(state.poll_threads(&sink).await);
+    assert_thread_page(&captured, false, &[]);
+
+    state.set_thread_list_scope(ThreadListScope::Archived);
+    assert!(state.poll_threads(&sink).await);
+    assert_thread_page(&captured, true, &[thread_id.as_str()]);
+
+    assert!(
+        state
+            .change_thread_lifecycle(
+                ThreadLifecycleRequest {
+                    thread_id: thread_id.clone(),
+                    action: ThreadLifecycleAction::Restore,
+                },
+                &sink,
+            )
+            .await
+    );
+    assert!(state.poll_threads(&sink).await);
+    assert_thread_page(&captured, true, &[]);
+
+    state.set_thread_list_scope(ThreadListScope::Active);
+    assert!(state.poll_threads(&sink).await);
+    assert_thread_page(&captured, false, &[thread_id.as_str()]);
+
+    captured.lock().unwrap().events.clear();
+    assert!(
+        !state
+            .change_thread_lifecycle(
+                ThreadLifecycleRequest {
+                    thread_id,
+                    action: ThreadLifecycleAction::Restore,
+                },
+                &sink,
+            )
+            .await
+    );
+    assert_eq!(
+        captured.lock().unwrap().events.last().unwrap().kind,
+        wire::HistoryEventKind::ThreadLifecycleError as i32
+    );
+
+    state.shutdown().await;
+}
+
+#[tokio::test]
+async fn applies_history_scope_and_lifecycle_commands_through_the_observer_actor() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let cancellation = CodexHistoryCancellation::new();
+    let working_directory = PathBuf::from("/workspace");
+    let (writer, _) = CodexThreadWriter::start_on(
+        &source,
+        cancellation.clone(),
+        &working_directory,
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the fake app-server should seed persisted history");
+    let thread_id = writer.thread_id().to_owned();
+    writer.shutdown().await;
+
+    let captured = Arc::new(Mutex::new(CapturedEvent::default()));
+    let sink = event_sink(&captured);
+    let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let worker = tokio::spawn(run_observer(
+        source,
+        receiver,
+        sink,
+        cancellation.clone(),
+        Arc::new(ObserverOperationGate::new()),
+    ));
+    let mut event_cursor = 0;
+
+    wait_for_thread_page(&captured, &mut event_cursor, false, &[thread_id.as_str()]).await;
+    sender
+        .send(ObserverCommand::ChangeThreadLifecycle(
+            ThreadLifecycleRequest {
+                thread_id: thread_id.clone(),
+                action: ThreadLifecycleAction::Archive,
+            },
+        ))
+        .await
+        .unwrap();
+    wait_for_thread_page(&captured, &mut event_cursor, false, &[]).await;
+
+    sender
+        .send(ObserverCommand::SetThreadListScope(
+            ThreadListScope::Archived,
+        ))
+        .await
+        .unwrap();
+    wait_for_thread_page(&captured, &mut event_cursor, true, &[thread_id.as_str()]).await;
+    sender
+        .send(ObserverCommand::ChangeThreadLifecycle(
+            ThreadLifecycleRequest {
+                thread_id: thread_id.clone(),
+                action: ThreadLifecycleAction::Restore,
+            },
+        ))
+        .await
+        .unwrap();
+    wait_for_thread_page(&captured, &mut event_cursor, true, &[]).await;
+
+    sender.send(ObserverCommand::Stop).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .expect("the observer should stop after its stop command")
+        .expect("the observer task should not panic");
+}
+
+async fn wait_for_thread_page(
+    captured: &Mutex<CapturedEvent>,
+    event_cursor: &mut usize,
+    archived: bool,
+    thread_ids: &[&str],
+) {
+    let sample = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let sample = {
+                let captured = captured.lock().unwrap();
+                captured.events[*event_cursor..]
+                    .iter()
+                    .enumerate()
+                    .find_map(|(offset, event)| {
+                        let Some(wire::history_event::Body::ThreadPage(page)) = event.body.as_ref()
+                        else {
+                            return None;
+                        };
+                        Some((
+                            *event_cursor + offset + 1,
+                            event.archived,
+                            page.threads
+                                .iter()
+                                .map(|thread| thread.thread_id.clone())
+                                .collect::<Vec<_>>(),
+                        ))
+                    })
+            };
+            if let Some(sample) = sample {
+                break sample;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the observer should emit the requested thread page");
+
+    *event_cursor = sample.0;
+    assert_eq!(sample.1, Some(archived));
+    assert_eq!(
+        sample.2,
+        thread_ids
+            .iter()
+            .map(|thread_id| (*thread_id).to_owned())
+            .collect::<Vec<_>>()
+    );
+}
+
+fn assert_thread_page(captured: &Mutex<CapturedEvent>, archived: bool, thread_ids: &[&str]) {
+    let captured = captured.lock().unwrap();
+    let page = captured
+        .events
+        .iter()
+        .rev()
+        .find_map(|event| match event.body.as_ref() {
+            Some(wire::history_event::Body::ThreadPage(page)) => Some(page),
+            _ => None,
+        })
+        .expect("the observer should emit an authoritative thread page");
+    assert_eq!(
+        captured
+            .events
+            .iter()
+            .rev()
+            .find(|event| {
+                matches!(
+                    event.body.as_ref(),
+                    Some(wire::history_event::Body::ThreadPage(_))
+                )
+            })
+            .and_then(|event| event.archived),
+        Some(archived)
+    );
+    assert_eq!(
+        page.threads
+            .iter()
+            .map(|thread| thread.thread_id.as_str())
+            .collect::<Vec<_>>(),
+        thread_ids
+    );
 }
 
 #[tokio::test]

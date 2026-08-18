@@ -9,19 +9,45 @@ use ward_codex::{InteractionResponse, TurnOptions};
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub(super) enum ObserverCommand {
     Watch(String),
+    SetThreadListScope(ThreadListScope),
     Refresh,
     AcquireWrite(String),
     ReleaseWrite(String),
     RenameThread(ThreadRenameRequest),
+    ChangeThreadLifecycle(ThreadLifecycleRequest),
     StartThread(ThreadStartRequest),
     StartTurn(TurnRequest),
     SteerTurn(TurnSteerRequest),
     InterruptTurn(String),
     ResolveInteraction(InteractionResponse),
     Stop,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ThreadListScope {
+    Active,
+    Archived,
+}
+
+impl ThreadListScope {
+    pub(super) const fn is_archived(self) -> bool {
+        matches!(self, Self::Archived)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ThreadLifecycleAction {
+    Archive,
+    Restore,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct ThreadLifecycleRequest {
+    pub(super) thread_id: String,
+    pub(super) action: ThreadLifecycleAction,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -65,9 +91,11 @@ pub(super) struct ThreadStartRequest {
 #[derive(Debug, Default, Eq, PartialEq)]
 pub(super) struct CommandUpdate {
     pub(super) watched_thread: Option<String>,
+    pub(super) thread_list_scope: Option<ThreadListScope>,
     pub(super) refresh: bool,
     pub(super) write_access: Option<WriteAccessRequest>,
     pub(super) thread_rename: Option<Box<ThreadRenameRequest>>,
+    pub(super) thread_lifecycle: Vec<ThreadLifecycleRequest>,
     pub(super) thread_start: Option<ThreadStartRequest>,
     pub(super) turn: Option<TurnRequest>,
     pub(super) controls: Vec<ThreadControlRequest>,
@@ -78,6 +106,9 @@ impl CommandUpdate {
         if newer.watched_thread.is_some() {
             self.watched_thread = newer.watched_thread;
         }
+        if newer.thread_list_scope.is_some() {
+            self.thread_list_scope = newer.thread_list_scope;
+        }
         self.refresh |= newer.refresh;
         if newer.write_access.is_some() {
             self.write_access = newer.write_access;
@@ -85,6 +116,7 @@ impl CommandUpdate {
         if newer.thread_rename.is_some() {
             self.thread_rename = newer.thread_rename;
         }
+        self.thread_lifecycle.extend(newer.thread_lifecycle);
         if self.thread_start.is_none() {
             self.thread_start = newer.thread_start;
         }
@@ -96,9 +128,11 @@ impl CommandUpdate {
 
     pub(super) fn is_empty(&self) -> bool {
         self.watched_thread.is_none()
+            && self.thread_list_scope.is_none()
             && !self.refresh
             && self.write_access.is_none()
             && self.thread_rename.is_none()
+            && self.thread_lifecycle.is_empty()
             && self.thread_start.is_none()
             && self.turn.is_none()
             && self.controls.is_empty()
@@ -106,9 +140,11 @@ impl CommandUpdate {
 
     pub(super) fn is_exclusive_operation_only(&self) -> bool {
         self.watched_thread.is_none()
+            && self.thread_list_scope.is_none()
             && !self.refresh
             && self.write_access.is_none()
             && self.thread_rename.is_none()
+            && self.thread_lifecycle.is_empty()
             && self.thread_start.is_some() != self.turn.is_some()
             && self.controls.is_empty()
     }
@@ -146,6 +182,7 @@ fn drain_available_commands(
 pub(super) fn merge_command(update: &mut CommandUpdate, command: ObserverCommand) -> bool {
     match command {
         ObserverCommand::Watch(thread_id) => update.watched_thread = Some(thread_id),
+        ObserverCommand::SetThreadListScope(scope) => update.thread_list_scope = Some(scope),
         ObserverCommand::Refresh => update.refresh = true,
         ObserverCommand::AcquireWrite(thread_id) => {
             update.write_access = Some(WriteAccessRequest::Acquire(thread_id));
@@ -154,6 +191,9 @@ pub(super) fn merge_command(update: &mut CommandUpdate, command: ObserverCommand
             update.write_access = Some(WriteAccessRequest::Release(thread_id));
         }
         ObserverCommand::RenameThread(request) => update.thread_rename = Some(Box::new(request)),
+        ObserverCommand::ChangeThreadLifecycle(request) => {
+            update.thread_lifecycle.push(request);
+        }
         ObserverCommand::StartThread(request) if update.thread_start.is_none() => {
             update.thread_start = Some(request);
         }

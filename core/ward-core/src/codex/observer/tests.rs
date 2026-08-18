@@ -8,10 +8,16 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use ward_codex::{CodexHistoryCancellation, TurnMode, TurnOptions, TurnPermissionPreset};
 
-use super::commands::{ObserverCommand, ThreadRenameRequest};
+use super::commands::{
+    ObserverCommand, ThreadLifecycleAction, ThreadLifecycleRequest, ThreadListScope,
+    ThreadRenameRequest,
+};
 use super::{
     COMMAND_QUEUE_CAPACITY, ObserverOperation, ObserverOperationGate, WardCodexHistoryObserver,
-    decode_turn_options, ward_core_codex_history_observer_rename_thread,
+    decode_turn_options, ward_core_codex_history_observer_archive_thread,
+    ward_core_codex_history_observer_rename_thread,
+    ward_core_codex_history_observer_restore_thread,
+    ward_core_codex_history_observer_show_archived,
 };
 
 #[test]
@@ -88,5 +94,69 @@ async fn queues_a_thread_rename_through_the_private_c_interface() {
             thread_id: "thread-1".to_owned(),
             name: "Focused work".to_owned(),
         }
+    );
+}
+
+#[tokio::test]
+async fn queues_history_scope_and_lifecycle_changes_through_the_private_c_interface() {
+    let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let observer = WardCodexHistoryObserver {
+        commands,
+        cancellation: CodexHistoryCancellation::new(),
+        active_operation: Arc::new(ObserverOperationGate::new()),
+        runtime: Handle::current(),
+        worker: None,
+    };
+    let thread_id = CString::new("thread-1").expect("the thread ID is valid");
+    let mut error = std::ptr::null_mut();
+
+    // SAFETY: The observer and thread ID remain live for all private C
+    // interface calls, and the error output pointer is writable.
+    assert!(unsafe {
+        ward_core_codex_history_observer_show_archived(
+            std::ptr::from_ref(&observer).cast_mut(),
+            true,
+            &mut error,
+        )
+    });
+    assert!(unsafe {
+        ward_core_codex_history_observer_archive_thread(
+            std::ptr::from_ref(&observer).cast_mut(),
+            thread_id.as_ptr(),
+            &mut error,
+        )
+    });
+    assert!(unsafe {
+        ward_core_codex_history_observer_restore_thread(
+            std::ptr::from_ref(&observer).cast_mut(),
+            thread_id.as_ptr(),
+            &mut error,
+        )
+    });
+    assert!(error.is_null());
+
+    assert_eq!(
+        receiver.recv().await,
+        Some(ObserverCommand::SetThreadListScope(
+            ThreadListScope::Archived
+        ))
+    );
+    assert_eq!(
+        receiver.recv().await,
+        Some(ObserverCommand::ChangeThreadLifecycle(
+            ThreadLifecycleRequest {
+                thread_id: "thread-1".to_owned(),
+                action: ThreadLifecycleAction::Archive,
+            }
+        ))
+    );
+    assert_eq!(
+        receiver.recv().await,
+        Some(ObserverCommand::ChangeThreadLifecycle(
+            ThreadLifecycleRequest {
+                thread_id: "thread-1".to_owned(),
+                action: ThreadLifecycleAction::Restore,
+            }
+        ))
     );
 }

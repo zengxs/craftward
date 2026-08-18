@@ -12,16 +12,20 @@ use crate::codex::wire;
 #[test]
 fn serializes_thread_pages_for_the_callback_duration() {
     let captured = Mutex::new(CapturedEvent::default());
-    event_sink(&captured).emit_threads_updated(ThreadPage {
-        threads: vec![thread().summary],
-        next_cursor: Some("next".to_owned()),
-    });
+    event_sink(&captured).emit_threads_updated(
+        ThreadPage {
+            threads: vec![thread().summary],
+            next_cursor: Some("next".to_owned()),
+        },
+        false,
+    );
 
     let captured = captured.lock().unwrap();
     assert_eq!(captured.events.len(), 1);
     let event = &captured.events[0];
     assert_eq!(event.kind, wire::HistoryEventKind::ThreadsUpdated as i32);
     assert_eq!(event.thread_id, None);
+    assert_eq!(event.archived, Some(false));
     let Some(wire::history_event::Body::ThreadPage(page)) = event.body.as_ref() else {
         panic!("the event must contain a thread page");
     };
@@ -80,6 +84,26 @@ fn serializes_thread_start_outcomes() {
         failed.body,
         Some(wire::history_event::Body::ErrorMessage(
             "start failed".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn serializes_thread_lifecycle_errors_for_the_selected_thread() {
+    let captured = Mutex::new(CapturedEvent::default());
+    event_sink(&captured).emit_thread_lifecycle_error("thread-1", "archive failed");
+
+    let captured = captured.lock().unwrap();
+    let event = captured.events.first().unwrap();
+    assert_eq!(
+        event.kind,
+        wire::HistoryEventKind::ThreadLifecycleError as i32
+    );
+    assert_eq!(event.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(
+        event.body,
+        Some(wire::history_event::Body::ErrorMessage(
+            "archive failed".to_owned()
         ))
     );
 }
@@ -174,13 +198,14 @@ fn emits_targeted_recovery_and_error_states_without_payloads() {
     let captured = Mutex::new(CapturedEvent::default());
     let sink = event_sink(&captured);
 
-    sink.emit_threads_error("disconnected");
+    sink.emit_threads_error("disconnected", true);
     {
         let captured = captured.lock().unwrap();
         assert_eq!(captured.events.len(), 1);
         let event = &captured.events[0];
         assert_eq!(event.kind, wire::HistoryEventKind::ThreadsError as i32);
         assert_eq!(event.thread_id, None);
+        assert_eq!(event.archived, Some(true));
         assert_eq!(
             event.body,
             Some(wire::history_event::Body::ErrorMessage(

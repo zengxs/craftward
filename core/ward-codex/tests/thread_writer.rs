@@ -135,6 +135,96 @@ async fn renames_a_persisted_thread_through_the_public_history_session() {
     history.shutdown().await;
 }
 
+#[tokio::test]
+async fn archives_and_restores_a_persisted_thread_through_the_public_history_session() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let (writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the thread should start before it is archived");
+    writer.shutdown().await;
+
+    let active_threads = ThreadListOptions {
+        archived: Some(false),
+        ..ThreadListOptions::default()
+    };
+    let archived_threads = ThreadListOptions {
+        archived: Some(true),
+        ..ThreadListOptions::default()
+    };
+    let mut history = CodexHistorySession::connect(source)
+        .await
+        .expect("the public history session should connect");
+    history
+        .rename_thread("thread-new", "Focused work")
+        .await
+        .expect("the test thread should have a stable name");
+
+    let ThreadPagePoll::Baseline(page) = history
+        .poll_thread_page(&active_threads)
+        .await
+        .expect("the active thread page should load")
+    else {
+        panic!("the first active page should establish a baseline");
+    };
+    assert_eq!(page.threads.len(), 1);
+
+    history
+        .archive_thread("thread-new")
+        .await
+        .expect("the persisted thread should be archived");
+    let ThreadPagePoll::Changed(page) = history
+        .poll_thread_page(&active_threads)
+        .await
+        .expect("the active page should refresh after archiving")
+    else {
+        panic!("archiving should change the active thread page");
+    };
+    assert!(page.threads.is_empty());
+
+    history.reset_thread_page_baseline();
+    let ThreadPagePoll::Baseline(page) = history
+        .poll_thread_page(&archived_threads)
+        .await
+        .expect("the archived thread page should load")
+    else {
+        panic!("switching to archived threads should establish a baseline");
+    };
+    assert_eq!(page.threads.len(), 1);
+    assert_eq!(page.threads[0].name.as_deref(), Some("Focused work"));
+
+    history
+        .unarchive_thread("thread-new")
+        .await
+        .expect("the archived thread should be restored");
+    let ThreadPagePoll::Changed(page) = history
+        .poll_thread_page(&archived_threads)
+        .await
+        .expect("the archived page should refresh after restoring")
+    else {
+        panic!("restoring should change the archived thread page");
+    };
+    assert!(page.threads.is_empty());
+
+    history.reset_thread_page_baseline();
+    let ThreadPagePoll::Baseline(page) = history
+        .poll_thread_page(&active_threads)
+        .await
+        .expect("the restored active thread page should load")
+    else {
+        panic!("switching back to active threads should establish a baseline");
+    };
+    assert_eq!(page.threads.len(), 1);
+    assert_eq!(page.threads[0].name.as_deref(), Some("Focused work"));
+
+    history.shutdown().await;
+}
+
 struct FakeTurnOutcome {
     command_status: Option<ActivityStatus>,
     streamed_answer: String,

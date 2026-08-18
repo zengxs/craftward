@@ -27,7 +27,6 @@ Pane {
             root.controller.releaseWriteAccess();
     }
 
-    visible: root.controller.selectedThreadId.length > 0
     padding: 10
 
     background: Rectangle {
