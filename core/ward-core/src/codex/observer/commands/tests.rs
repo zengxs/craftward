@@ -38,6 +38,32 @@ fn thread_rename_request(thread_id: &str, name: &str) -> ThreadRenameRequest {
     }
 }
 
+fn thread_fork_request(thread_id: &str) -> ThreadForkRequest {
+    ThreadForkRequest {
+        thread_id: thread_id.to_owned(),
+        last_turn_id: "turn-1".to_owned(),
+    }
+}
+
+#[test]
+fn reserves_only_the_first_thread_fork() {
+    let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    sender
+        .try_send(ObserverCommand::ForkThread(thread_fork_request("thread-2")))
+        .unwrap();
+
+    assert_eq!(
+        drain_commands(
+            ObserverCommand::ForkThread(thread_fork_request("thread-1")),
+            &mut receiver,
+        ),
+        DrainedCommands::Update(CommandUpdate {
+            thread_fork: Some(Box::new(thread_fork_request("thread-1"))),
+            ..CommandUpdate::default()
+        })
+    );
+}
+
 #[test]
 fn coalesces_commands_and_prioritizes_stop() {
     let (sender, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
@@ -61,6 +87,7 @@ fn coalesces_commands_and_prioritizes_stop() {
             refresh: true,
             write_access: Some(WriteAccessRequest::Acquire("thread-2".to_owned())),
             thread_rename: None,
+            thread_fork: None,
             thread_lifecycle: vec![],
             thread_start: None,
             turn: Some(turn_request("thread-2", "Continue")),
@@ -90,7 +117,7 @@ fn reserves_only_the_first_thread_start() {
             &mut receiver,
         ),
         DrainedCommands::Update(CommandUpdate {
-            thread_start: Some(thread_start_request("/workspace/one")),
+            thread_start: Some(Box::new(thread_start_request("/workspace/one"))),
             ..CommandUpdate::default()
         })
     );
@@ -99,21 +126,26 @@ fn reserves_only_the_first_thread_start() {
 #[test]
 fn recognizes_an_update_with_exactly_one_exclusive_operation() {
     let start = CommandUpdate {
-        thread_start: Some(thread_start_request("/workspace")),
+        thread_start: Some(Box::new(thread_start_request("/workspace"))),
         ..CommandUpdate::default()
     };
     let turn = CommandUpdate {
         turn: Some(turn_request("thread-1", "Continue")),
         ..CommandUpdate::default()
     };
+    let fork = CommandUpdate {
+        thread_fork: Some(Box::new(thread_fork_request("thread-1"))),
+        ..CommandUpdate::default()
+    };
     let both = CommandUpdate {
-        thread_start: Some(thread_start_request("/workspace")),
+        thread_start: Some(Box::new(thread_start_request("/workspace"))),
         turn: Some(turn_request("thread-1", "Continue")),
         ..CommandUpdate::default()
     };
 
     assert!(start.is_exclusive_operation_only());
     assert!(turn.is_exclusive_operation_only());
+    assert!(fork.is_exclusive_operation_only());
     assert!(!both.is_exclusive_operation_only());
     assert!(!CommandUpdate::default().is_exclusive_operation_only());
 }
@@ -243,8 +275,9 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
         refresh: false,
         write_access: Some(WriteAccessRequest::Acquire("thread-1".to_owned())),
         thread_rename: None,
+        thread_fork: None,
         thread_lifecycle: vec![],
-        thread_start: Some(thread_start_request("/workspace/one")),
+        thread_start: Some(Box::new(thread_start_request("/workspace/one"))),
         turn: Some(turn_request("thread-1", "First")),
         controls: vec![],
     };
@@ -255,8 +288,9 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
         refresh: true,
         write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
         thread_rename: None,
+        thread_fork: None,
         thread_lifecycle: vec![],
-        thread_start: Some(thread_start_request("/workspace/two")),
+        thread_start: Some(Box::new(thread_start_request("/workspace/two"))),
         turn: Some(turn_request("thread-2", "Second")),
         controls: vec![],
     });
@@ -269,8 +303,9 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
             refresh: true,
             write_access: Some(WriteAccessRequest::Release("thread-1".to_owned())),
             thread_rename: None,
+            thread_fork: None,
             thread_lifecycle: vec![],
-            thread_start: Some(thread_start_request("/workspace/one")),
+            thread_start: Some(Box::new(thread_start_request("/workspace/one"))),
             turn: Some(turn_request("thread-1", "First")),
             controls: vec![],
         }

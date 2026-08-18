@@ -16,10 +16,11 @@ use tokio_util::sync::CancellationToken;
 use crate::app_server::{AppServerReader, AppServerShutdown, AppServerWriter};
 use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
-    THREAD_ARCHIVE_METHOD, THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD,
-    THREAD_SET_NAME_METHOD, THREAD_START_METHOD, THREAD_UNARCHIVE_METHOD, TURN_INTERRUPT_METHOD,
-    TURN_START_METHOD, TURN_STEER_METHOD, ThreadArchiveParams, ThreadArchiveResponse,
-    ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
+    THREAD_ARCHIVE_METHOD, THREAD_FORK_METHOD, THREAD_LIST_METHOD, THREAD_READ_METHOD,
+    THREAD_RESUME_METHOD, THREAD_SET_NAME_METHOD, THREAD_START_METHOD, THREAD_UNARCHIVE_METHOD,
+    TURN_INTERRUPT_METHOD, TURN_START_METHOD, TURN_STEER_METHOD, ThreadArchiveParams,
+    ThreadArchiveResponse, ThreadForkParams, ThreadForkResponse, ThreadListParams,
+    ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
     ThreadResumeResponse, ThreadSetNameParams, ThreadSetNameResponse, ThreadStartParams,
     ThreadStartResponse, ThreadUnarchiveParams, ThreadUnarchiveResponse, TurnInterruptParams,
     TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnSteerParams, TurnSteerResponse,
@@ -350,6 +351,34 @@ impl CodexClient {
             .request(THREAD_ARCHIVE_METHOD, &ThreadArchiveParams { thread_id })
             .await?;
         Ok(())
+    }
+
+    /// Copies one persisted thread, optionally through an inclusive last turn,
+    /// and subscribes this connection to the fork.
+    pub async fn fork_thread(
+        &mut self,
+        thread_id: &str,
+        last_turn_id: Option<&str>,
+    ) -> Result<ThreadSubscription, CodexError> {
+        let response: ThreadForkResponse = self
+            .request(
+                THREAD_FORK_METHOD,
+                &ThreadForkParams {
+                    thread_id,
+                    last_turn_id,
+                },
+            )
+            .await?;
+        let (subscription, model) =
+            response
+                .into_parts()
+                .map_err(|source| CodexError::InvalidResponse {
+                    method: THREAD_FORK_METHOD,
+                    source,
+                })?;
+        self.subscription_state.reset();
+        self.subscribed_thread_model = Some(model);
+        Ok(subscription)
     }
 
     /// Restores one archived thread and returns its persisted snapshot.

@@ -42,21 +42,35 @@ impl HistoryEventSink {
         });
     }
 
-    pub(super) fn emit_conversation_updated(&self, thread_id: &str, thread: Thread) {
+    pub(super) fn emit_conversation_updated(
+        &self,
+        thread_id: &str,
+        thread: Thread,
+        forkable_turn_ids: Vec<String>,
+    ) {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ConversationUpdated as i32,
             thread_id: Some(thread_id.to_owned()),
             archived: None,
-            body: Some(wire::history_event::Body::Conversation(thread.into())),
+            body: Some(wire::history_event::Body::Conversation(
+                wire::Conversation::from_thread(thread, forkable_turn_ids),
+            )),
         });
     }
 
-    pub(super) fn emit_thread_started(&self, thread_id: &str, thread: Thread) {
+    pub(super) fn emit_thread_started(
+        &self,
+        thread_id: &str,
+        thread: Thread,
+        forkable_turn_ids: Vec<String>,
+    ) {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadStarted as i32,
             thread_id: Some(thread_id.to_owned()),
             archived: None,
-            body: Some(wire::history_event::Body::Conversation(thread.into())),
+            body: Some(wire::history_event::Body::Conversation(
+                wire::Conversation::from_thread(thread, forkable_turn_ids),
+            )),
         });
     }
 
@@ -64,6 +78,31 @@ impl HistoryEventSink {
         self.emit(wire::HistoryEvent {
             kind: wire::HistoryEventKind::ThreadStartError as i32,
             thread_id: None,
+            archived: None,
+            body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
+        });
+    }
+
+    pub(super) fn emit_thread_forked(
+        &self,
+        thread_id: &str,
+        thread: Thread,
+        forkable_turn_ids: Vec<String>,
+    ) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadForked as i32,
+            thread_id: Some(thread_id.to_owned()),
+            archived: None,
+            body: Some(wire::history_event::Body::Conversation(
+                wire::Conversation::from_thread(thread, forkable_turn_ids),
+            )),
+        });
+    }
+
+    pub(super) fn emit_thread_fork_error(&self, thread_id: &str, message: &str) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadForkError as i32,
+            thread_id: Some(thread_id.to_owned()),
             archived: None,
             body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
         });

@@ -20,9 +20,11 @@ Page {
 
         archived: root.controller.showingArchived
         hasSelection: root.controller.selectedThreadId.length > 0
+        forkReady: (root.controller.turnState === CodexHistoryController.Detached || root.controller.turnState === CodexHistoryController.Idle) && (root.controller.writeAvailability === CodexHistoryController.NotRequested || root.controller.writeAvailability === CodexHistoryController.Writable)
         loadingThreads: root.controller.loadingThreads
         loadingConversation: root.controller.loadingConversation
         startingThread: root.controller.startingThread
+        forkingThread: root.controller.forkingThread
         turnInFlight: root.controller.turnInFlight
         changingThreadLifecycle: root.controller.changingThreadLifecycle
     }
@@ -100,7 +102,7 @@ Page {
                     BusyIndicator {
                         Layout.preferredWidth: 20
                         Layout.preferredHeight: 20
-                        running: root.controller.loadingThreads || root.controller.startingThread
+                        running: root.controller.loadingThreads || root.controller.startingThread || root.controller.forkingThread
                         visible: running
                     }
 
@@ -176,7 +178,7 @@ Page {
                         width: ListView.view.width
                         checkable: true
                         checked: root.controller.selectedThreadId === threadId
-                        enabled: !root.controller.startingThread && !root.controller.turnInFlight && !root.controller.changingThreadLifecycle
+                        enabled: !historyActionState.busy
                         hoverEnabled: true
                         leftPadding: 12
                         rightPadding: 12
@@ -324,7 +326,7 @@ Page {
                     BusyIndicator {
                         Layout.preferredWidth: 22
                         Layout.preferredHeight: 22
-                        running: root.controller.loadingConversation || root.controller.startingThread || root.controller.turnInFlight || root.controller.changingThreadLifecycle
+                        running: root.controller.loadingConversation || root.controller.startingThread || root.controller.forkingThread || root.controller.turnInFlight || root.controller.changingThreadLifecycle
                         visible: running
                     }
                 }
@@ -397,12 +399,14 @@ Page {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     controller: root.controller
+                    forkEnabled: historyActionState.canFork
+                    showForkActions: root.controller.selectedThreadId.length > 0 && !root.controller.showingArchived
                 }
 
                 CodexComposer {
                     Layout.fillWidth: true
                     controller: root.controller
-                    enabled: !root.controller.startingThread
+                    enabled: !root.controller.startingThread && !root.controller.forkingThread
                     visible: historyActionState.composerVisible
                     onTurnSubmitted: timelineView.followLatest()
                 }

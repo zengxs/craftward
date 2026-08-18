@@ -420,7 +420,7 @@ fn accepts_an_authoritative_completed_snapshot_after_missing_live_completion() {
 }
 
 #[test]
-fn new_thread_snapshot_does_not_duplicate_live_first_turn() {
+fn new_thread_fork_boundary_waits_for_the_authoritative_first_turn() {
     let mut initial = thread();
     initial.turns.clear();
     let mut projection = LiveThreadProjection::default();
@@ -443,6 +443,7 @@ fn new_thread_snapshot_does_not_duplicate_live_first_turn() {
         },
         "thread-1",
     );
+    assert!(projection.forkable_turn_ids().is_empty());
 
     let mut persisted = thread();
     persisted.turns = vec![Turn {
@@ -455,6 +456,40 @@ fn new_thread_snapshot_does_not_duplicate_live_first_turn() {
     let turns = &projection.conversation().unwrap().turns;
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0].id, "persisted-turn");
+    assert_eq!(projection.forkable_turn_ids(), ["persisted-turn"]);
+}
+
+#[test]
+fn authoritative_snapshot_publishes_an_unchanged_live_turn_as_forkable() {
+    let mut initial = thread();
+    initial.turns.clear();
+    let mut projection = LiveThreadProjection::default();
+    projection.attach(ThreadSubscription {
+        thread: initial,
+        runtime_status: ThreadRuntimeStatus::Idle,
+    });
+    let completed = Turn {
+        id: "turn-1".to_owned(),
+        status: TurnStatus::Completed,
+        items: vec![ThreadItem::UserMessage {
+            id: "user-1".to_owned(),
+            content: vec![UserInput::Text("Hello".to_owned())],
+        }],
+    };
+    projection.apply_event(
+        &ThreadStreamEvent::TurnCompleted {
+            thread_id: "thread-1".to_owned(),
+            turn: completed.clone(),
+        },
+        "thread-1",
+    );
+
+    assert!(projection.forkable_turn_ids().is_empty());
+    assert!(projection.accept_snapshot(Thread {
+        summary: projection.conversation().unwrap().summary.clone(),
+        turns: vec![completed],
+    }));
+    assert_eq!(projection.forkable_turn_ids(), ["turn-1"]);
 }
 
 #[test]

@@ -18,10 +18,35 @@ use super::super::test_support::{CapturedEvent, event_sink, thread};
 use super::*;
 use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
 use crate::codex::observer::commands::{
-    CommandUpdate, ObserverCommand, ThreadLifecycleAction, ThreadLifecycleRequest, ThreadListScope,
-    ThreadRenameRequest, ThreadStartRequest, TurnSteerRequest,
+    CommandUpdate, ObserverCommand, ThreadForkRequest, ThreadLifecycleAction,
+    ThreadLifecycleRequest, ThreadListScope, ThreadRenameRequest, ThreadStartRequest,
+    TurnSteerRequest,
 };
 use crate::codex::wire;
+
+async fn complete_fake_turn(state: &mut ObserverState, thread_id: &str, sink: &HistoryEventSink) {
+    let (_commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let OperationDrive::Completed {
+        output: completed,
+        deferred,
+    } = state
+        .run_turn(
+            TurnRequest {
+                thread_id: thread_id.to_owned(),
+                prompt: "Seed the fork boundary".to_owned(),
+                options: TurnOptions::default(),
+            },
+            sink,
+            &mut receiver,
+            vec![],
+        )
+        .await
+    else {
+        panic!("the fake turn should complete without stopping the observer");
+    };
+    assert!(completed);
+    assert!(deferred.is_none());
+}
 
 #[tokio::test]
 async fn starts_a_persisted_thread_and_adopts_its_writer() {
@@ -122,6 +147,323 @@ async fn renames_a_persisted_thread_and_refreshes_its_public_snapshots() {
         assert_eq!(thread_page.threads[0].name.as_deref(), Some("Focused work"));
         assert_eq!(latest_conversation(&captured).title, "Focused work");
     }
+
+    state.shutdown().await;
+}
+
+#[tokio::test]
+async fn forks_the_loaded_idle_thread_through_the_selected_turn() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let source_thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    complete_fake_turn(&mut state, &source_thread_id, &sink).await;
+    state.release_write(&source_thread_id, &sink).await;
+    assert!(state.writer.is_none());
+    assert_eq!(state.live.runtime(), LiveRuntimeState::Detached);
+    captured.lock().unwrap().events.clear();
+
+    let forked_thread_id = state
+        .fork_thread(
+            ThreadForkRequest {
+                thread_id: source_thread_id,
+                last_turn_id: "live-turn-1".to_owned(),
+            },
+            &sink,
+        )
+        .await;
+
+    assert_eq!(forked_thread_id.as_deref(), Some("thread-fork-1"));
+    assert_eq!(
+        state.writer.as_ref().map(CodexThreadWriter::thread_id),
+        Some("thread-fork-1")
+    );
+    assert_eq!(state.live.runtime(), LiveRuntimeState::Idle);
+    assert_eq!(
+        state
+            .live
+            .conversation()
+            .map(|thread| thread.summary.id.as_str()),
+        Some("thread-fork-1")
+    );
+    assert!(state.poll_threads(&sink).await);
+
+    {
+        let captured = captured.lock().unwrap();
+        assert_eq!(
+            captured.events[0].kind,
+            wire::HistoryEventKind::ThreadForked as i32
+        );
+        assert_eq!(
+            captured.events[0].thread_id.as_deref(),
+            Some("thread-fork-1")
+        );
+        let Some(wire::history_event::Body::Conversation(conversation)) =
+            captured.events[0].body.as_ref()
+        else {
+            panic!("the fork event should contain the copied conversation");
+        };
+        assert_eq!(conversation.timeline.len(), 2);
+        assert!(
+            conversation
+                .timeline
+                .iter()
+                .all(|item| item.turn_id == "live-turn-1")
+        );
+        let Some(wire::history_event::Body::ThreadWriteState(write_state)) =
+            captured.events[3].body.as_ref()
+        else {
+            panic!("the fork should publish its adopted writer state");
+        };
+        assert_eq!(write_state.status, wire::ThreadWriteStatus::Writable as i32);
+        let page = captured
+            .events
+            .iter()
+            .find_map(|event| match event.body.as_ref() {
+                Some(wire::history_event::Body::ThreadPage(page)) => Some(page),
+                _ => None,
+            })
+            .expect("forking should refresh the active thread page");
+        let mut ids = page
+            .threads
+            .iter()
+            .map(|thread| thread.thread_id.as_str())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        assert_eq!(ids, ["thread-fork-1", "thread-new"]);
+    }
+
+    state.shutdown().await;
+}
+
+#[tokio::test]
+async fn preserves_the_source_writer_when_a_fork_response_is_lost() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        lose_first_fork_response: true,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let source_thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    complete_fake_turn(&mut state, &source_thread_id, &sink).await;
+    captured.lock().unwrap().events.clear();
+
+    let forked_thread_id = state
+        .fork_thread(
+            ThreadForkRequest {
+                thread_id: source_thread_id,
+                last_turn_id: "live-turn-1".to_owned(),
+            },
+            &sink,
+        )
+        .await;
+
+    assert_eq!(forked_thread_id, None);
+    assert_eq!(
+        state.writer.as_ref().map(CodexThreadWriter::thread_id),
+        Some("thread-new")
+    );
+    assert_eq!(state.live.runtime(), LiveRuntimeState::Idle);
+    assert!(state.poll_threads(&sink).await);
+
+    {
+        let captured = captured.lock().unwrap();
+        assert_eq!(
+            captured.events[0].kind,
+            wire::HistoryEventKind::ThreadForkError as i32
+        );
+        let page = captured
+            .events
+            .iter()
+            .find_map(|event| match event.body.as_ref() {
+                Some(wire::history_event::Body::ThreadPage(page)) => Some(page),
+                _ => None,
+            })
+            .expect("the uncertain fork should still refresh the thread page");
+        assert_eq!(page.threads.len(), 2);
+    }
+
+    state.shutdown().await;
+}
+
+#[tokio::test]
+async fn refreshes_the_thread_page_after_a_fork_writer_conflict() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let cancellation = CodexHistoryCancellation::new();
+    let (mut external_writer, _) = CodexThreadWriter::start_on(
+        &source,
+        cancellation.clone(),
+        PathBuf::from("/workspace").as_path(),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the external writer should seed persisted history");
+    external_writer
+        .begin_text_turn("Seed the fork boundary", TurnOptions::default())
+        .await
+        .expect("the seeded turn should start");
+    loop {
+        if matches!(
+            external_writer
+                .next_subscription_event()
+                .await
+                .expect("the seeded turn should complete"),
+            ThreadStreamEvent::TurnCompleted { .. }
+        ) {
+            break;
+        }
+    }
+
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(source, cancellation);
+    assert!(state.poll_threads(&sink).await);
+    assert!(state.poll_conversation("thread-new", &sink).await);
+    captured.lock().unwrap().events.clear();
+
+    assert_eq!(
+        state
+            .fork_thread(
+                ThreadForkRequest {
+                    thread_id: "thread-new".to_owned(),
+                    last_turn_id: "live-turn-1".to_owned(),
+                },
+                &sink,
+            )
+            .await,
+        None
+    );
+    assert!(state.poll_threads(&sink).await);
+
+    {
+        let captured = captured.lock().unwrap();
+        assert!(
+            captured
+                .events
+                .iter()
+                .any(|event| { event.kind == wire::HistoryEventKind::ThreadForkError as i32 })
+        );
+        assert!(
+            captured.events.iter().any(|event| {
+                matches!(event.body, Some(wire::history_event::Body::ThreadPage(_)))
+            })
+        );
+    }
+
+    external_writer.shutdown().await;
+    state.shutdown().await;
+}
+
+#[tokio::test]
+async fn rejects_forking_archived_unloaded_or_nonidle_history() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        turn_scenario: FakeTurnScenario::WaitForGuidance,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let source_thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    captured.lock().unwrap().events.clear();
+
+    state.set_thread_list_scope(ThreadListScope::Archived);
+    assert_eq!(
+        state
+            .fork_thread(
+                ThreadForkRequest {
+                    thread_id: source_thread_id.clone(),
+                    last_turn_id: "live-turn-1".to_owned(),
+                },
+                &sink,
+            )
+            .await,
+        None
+    );
+    assert_eq!(
+        captured.lock().unwrap().events.last().unwrap().kind,
+        wire::HistoryEventKind::ThreadForkError as i32
+    );
+
+    state.set_thread_list_scope(ThreadListScope::Active);
+    captured.lock().unwrap().events.clear();
+    assert_eq!(
+        state
+            .fork_thread(
+                ThreadForkRequest {
+                    thread_id: "thread-missing".to_owned(),
+                    last_turn_id: "live-turn-1".to_owned(),
+                },
+                &sink,
+            )
+            .await,
+        None
+    );
+    assert_eq!(
+        captured.lock().unwrap().events.last().unwrap().kind,
+        wire::HistoryEventKind::ThreadForkError as i32
+    );
+    assert_eq!(
+        state.writer.as_ref().map(CodexThreadWriter::thread_id),
+        Some("thread-new")
+    );
+
+    captured.lock().unwrap().events.clear();
+    let started = state
+        .writer
+        .as_mut()
+        .expect("the source writer should remain available")
+        .begin_text_turn("Keep working", TurnOptions::default())
+        .await
+        .expect("the source turn should start");
+    state.accept_writer_event(&source_thread_id, started, &sink);
+    assert!(matches!(
+        state.live.runtime(),
+        LiveRuntimeState::Active { .. }
+    ));
+
+    assert_eq!(
+        state
+            .fork_thread(
+                ThreadForkRequest {
+                    thread_id: source_thread_id,
+                    last_turn_id: "live-turn-1".to_owned(),
+                },
+                &sink,
+            )
+            .await,
+        None
+    );
+    assert_eq!(
+        captured.lock().unwrap().events.last().unwrap().kind,
+        wire::HistoryEventKind::ThreadForkError as i32
+    );
 
     state.shutdown().await;
 }
@@ -268,6 +610,166 @@ async fn applies_history_scope_and_lifecycle_commands_through_the_observer_actor
         .expect("the observer task should not panic");
 }
 
+#[tokio::test]
+async fn forks_and_selects_a_thread_through_the_observer_actor() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let cancellation = CodexHistoryCancellation::new();
+    let (mut writer, _) = CodexThreadWriter::start_on(
+        &source,
+        cancellation.clone(),
+        PathBuf::from("/workspace").as_path(),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the fake app-server should seed persisted history");
+    for prompt in ["First direction", "Second direction", "Third direction"] {
+        writer
+            .begin_text_turn(prompt, TurnOptions::default())
+            .await
+            .expect("the seeded turn should start");
+        loop {
+            let event = writer
+                .next_subscription_event()
+                .await
+                .expect("the seeded turn should stream to completion");
+            if matches!(event, ThreadStreamEvent::TurnCompleted { .. }) {
+                break;
+            }
+        }
+    }
+    writer.shutdown().await;
+
+    let captured = Arc::new(Mutex::new(CapturedEvent::default()));
+    let sink = event_sink(&captured);
+    let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let worker = tokio::spawn(run_observer(
+        source,
+        receiver,
+        sink,
+        cancellation.clone(),
+        Arc::new(ObserverOperationGate::new()),
+    ));
+    let mut event_cursor = 0;
+
+    wait_for_thread_page(&captured, &mut event_cursor, false, &["thread-new"]).await;
+    sender
+        .send(ObserverCommand::Watch("thread-new".to_owned()))
+        .await
+        .unwrap();
+    wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::ConversationUpdated,
+    )
+    .await;
+    sender
+        .send(ObserverCommand::AcquireWrite("thread-new".to_owned()))
+        .await
+        .unwrap();
+    let write_event = wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::ThreadWriteStateChanged,
+    )
+    .await;
+    let Some(wire::history_event::Body::ThreadWriteState(write_state)) = write_event.body else {
+        panic!("the write-state event should carry its status");
+    };
+    assert_eq!(write_state.status, wire::ThreadWriteStatus::Checking as i32);
+    let writable_event = wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::ThreadWriteStateChanged,
+    )
+    .await;
+    let Some(wire::history_event::Body::ThreadWriteState(write_state)) = writable_event.body else {
+        panic!("the write-state event should carry its status");
+    };
+    assert_eq!(write_state.status, wire::ThreadWriteStatus::Writable as i32);
+
+    sender
+        .send(ObserverCommand::ForkThread(ThreadForkRequest {
+            thread_id: "thread-new".to_owned(),
+            last_turn_id: "live-turn-1".to_owned(),
+        }))
+        .await
+        .unwrap();
+    let forked = wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::ThreadForked,
+    )
+    .await;
+    assert_eq!(forked.thread_id.as_deref(), Some("thread-fork-1"));
+    let Some(wire::history_event::Body::Conversation(conversation)) = forked.body else {
+        panic!("the fork event should carry the truncated conversation");
+    };
+    assert_eq!(conversation.timeline.len(), 2);
+    assert!(
+        conversation
+            .timeline
+            .iter()
+            .all(|item| item.turn_id == "live-turn-1")
+    );
+    wait_for_thread_page(
+        &captured,
+        &mut event_cursor,
+        false,
+        &["thread-new", "thread-fork-1"],
+    )
+    .await;
+
+    sender
+        .send(ObserverCommand::StartTurn(TurnRequest {
+            thread_id: "thread-fork-1".to_owned(),
+            prompt: "Continue the fork".to_owned(),
+            options: TurnOptions::default(),
+        }))
+        .await
+        .unwrap();
+    let completed = wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::TurnCompleted,
+    )
+    .await;
+    assert_eq!(completed.thread_id.as_deref(), Some("thread-fork-1"));
+
+    sender.send(ObserverCommand::Stop).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .expect("the observer should stop after its stop command")
+        .expect("the observer task should not panic");
+}
+
+async fn wait_for_event_kind(
+    captured: &Mutex<CapturedEvent>,
+    event_cursor: &mut usize,
+    kind: wire::HistoryEventKind,
+) -> wire::HistoryEvent {
+    let event = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let sample = {
+                let captured = captured.lock().unwrap();
+                captured.events[*event_cursor..]
+                    .iter()
+                    .enumerate()
+                    .find(|(_, event)| event.kind == kind as i32)
+                    .map(|(offset, event)| (*event_cursor + offset + 1, event.clone()))
+            };
+            if let Some(sample) = sample {
+                break sample;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the observer should emit the requested event");
+    *event_cursor = event.0;
+    event.1
+}
+
 async fn wait_for_thread_page(
     captured: &Mutex<CapturedEvent>,
     event_cursor: &mut usize,
@@ -395,6 +897,7 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
         let captured = captured.lock().unwrap();
         let conversation = latest_conversation(&captured);
         assert_eq!(conversation.timeline.len(), 2);
+        assert!(conversation.forkable_turn_ids.is_empty());
         assert!(
             conversation
                 .timeline
@@ -416,6 +919,7 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
         );
         let conversation = latest_conversation(&captured);
         assert_eq!(conversation.timeline.len(), 2);
+        assert_eq!(conversation.forkable_turn_ids, ["persisted-turn-1"]);
         assert!(
             conversation
                 .timeline

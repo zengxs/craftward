@@ -7,7 +7,9 @@
 
 #include <QAbstractListModel>
 #include <QList>
+#include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
@@ -26,6 +28,7 @@ class CodexTimelineModel : public QAbstractListModel
     {
         EntryIdRole = Qt::UserRole + 1,
         TurnIdRole,
+        ForkBoundaryRole,
         ActivityGroupRole,
         FromUserRole,
         CommentaryRole,
@@ -44,7 +47,7 @@ class CodexTimelineModel : public QAbstractListModel
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
-    void reconcileTimeline(QList<CodexTimelineItem> timeline);
+    void reconcileTimeline(QList<CodexTimelineItem> timeline, const QStringList& forkableTurnIds);
     void clear();
 
   private:
@@ -73,13 +76,15 @@ class CodexTimelineModel : public QAbstractListModel
     {
         QString entryId;
         QString turnId;
+        bool forkBoundary = false;
         bool activityGroup = false;
         CodexMessage message;
         ActivityPresentationKind activityKind = ActivityPresentationKind::Activity;
         QList<CodexActivity> activities;
     };
 
-    [[nodiscard]] QList<TimelineRow> buildRows(QList<CodexTimelineItem> timeline) const;
+    [[nodiscard]] QList<TimelineRow> buildRows(QList<CodexTimelineItem> timeline,
+                                               const QSet<QString>& forkableTurnIds) const;
     [[nodiscard]] ActivityPresentationKind presentationKind(const CodexActivity& activity) const;
     [[nodiscard]] QString activityGroupLabel(ActivityPresentationKind kind) const;
     [[nodiscard]] QVariantList activityItems(const TimelineRow& row) const;

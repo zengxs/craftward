@@ -54,7 +54,10 @@ pub struct FakeCodexAppServerOptions {
     /// Whether persisted history assigns different identifiers to the first
     /// live turn and its messages.
     pub renumber_persisted_first_turn: bool,
-    /// Behavior exercised by the first turn.
+    /// Whether the first fork is applied before its connection closes without
+    /// returning the mutation response.
+    pub lose_first_fork_response: bool,
+    /// Behavior exercised by each started turn.
     pub turn_scenario: FakeTurnScenario,
 }
 
@@ -64,6 +67,7 @@ impl Default for FakeCodexAppServerOptions {
             confirm_ephemeral_thread_starts: true,
             initial_thread_read_failures: 0,
             renumber_persisted_first_turn: false,
+            lose_first_fork_response: false,
             turn_scenario: FakeTurnScenario::default(),
         }
     }
@@ -104,8 +108,14 @@ impl CodexAppServerConnector for FakeConnector {
         let (client, server) = duplex(STREAM_CAPACITY);
         let (client_reader, client_writer) = split(client);
         let state = Arc::clone(&self.state);
+        let connection_id = {
+            let mut state = state.lock().unwrap();
+            let connection_id = state.next_connection_id;
+            state.next_connection_id += 1;
+            connection_id
+        };
         let task = tokio::spawn(async move {
-            serve_connection(server, state).await;
+            serve_connection(server, state, connection_id).await;
         });
         Ok(CodexAppServerTransport::new(
             client_reader,
@@ -122,36 +132,64 @@ async fn stop_task(task: JoinHandle<()>) {
 
 struct FakeState {
     options: FakeCodexAppServerOptions,
-    thread: Option<FakeThread>,
-    remaining_thread_read_failures: usize,
+    threads: Vec<FakeThread>,
+    next_fork_number: usize,
+    next_connection_id: u64,
 }
 
 impl FakeState {
     fn new(options: FakeCodexAppServerOptions) -> Self {
         Self {
             options,
-            thread: None,
-            remaining_thread_read_failures: 0,
+            threads: vec![],
+            next_fork_number: 1,
+            next_connection_id: 1,
         }
     }
 }
 
+#[derive(Clone)]
 struct FakeThread {
+    id: String,
     cwd: String,
     ephemeral: bool,
     archived: bool,
     name: Option<String>,
-    turn: Option<FakeTurn>,
+    turns: Vec<FakeTurn>,
+    remaining_read_failures: usize,
+    writer_connection_id: Option<u64>,
 }
 
+#[derive(Clone)]
 struct FakeTurn {
+    number: usize,
     prompt: String,
     guidance: Vec<String>,
     answer: String,
     completed: bool,
 }
 
-async fn serve_connection(stream: DuplexStream, state: Arc<Mutex<FakeState>>) {
+struct FakeConnectionLease {
+    state: Arc<Mutex<FakeState>>,
+    connection_id: u64,
+}
+
+impl Drop for FakeConnectionLease {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap();
+        for thread in &mut state.threads {
+            if thread.writer_connection_id == Some(self.connection_id) {
+                thread.writer_connection_id = None;
+            }
+        }
+    }
+}
+
+async fn serve_connection(stream: DuplexStream, state: Arc<Mutex<FakeState>>, connection_id: u64) {
+    let _lease = FakeConnectionLease {
+        state: Arc::clone(&state),
+        connection_id,
+    };
     let (reader, mut writer) = split(stream);
     let mut lines = BufReader::new(reader).lines();
     if initialize(&mut lines, &mut writer).await.is_err() {
@@ -162,7 +200,9 @@ async fn serve_connection(stream: DuplexStream, state: Arc<Mutex<FakeState>>) {
         let Ok(request) = serde_json::from_str::<Value>(&line) else {
             return;
         };
-        let messages = handle_client_message(request, &state);
+        let Some(messages) = handle_client_message(request, &state, connection_id) else {
+            return;
+        };
         for message in messages {
             if write_message(&mut writer, &message).await.is_err() {
                 return;
@@ -209,28 +249,36 @@ async fn write_message(
     writer.flush().await
 }
 
-fn handle_client_message(message: Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
+fn handle_client_message(
+    message: Value,
+    state: &Arc<Mutex<FakeState>>,
+    connection_id: u64,
+) -> Option<Vec<Value>> {
     let id = message.get("id").cloned().unwrap_or(Value::Null);
     let Some(method) = message.get("method").and_then(Value::as_str) else {
-        return handle_client_response(&message, state);
+        return Some(handle_client_response(&message, state));
     };
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-    match method {
+    Some(match method {
         "thread/archive" => vec![thread_archive_response(id, &params, state)],
+        "thread/fork" => {
+            return thread_fork_response(id, &params, state, connection_id)
+                .map(|response| vec![response]);
+        }
         "thread/list" => vec![thread_list_response(id, &params, state)],
         "thread/read" => vec![thread_read_response(id, &params, state)],
-        "thread/start" => vec![thread_start_response(id, &params, state)],
-        "thread/resume" => vec![thread_resume_response(id, &params, state)],
+        "thread/start" => vec![thread_start_response(id, &params, state, connection_id)],
+        "thread/resume" => vec![thread_resume_response(id, &params, state, connection_id)],
         "thread/name/set" => vec![thread_set_name_response(id, &params, state)],
         "thread/unarchive" => vec![thread_unarchive_response(id, &params, state)],
-        "turn/start" => turn_start_messages(id, &params, state),
-        "turn/steer" => turn_steer_messages(id, &params, state),
+        "turn/start" => turn_start_messages(id, &params, state, connection_id),
+        "turn/steer" => turn_steer_messages(id, &params, state, connection_id),
         "turn/interrupt" => vec![json!({ "id": id, "result": {} })],
         _ => vec![json!({
             "id": id,
             "error": { "code": -32601, "message": format!("unsupported fake method: {method}") }
         })],
-    }
+    })
 }
 
 fn handle_client_response(response: &Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
@@ -247,25 +295,36 @@ fn handle_client_response(response: &Value, state: &Arc<Mutex<FakeState>>) -> Ve
             _ => return vec![],
         };
 
-    if !complete_active_turn(state, FakeTurnScenario::RequestCommandApproval, answer) {
+    let Some(active_turn) =
+        complete_active_turn(state, FakeTurnScenario::RequestCommandApproval, answer)
+    else {
         return vec![];
-    }
+    };
 
-    let command = command_item(command_status, command_output);
+    let command = command_item(active_turn.number, command_status, command_output);
     let mut messages = vec![];
     if let Some(output) = command_output {
         messages.push(json!({
             "method": "item/commandExecution/outputDelta",
             "params": {
-                "threadId": THREAD_ID,
-                "turnId": LIVE_TURN_ID,
-                "itemId": LIVE_COMMAND_ID,
+                "threadId": active_turn.thread_id,
+                "turnId": active_turn.turn_id,
+                "itemId": active_turn.command_id,
                 "delta": output
             }
         }));
     }
-    messages.push(item_notification("item/completed", LIVE_TURN_ID, command));
-    messages.extend(turn_completion_messages(answer));
+    messages.push(item_notification(
+        "item/completed",
+        &active_turn.thread_id,
+        &active_turn.turn_id,
+        command,
+    ));
+    messages.extend(turn_completion_messages(
+        &active_turn.thread_id,
+        active_turn.number,
+        answer,
+    ));
     messages
 }
 
@@ -284,33 +343,42 @@ fn handle_user_input_response(response: &Value, state: &Arc<Mutex<FakeState>>) -
     };
     let answer = format!("Scope: {scope}; note: {note}.");
 
-    if !complete_active_turn(state, FakeTurnScenario::RequestUserInput, &answer) {
+    let Some(active_turn) =
+        complete_active_turn(state, FakeTurnScenario::RequestUserInput, &answer)
+    else {
         return vec![];
-    }
+    };
 
-    turn_completion_messages(&answer)
+    turn_completion_messages(&active_turn.thread_id, active_turn.number, &answer)
+}
+
+struct ActiveTurn {
+    thread_id: String,
+    turn_id: String,
+    command_id: String,
+    number: usize,
 }
 
 fn complete_active_turn(
     state: &Arc<Mutex<FakeState>>,
     expected_scenario: FakeTurnScenario,
     answer: &str,
-) -> bool {
+) -> Option<ActiveTurn> {
     let mut state = state.lock().unwrap();
     if state.options.turn_scenario != expected_scenario {
-        return false;
+        return None;
     }
-    let Some(turn) = state
-        .thread
-        .as_mut()
-        .and_then(|thread| thread.turn.as_mut())
-        .filter(|turn| !turn.completed)
-    else {
-        return false;
-    };
-    turn.answer = answer.to_owned();
-    turn.completed = true;
-    true
+    state.threads.iter_mut().find_map(|thread| {
+        let turn = thread.turns.iter_mut().rev().find(|turn| !turn.completed)?;
+        turn.answer = answer.to_owned();
+        turn.completed = true;
+        Some(ActiveTurn {
+            thread_id: thread.id.clone(),
+            turn_id: live_turn_id(turn.number),
+            command_id: live_command_id(turn.number),
+            number: turn.number,
+        })
+    })
 }
 
 fn requested_thread_mut<'a>(
@@ -320,9 +388,9 @@ fn requested_thread_mut<'a>(
 ) -> Result<&'a mut FakeThread, Value> {
     let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
     state
-        .thread
-        .as_mut()
-        .filter(|_| requested_thread_id == THREAD_ID)
+        .threads
+        .iter_mut()
+        .find(|thread| thread.id == requested_thread_id)
         .ok_or_else(|| {
             json!({
                 "id": response_id,
@@ -341,6 +409,62 @@ fn thread_archive_response(id: Value, params: &Value, state: &Arc<Mutex<FakeStat
     json!({ "id": id, "result": {} })
 }
 
+fn thread_fork_response(
+    id: Value,
+    params: &Value,
+    state: &Arc<Mutex<FakeState>>,
+    connection_id: u64,
+) -> Option<Value> {
+    let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
+    let mut state = state.lock().unwrap();
+    let Some(source) = state
+        .threads
+        .iter()
+        .find(|thread| thread.id == requested_thread_id && !thread.archived)
+        .cloned()
+    else {
+        return Some(json!({
+            "id": id,
+            "error": { "code": -32600, "message": format!("thread not loaded: {requested_thread_id}") }
+        }));
+    };
+    let last_turn_id = params.get("lastTurnId").and_then(Value::as_str);
+    let mut fork = source;
+    if let Some(last_turn_id) = last_turn_id {
+        let Some(last_turn_index) = fork.turns.iter().position(|turn| {
+            persisted_turn_id(turn, state.options) == last_turn_id && turn.completed
+        }) else {
+            return Some(json!({
+                "id": id,
+                "error": {
+                    "code": -32600,
+                    "message": format!("turn not loaded or still in progress: {last_turn_id}")
+                }
+            }));
+        };
+        fork.turns.truncate(last_turn_index + 1);
+    }
+    let fork_id = format!("thread-fork-{}", state.next_fork_number);
+    state.next_fork_number += 1;
+    fork.id = fork_id;
+    fork.remaining_read_failures = 0;
+    fork.writer_connection_id = Some(connection_id);
+    state.threads.push(fork);
+    if state.options.lose_first_fork_response {
+        state.options.lose_first_fork_response = false;
+        return None;
+    }
+    let fork = state.threads.last().expect("the fork was inserted above");
+    let thread = thread_json(fork, state.options, true);
+    Some(json!({
+        "id": id,
+        "result": {
+            "model": "gpt-5.6-sol",
+            "thread": thread
+        }
+    }))
+}
+
 fn thread_list_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
     let state = state.lock().unwrap();
     let archived = params
@@ -348,35 +472,35 @@ fn thread_list_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let data = state
-        .thread
-        .as_ref()
+        .threads
+        .iter()
         .filter(|thread| !thread.ephemeral && thread.archived == archived)
-        .map(|thread| vec![thread_json(thread, state.options, true)])
-        .unwrap_or_default();
+        .map(|thread| thread_json(thread, state.options, true))
+        .collect::<Vec<_>>();
     json!({ "id": id, "result": { "data": data, "nextCursor": null } })
 }
 
 fn thread_read_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
     let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
     let mut state = state.lock().unwrap();
-    if requested_thread_id != THREAD_ID || state.thread.is_none() {
+    let Some(thread_index) = state
+        .threads
+        .iter()
+        .position(|thread| thread.id == requested_thread_id)
+    else {
+        return json!({
+            "id": id,
+            "error": { "code": -32600, "message": format!("thread not loaded: {requested_thread_id}") }
+        });
+    };
+    if state.threads[thread_index].remaining_read_failures > 0 {
+        state.threads[thread_index].remaining_read_failures -= 1;
         return json!({
             "id": id,
             "error": { "code": -32600, "message": format!("thread not loaded: {requested_thread_id}") }
         });
     }
-    if state.remaining_thread_read_failures > 0 {
-        state.remaining_thread_read_failures -= 1;
-        return json!({
-            "id": id,
-            "error": { "code": -32600, "message": format!("thread not loaded: {THREAD_ID}") }
-        });
-    }
-    let thread = thread_json(
-        state.thread.as_ref().expect("the thread was checked above"),
-        state.options,
-        true,
-    );
+    let thread = thread_json(&state.threads[thread_index], state.options, true);
     json!({ "id": id, "result": { "thread": thread } })
 }
 
@@ -408,7 +532,12 @@ fn thread_unarchive_response(id: Value, params: &Value, state: &Arc<Mutex<FakeSt
     json!({ "id": id, "result": { "thread": thread } })
 }
 
-fn thread_start_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
+fn thread_start_response(
+    id: Value,
+    params: &Value,
+    state: &Arc<Mutex<FakeState>>,
+    connection_id: u64,
+) -> Value {
     let cwd = params
         .get("cwd")
         .and_then(Value::as_str)
@@ -420,18 +549,23 @@ fn thread_start_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>
         .unwrap_or(false);
     let mut state = state.lock().unwrap();
     let ephemeral = requested_ephemeral && state.options.confirm_ephemeral_thread_starts;
-    state.thread = Some(FakeThread {
+    state.threads.retain(|thread| thread.id != THREAD_ID);
+    let initial_read_failures = state.options.initial_thread_read_failures;
+    state.threads.push(FakeThread {
+        id: THREAD_ID.to_owned(),
         cwd,
         ephemeral,
         archived: false,
         name: None,
-        turn: None,
+        turns: vec![],
+        remaining_read_failures: initial_read_failures,
+        writer_connection_id: Some(connection_id),
     });
-    state.remaining_thread_read_failures = state.options.initial_thread_read_failures;
     let thread = thread_json(
         state
-            .thread
-            .as_ref()
+            .threads
+            .iter()
+            .find(|thread| thread.id == THREAD_ID)
             .expect("the thread was inserted above"),
         state.options,
         false,
@@ -442,29 +576,58 @@ fn thread_start_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>
     })
 }
 
-fn thread_resume_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
+fn thread_resume_response(
+    id: Value,
+    params: &Value,
+    state: &Arc<Mutex<FakeState>>,
+    connection_id: u64,
+) -> Value {
     let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
-    let state = state.lock().unwrap();
+    let mut state = state.lock().unwrap();
+    let options = state.options;
     let Some(thread) = state
-        .thread
-        .as_ref()
-        .filter(|_| requested_thread_id == THREAD_ID)
+        .threads
+        .iter_mut()
+        .find(|thread| thread.id == requested_thread_id)
     else {
         return json!({
             "id": id,
             "error": { "code": -32600, "message": format!("thread not loaded: {requested_thread_id}") }
         });
     };
+    if thread
+        .writer_connection_id
+        .is_some_and(|owner| owner != connection_id)
+    {
+        return json!({
+            "id": id,
+            "error": {
+                "code": -32600,
+                "message": format!("thread {requested_thread_id} already has an active writer")
+            }
+        });
+    }
+    thread.writer_connection_id = Some(connection_id);
     json!({
         "id": id,
         "result": {
             "model": "gpt-5.6-sol",
-            "thread": thread_json(thread, state.options, true)
+            "thread": thread_json(thread, options, true)
         }
     })
 }
 
-fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
+fn turn_start_messages(
+    id: Value,
+    params: &Value,
+    state: &Arc<Mutex<FakeState>>,
+    connection_id: u64,
+) -> Vec<Value> {
+    let requested_thread_id = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
     let prompt = params
         .get("input")
         .and_then(Value::as_array)
@@ -473,50 +636,68 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let turn_scenario = {
+    let (turn_scenario, turn_number) = {
         let mut state = state.lock().unwrap();
         let turn_scenario = state.options.turn_scenario;
-        if let Some(thread) = state.thread.as_mut() {
-            thread.turn = Some(FakeTurn {
-                prompt: prompt.clone(),
-                guidance: vec![],
-                answer: "Done.".to_owned(),
-                completed: turn_scenario == FakeTurnScenario::Complete,
-            });
-        }
-        turn_scenario
+        let Some(thread) = state.threads.iter_mut().find(|thread| {
+            thread.id == requested_thread_id && thread.writer_connection_id == Some(connection_id)
+        }) else {
+            return vec![json!({
+                "id": id,
+                "error": {
+                    "code": -32600,
+                    "message": format!("thread not loaded: {requested_thread_id}")
+                }
+            })];
+        };
+        let turn_number = thread.turns.len() + 1;
+        thread.turns.push(FakeTurn {
+            number: turn_number,
+            prompt: prompt.clone(),
+            guidance: vec![],
+            answer: "Done.".to_owned(),
+            completed: turn_scenario == FakeTurnScenario::Complete,
+        });
+        (turn_scenario, turn_number)
     };
 
+    let turn_id = live_turn_id(turn_number);
+    let user_id = live_user_id(turn_number);
     let user = json!({
-        "id": LIVE_USER_ID,
+        "id": user_id,
         "type": "userMessage",
         "content": [{ "type": "text", "text": prompt }]
     });
     let mut messages = vec![
         json!({
             "id": id,
-            "result": { "turn": { "id": LIVE_TURN_ID, "status": "inProgress", "items": [] } }
+            "result": { "turn": { "id": turn_id, "status": "inProgress", "items": [] } }
         }),
-        item_notification("item/started", LIVE_TURN_ID, user.clone()),
-        item_notification("item/completed", LIVE_TURN_ID, user),
+        item_notification("item/started", &requested_thread_id, &turn_id, user.clone()),
+        item_notification("item/completed", &requested_thread_id, &turn_id, user),
     ];
     match turn_scenario {
-        FakeTurnScenario::Complete => messages.extend(turn_completion_messages("Done.")),
+        FakeTurnScenario::Complete => messages.extend(turn_completion_messages(
+            &requested_thread_id,
+            turn_number,
+            "Done.",
+        )),
         FakeTurnScenario::WaitForGuidance => {}
         FakeTurnScenario::RequestCommandApproval => {
             messages.extend([
                 item_notification(
                     "item/started",
-                    LIVE_TURN_ID,
-                    command_item("inProgress", None),
+                    &requested_thread_id,
+                    &turn_id,
+                    command_item(turn_number, "inProgress", None),
                 ),
                 json!({
                     "id": COMMAND_APPROVAL_REQUEST_ID,
                     "method": "item/commandExecution/requestApproval",
                     "params": {
-                        "threadId": THREAD_ID,
-                        "turnId": LIVE_TURN_ID,
-                        "itemId": LIVE_COMMAND_ID,
+                        "threadId": requested_thread_id,
+                        "turnId": turn_id,
+                        "itemId": live_command_id(turn_number),
                         "command": "pwd",
                         "cwd": "/workspace",
                         "reason": "Verify the workspace",
@@ -530,9 +711,9 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
                 "id": USER_INPUT_REQUEST_ID,
                 "method": "item/tool/requestUserInput",
                 "params": {
-                    "threadId": THREAD_ID,
-                    "turnId": LIVE_TURN_ID,
-                    "itemId": LIVE_TOOL_ID,
+                    "threadId": requested_thread_id,
+                    "turnId": turn_id,
+                    "itemId": live_tool_id(turn_number),
                     "isBlocking": true,
                     "questions": [
                         {
@@ -568,9 +749,9 @@ fn turn_start_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
     messages
 }
 
-fn command_item(status: &str, output: Option<&str>) -> Value {
+fn command_item(turn_number: usize, status: &str, output: Option<&str>) -> Value {
     let mut command = json!({
-        "id": LIVE_COMMAND_ID,
+        "id": live_command_id(turn_number),
         "type": "commandExecution",
         "command": "pwd",
         "commandActions": [],
@@ -583,7 +764,12 @@ fn command_item(status: &str, output: Option<&str>) -> Value {
     command
 }
 
-fn turn_steer_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Vec<Value> {
+fn turn_steer_messages(
+    id: Value,
+    params: &Value,
+    state: &Arc<Mutex<FakeState>>,
+    connection_id: u64,
+) -> Vec<Value> {
     let requested_thread_id = params.get("threadId").and_then(Value::as_str).unwrap_or("");
     let expected_turn_id = params
         .get("expectedTurnId")
@@ -597,14 +783,17 @@ fn turn_steer_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    {
+    let turn_number = {
         let mut state = state.lock().unwrap();
         let Some(turn) = state
-            .thread
-            .as_mut()
-            .filter(|_| requested_thread_id == THREAD_ID)
-            .and_then(|thread| thread.turn.as_mut())
-            .filter(|turn| expected_turn_id == LIVE_TURN_ID && !turn.completed)
+            .threads
+            .iter_mut()
+            .find(|thread| {
+                thread.id == requested_thread_id
+                    && thread.writer_connection_id == Some(connection_id)
+            })
+            .and_then(|thread| thread.turns.iter_mut().rev().find(|turn| !turn.completed))
+            .filter(|turn| expected_turn_id == live_turn_id(turn.number))
         else {
             return vec![json!({
                 "id": id,
@@ -617,62 +806,70 @@ fn turn_steer_messages(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>)
         turn.guidance.push(guidance.clone());
         turn.answer = "Adjusted.".to_owned();
         turn.completed = true;
-    }
+        turn.number
+    };
 
+    let turn_id = live_turn_id(turn_number);
     let user = json!({
-        "id": LIVE_STEER_USER_ID,
+        "id": live_steer_user_id(turn_number),
         "type": "userMessage",
         "content": [{ "type": "text", "text": guidance }]
     });
     let mut messages = vec![
-        json!({ "id": id, "result": { "turnId": LIVE_TURN_ID } }),
-        item_notification("item/started", LIVE_TURN_ID, user.clone()),
-        item_notification("item/completed", LIVE_TURN_ID, user),
+        json!({ "id": id, "result": { "turnId": turn_id } }),
+        item_notification("item/started", requested_thread_id, &turn_id, user.clone()),
+        item_notification("item/completed", requested_thread_id, &turn_id, user),
     ];
-    messages.extend(turn_completion_messages("Adjusted."));
+    messages.extend(turn_completion_messages(
+        requested_thread_id,
+        turn_number,
+        "Adjusted.",
+    ));
     messages
 }
 
-fn turn_completion_messages(answer: &str) -> Vec<Value> {
+fn turn_completion_messages(thread_id: &str, turn_number: usize, answer: &str) -> Vec<Value> {
+    let turn_id = live_turn_id(turn_number);
+    let agent_id = live_agent_id(turn_number);
     let agent_started = json!({
-        "id": LIVE_AGENT_ID,
+        "id": agent_id,
         "type": "agentMessage",
         "text": "",
         "phase": "final_answer"
     });
     let agent_completed = json!({
-        "id": LIVE_AGENT_ID,
+        "id": agent_id,
         "type": "agentMessage",
         "text": answer,
         "phase": "final_answer"
     });
     vec![
-        item_notification("item/started", LIVE_TURN_ID, agent_started),
+        item_notification("item/started", thread_id, &turn_id, agent_started),
         json!({
             "method": "item/agentMessage/delta",
             "params": {
-                "threadId": THREAD_ID,
-                "turnId": LIVE_TURN_ID,
-                "itemId": LIVE_AGENT_ID,
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "itemId": agent_id,
                 "delta": answer
             }
         }),
-        item_notification("item/completed", LIVE_TURN_ID, agent_completed),
+        item_notification("item/completed", thread_id, &turn_id, agent_completed),
         json!({
             "method": "turn/completed",
             "params": {
-                "threadId": THREAD_ID,
-                "turn": { "id": LIVE_TURN_ID, "status": "completed", "items": [] }
+                "threadId": thread_id,
+                "turn": { "id": turn_id, "status": "completed", "items": [] }
             }
         }),
     ]
 }
 
-fn item_notification(method: &str, turn_id: &str, item: Value) -> Value {
+fn item_notification(method: &str, thread_id: &str, turn_id: &str, item: Value) -> Value {
     json!({
         "method": method,
         "params": {
-            "threadId": THREAD_ID,
+            "threadId": thread_id,
             "turnId": turn_id,
             "item": item
         }
@@ -681,22 +878,22 @@ fn item_notification(method: &str, turn_id: &str, item: Value) -> Value {
 
 fn thread_json(thread: &FakeThread, options: FakeCodexAppServerOptions, persisted: bool) -> Value {
     let turns = thread
-        .turn
-        .as_ref()
-        .map(|turn| vec![turn_json(turn, options, persisted)])
-        .unwrap_or_default();
-    let status = if thread.turn.as_ref().is_some_and(|turn| !turn.completed) {
+        .turns
+        .iter()
+        .map(|turn| turn_json(turn, options, persisted))
+        .collect::<Vec<_>>();
+    let status = if thread.turns.last().is_some_and(|turn| !turn.completed) {
         json!({ "type": "active", "activeFlags": [] })
     } else {
         json!({ "type": "idle" })
     };
     json!({
-        "id": THREAD_ID,
+        "id": thread.id,
         "name": thread.name,
-        "preview": thread.turn.as_ref().map(|turn| turn.prompt.as_str()).unwrap_or(""),
+        "preview": thread.turns.last().map(|turn| turn.prompt.as_str()).unwrap_or(""),
         "cwd": thread.cwd,
         "createdAt": 10,
-        "updatedAt": if thread.turn.is_some() { 20 } else { 10 },
+        "updatedAt": if thread.turns.is_empty() { 10 } else { 19 + thread.turns.len() },
         "ephemeral": thread.ephemeral,
         "status": status,
         "turns": turns
@@ -704,26 +901,26 @@ fn thread_json(thread: &FakeThread, options: FakeCodexAppServerOptions, persiste
 }
 
 fn turn_json(turn: &FakeTurn, options: FakeCodexAppServerOptions, persisted: bool) -> Value {
-    let renumber = persisted && options.renumber_persisted_first_turn;
+    let renumber = persisted && options.renumber_persisted_first_turn && turn.number == 1;
     let turn_id = if renumber {
-        "persisted-turn-1"
+        persisted_turn_id(turn, options)
     } else {
-        LIVE_TURN_ID
+        live_turn_id(turn.number)
     };
     let user_id = if renumber {
-        "persisted-user-1"
+        "persisted-user-1".to_owned()
     } else {
-        LIVE_USER_ID
+        live_user_id(turn.number)
     };
     let agent_id = if renumber {
-        "persisted-agent-1"
+        "persisted-agent-1".to_owned()
     } else {
-        LIVE_AGENT_ID
+        live_agent_id(turn.number)
     };
     let steer_user_id = if renumber {
-        "persisted-steer-user-1"
+        "persisted-steer-user-1".to_owned()
     } else {
-        LIVE_STEER_USER_ID
+        live_steer_user_id(turn.number)
     };
     let mut items = vec![json!({
         "id": user_id,
@@ -750,4 +947,44 @@ fn turn_json(turn: &FakeTurn, options: FakeCodexAppServerOptions, persisted: boo
         "status": if turn.completed { "completed" } else { "inProgress" },
         "items": items
     })
+}
+
+fn persisted_turn_id(turn: &FakeTurn, options: FakeCodexAppServerOptions) -> String {
+    if options.renumber_persisted_first_turn && turn.number == 1 {
+        "persisted-turn-1".to_owned()
+    } else {
+        live_turn_id(turn.number)
+    }
+}
+
+fn live_turn_id(turn_number: usize) -> String {
+    live_id(turn_number, LIVE_TURN_ID, "live-turn")
+}
+
+fn live_user_id(turn_number: usize) -> String {
+    live_id(turn_number, LIVE_USER_ID, "live-user")
+}
+
+fn live_steer_user_id(turn_number: usize) -> String {
+    live_id(turn_number, LIVE_STEER_USER_ID, "live-steer-user")
+}
+
+fn live_agent_id(turn_number: usize) -> String {
+    live_id(turn_number, LIVE_AGENT_ID, "live-agent")
+}
+
+fn live_command_id(turn_number: usize) -> String {
+    live_id(turn_number, LIVE_COMMAND_ID, "live-command")
+}
+
+fn live_tool_id(turn_number: usize) -> String {
+    live_id(turn_number, LIVE_TOOL_ID, "live-tool")
+}
+
+fn live_id(turn_number: usize, first_id: &str, prefix: &str) -> String {
+    if turn_number == 1 {
+        first_id.to_owned()
+    } else {
+        format!("{prefix}-{turn_number}")
+    }
 }

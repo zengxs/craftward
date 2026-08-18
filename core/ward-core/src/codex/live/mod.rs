@@ -32,6 +32,7 @@ pub(crate) struct LiveProjectionEffect {
 #[derive(Default)]
 pub(crate) struct LiveThreadProjection {
     conversation: Option<Thread>,
+    forkable_turn_ids: Vec<String>,
     retained_live_turn: Option<RetainedLiveTurn>,
     runtime: Option<LiveRuntimeState>,
     live_turn_id: Option<String>,
@@ -48,6 +49,7 @@ impl LiveThreadProjection {
     }
 
     pub(crate) fn attach(&mut self, subscription: ThreadSubscription) {
+        self.forkable_turn_ids = terminal_turn_ids(&subscription.thread);
         let active_turn_id = subscription
             .thread
             .turns
@@ -80,6 +82,10 @@ impl LiveThreadProjection {
 
     pub(crate) fn conversation(&self) -> Option<&Thread> {
         self.conversation.as_ref()
+    }
+
+    pub(crate) fn forkable_turn_ids(&self) -> &[String] {
+        &self.forkable_turn_ids
     }
 
     pub(crate) fn runtime(&self) -> LiveRuntimeState {
@@ -181,10 +187,13 @@ impl LiveThreadProjection {
     }
 
     pub(crate) fn accept_snapshot(&mut self, snapshot: Thread) -> bool {
+        let forkable_turn_ids = terminal_turn_ids(&snapshot);
+        let forkable_turns_changed = self.forkable_turn_ids != forkable_turn_ids;
+        self.forkable_turn_ids = forkable_turn_ids;
         let Some(mut retained) = self.retained_live_turn.take() else {
             let changed = self.conversation.as_ref() != Some(&snapshot);
             self.conversation = Some(snapshot);
-            return changed;
+            return changed || forkable_turns_changed;
         };
         if find_snapshot_turn_index(&snapshot.turns, &retained)
             .and_then(|index| snapshot.turns.get(index))
@@ -192,14 +201,14 @@ impl LiveThreadProjection {
         {
             let changed = self.conversation.as_ref() != Some(&snapshot);
             self.conversation = Some(snapshot);
-            return changed;
+            return changed || forkable_turns_changed;
         }
 
         let merged = merge_retained_live_turn(snapshot, &mut retained);
         let changed = self.conversation.as_ref() != Some(&merged);
         self.conversation = Some(merged);
         self.retained_live_turn = Some(retained);
-        changed
+        changed || forkable_turns_changed
     }
 
     pub(crate) fn fail_stream(&mut self) -> LiveProjectionEffect {
@@ -350,6 +359,15 @@ impl LiveThreadProjection {
         }
         true
     }
+}
+
+fn terminal_turn_ids(thread: &Thread) -> Vec<String> {
+    thread
+        .turns
+        .iter()
+        .filter(|turn| turn_status_is_terminal(&turn.status))
+        .map(|turn| turn.id.clone())
+        .collect()
 }
 
 pub(crate) fn event_is_incremental(event: &ThreadStreamEvent) -> bool {

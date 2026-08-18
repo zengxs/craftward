@@ -7,15 +7,17 @@ mod wire;
 pub(crate) use connection::{Connection, ServerMessage};
 pub(crate) use wire::{
     InitializeParams, InitializeResponse, ThreadArchiveParams, ThreadArchiveResponse,
-    ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
-    ThreadResumeResponse, ThreadSetNameParams, ThreadSetNameResponse, ThreadStartParams,
-    ThreadStartResponse, ThreadUnarchiveParams, ThreadUnarchiveResponse, TurnInterruptParams,
-    TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnSteerParams, TurnSteerResponse,
-    interaction_result, pending_interaction, resolved_server_request, turn_stream_event,
+    ThreadForkParams, ThreadForkResponse, ThreadListParams, ThreadListResponse, ThreadReadParams,
+    ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse, ThreadSetNameParams,
+    ThreadSetNameResponse, ThreadStartParams, ThreadStartResponse, ThreadUnarchiveParams,
+    ThreadUnarchiveResponse, TurnInterruptParams, TurnInterruptResponse, TurnStartParams,
+    TurnStartResponse, TurnSteerParams, TurnSteerResponse, interaction_result, pending_interaction,
+    resolved_server_request, turn_stream_event,
 };
 
 pub(crate) const INITIALIZE_METHOD: &str = "initialize";
 pub(crate) const THREAD_ARCHIVE_METHOD: &str = "thread/archive";
+pub(crate) const THREAD_FORK_METHOD: &str = "thread/fork";
 pub(crate) const THREAD_LIST_METHOD: &str = "thread/list";
 pub(crate) const THREAD_READ_METHOD: &str = "thread/read";
 pub(crate) const THREAD_RESUME_METHOD: &str = "thread/resume";

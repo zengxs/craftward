@@ -35,11 +35,13 @@ messageItem(const QString& turnId, const QString& messageId, MessageRole role, M
 HistoryEvent
 conversationEvent(HistoryEventKind kind,
                   QList<TimelineItem> timeline,
-                  const QString& title = QStringLiteral("New conversation"))
+                  const QString& title = QStringLiteral("New conversation"),
+                  const QStringList& forkableTurnIds = {})
 {
     Conversation conversation;
     conversation.setTitle(title);
     conversation.setTimeline(std::move(timeline));
+    conversation.setForkableTurnIds(forkableTurnIds);
 
     HistoryEvent event;
     event.setKind(kind);
@@ -95,9 +97,13 @@ class CodexHistoryControllerTest : public QObject
 
   private slots:
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
+    void marksOnlyAuthoritativeTurnEndsAsForkBoundaries();
     void confirmsAcceptedTurnGuidance();
     void reportsRejectedTurnGuidanceWithoutConfirmation();
     void validatesConversationRenamesBeforeDispatch();
+    void appliesForkedConversationAndSelectsIt();
+    void reportsDedicatedThreadForkErrors();
+    void validatesConversationForksBeforeDispatch();
     void appliesRenamedConversationTitles();
     void ignoresStaleThreadPagesAndWaitsForLifecycleConfirmation();
     void keepsLifecyclePendingAfterHistoryDecodingFailure();
@@ -133,6 +139,7 @@ CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()
              QStringLiteral("message:live-turn-1:live-user-1"));
     QCOMPARE(timeline->data(timeline->index(1), CodexTimelineModel::EntryIdRole).toString(),
              QStringLiteral("message:live-turn-1:live-agent-1"));
+    QVERIFY(!timeline->data(timeline->index(1), CodexTimelineModel::ForkBoundaryRole).toBool());
 
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
                                                    {
@@ -146,7 +153,9 @@ CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()
                                                                  MessageRole::MESSAGE_ROLE_AGENT,
                                                                  MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
                                                                  QStringLiteral("Done.")),
-                                                   }),
+                                                   },
+                                                   QStringLiteral("New conversation"),
+                                                   { QStringLiteral("persisted-turn-1") }),
                                  {});
 
     QCOMPARE(timeline->rowCount(), 2);
@@ -156,6 +165,46 @@ CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()
     QCOMPARE(timeline->data(timeline->index(1), CodexTimelineModel::EntryIdRole).toString(),
              QStringLiteral("message:persisted-turn-1:persisted-agent-1"));
     QCOMPARE(timeline->data(timeline->index(1), CodexTimelineModel::TextRole).toString(), QStringLiteral("Done."));
+    QVERIFY(timeline->data(timeline->index(1), CodexTimelineModel::ForkBoundaryRole).toBool());
+}
+
+void
+CodexHistoryControllerTest::marksOnlyAuthoritativeTurnEndsAsForkBoundaries()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED,
+                                                   {
+                                                     messageItem(QStringLiteral("turn-1"),
+                                                                 QStringLiteral("user-1"),
+                                                                 MessageRole::MESSAGE_ROLE_USER,
+                                                                 MessagePhase::MESSAGE_PHASE_UNSPECIFIED,
+                                                                 QStringLiteral("First prompt")),
+                                                     messageItem(QStringLiteral("turn-1"),
+                                                                 QStringLiteral("agent-1"),
+                                                                 MessageRole::MESSAGE_ROLE_AGENT,
+                                                                 MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                                                                 QStringLiteral("First answer")),
+                                                     messageItem(QStringLiteral("turn-2"),
+                                                                 QStringLiteral("user-2"),
+                                                                 MessageRole::MESSAGE_ROLE_USER,
+                                                                 MessagePhase::MESSAGE_PHASE_UNSPECIFIED,
+                                                                 QStringLiteral("Second prompt")),
+                                                     messageItem(QStringLiteral("turn-2"),
+                                                                 QStringLiteral("agent-2"),
+                                                                 MessageRole::MESSAGE_ROLE_AGENT,
+                                                                 MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                                                                 QStringLiteral("Second answer")),
+                                                   },
+                                                   QStringLiteral("New conversation"),
+                                                   { QStringLiteral("turn-1") }),
+                                 {});
+
+    CodexTimelineModel* timeline = controller.timeline();
+    QCOMPARE(timeline->rowCount(), 4);
+    QVERIFY(!timeline->data(timeline->index(0), CodexTimelineModel::ForkBoundaryRole).toBool());
+    QVERIFY(timeline->data(timeline->index(1), CodexTimelineModel::ForkBoundaryRole).toBool());
+    QVERIFY(!timeline->data(timeline->index(2), CodexTimelineModel::ForkBoundaryRole).toBool());
+    QVERIFY(!timeline->data(timeline->index(3), CodexTimelineModel::ForkBoundaryRole).toBool());
 }
 
 void
@@ -205,6 +254,110 @@ CodexHistoryControllerTest::validatesConversationRenamesBeforeDispatch()
 
     QVERIFY(!controller.renameSelectedThread(QStringLiteral("Focused work")));
     QCOMPARE(controller.errorMessage(), QStringLiteral("The Codex history observer is unavailable."));
+}
+
+void
+CodexHistoryControllerTest::appliesForkedConversationAndSelectsIt()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.setForkingThread(true, QStringLiteral("thread-new"));
+    controller.loadingThreads_ = true;
+    QSignalSpy selectionSpy(&controller, &CodexHistoryController::selectionChanged);
+
+    HistoryEvent forked = conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORKED,
+                                            { messageItem(QStringLiteral("turn-1"),
+                                                          QStringLiteral("agent-1"),
+                                                          MessageRole::MESSAGE_ROLE_AGENT,
+                                                          MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                                                          QStringLiteral("Copied answer")) },
+                                            QStringLiteral("Forked conversation"));
+    forked.setThreadId(QStringLiteral("thread-fork-1"));
+    controller.applyHistoryEvent(std::move(forked), {});
+
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-fork-1"));
+    QCOMPARE(controller.selectedThreadTitle(), QStringLiteral("Forked conversation"));
+    QCOMPARE(controller.timeline()->rowCount(), 1);
+    QCOMPARE(controller.timeline()->data(controller.timeline()->index(0), CodexTimelineModel::TextRole).toString(),
+             QStringLiteral("Copied answer"));
+    QVERIFY(!controller.forkingThread());
+    QVERIFY(controller.loadingThreads());
+    QCOMPARE(controller.turnState(), CodexHistoryController::TurnState::Detached);
+    QCOMPARE(controller.writeAvailability(), CodexHistoryController::WriteAvailability::NotRequested);
+    QCOMPARE(selectionSpy.count(), 1);
+
+    ward::codex::v1::ThreadWriteState writeState;
+    writeState.setStatus(ward::codex::v1::ThreadWriteStatusGadget::ThreadWriteStatus::THREAD_WRITE_STATUS_WRITABLE);
+    HistoryEvent writable;
+    writable.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_WRITE_STATE_CHANGED);
+    writable.setThreadId(QStringLiteral("thread-fork-1"));
+    writable.setThreadWriteState(std::move(writeState));
+    controller.applyHistoryEvent(std::move(writable), {});
+
+    QCOMPARE(controller.writeAvailability(), CodexHistoryController::WriteAvailability::Writable);
+}
+
+void
+CodexHistoryControllerTest::reportsDedicatedThreadForkErrors()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.setForkingThread(true, QStringLiteral("thread-new"));
+    controller.loadingThreads_ = true;
+    controller.clearError();
+
+    HistoryEvent staleError =
+      turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORK_ERROR, QStringLiteral("Stale failure"));
+    staleError.setThreadId(QStringLiteral("thread-other"));
+    controller.applyHistoryEvent(std::move(staleError), {});
+    QVERIFY(controller.forkingThread());
+    QVERIFY(controller.errorMessage().isEmpty());
+
+    controller.applyHistoryEvent(
+      turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORK_ERROR, QStringLiteral("Fork failed")), {});
+
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QVERIFY(!controller.forkingThread());
+    QVERIFY(controller.loadingThreads());
+    QCOMPARE(controller.errorMessage(), QStringLiteral("Fork failed"));
+
+    controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
+
+    QVERIFY(!controller.loadingThreads());
+    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(controller.errorMessage(), QStringLiteral("Fork failed"));
+}
+
+void
+CodexHistoryControllerTest::validatesConversationForksBeforeDispatch()
+{
+    CodexHistoryController controller(nullptr);
+    controller.clearError();
+
+    QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
+    QVERIFY(controller.errorMessage().isEmpty());
+
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.loadingConversation_ = true;
+    QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
+    controller.loadingConversation_ = false;
+    controller.setWriteAvailability(CodexHistoryController::WriteAvailability::Checking);
+    QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
+    QVERIFY(controller.errorMessage().isEmpty());
+    controller.setWriteAvailability(CodexHistoryController::WriteAvailability::NotRequested);
+    controller.setTurnState(CodexHistoryController::TurnState::SystemError);
+    QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
+    QVERIFY(controller.errorMessage().isEmpty());
+    controller.setTurnState(CodexHistoryController::TurnState::Detached);
+    QVERIFY(!controller.forkSelectedThread({}));
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
+    QCOMPARE(controller.errorMessage(), QStringLiteral("The Codex history observer is unavailable."));
+
+    controller.clearError();
+    controller.showingArchived_ = true;
+    QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
+    QVERIFY(controller.errorMessage().isEmpty());
 }
 
 void

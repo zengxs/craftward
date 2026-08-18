@@ -36,7 +36,11 @@ fn serializes_thread_pages_for_the_callback_duration() {
 #[test]
 fn serializes_conversations_for_the_callback_duration() {
     let captured = Mutex::new(CapturedEvent::default());
-    event_sink(&captured).emit_conversation_updated("thread-1", thread());
+    event_sink(&captured).emit_conversation_updated(
+        "thread-1",
+        thread(),
+        vec!["turn-1".to_owned()],
+    );
 
     let captured = captured.lock().unwrap();
     assert_eq!(captured.events.len(), 1);
@@ -50,6 +54,7 @@ fn serializes_conversations_for_the_callback_duration() {
         panic!("the event must contain a conversation");
     };
     assert_eq!(conversation.title, "Example");
+    assert_eq!(conversation.forkable_turn_ids, ["turn-1"]);
     assert_eq!(conversation.timeline.len(), 1);
     assert_eq!(conversation.timeline[0].turn_id, "turn-1");
     let Some(wire::timeline_item::Body::Message(message)) = conversation.timeline[0].body.as_ref()
@@ -64,7 +69,7 @@ fn serializes_thread_start_outcomes() {
     let captured = Mutex::new(CapturedEvent::default());
     let sink = event_sink(&captured);
 
-    sink.emit_thread_started("thread-1", thread());
+    sink.emit_thread_started("thread-1", thread(), vec!["turn-1".to_owned()]);
     sink.emit_thread_start_error("start failed");
 
     let captured = captured.lock().unwrap();
@@ -76,6 +81,7 @@ fn serializes_thread_start_outcomes() {
         panic!("the started event must contain its initial conversation");
     };
     assert_eq!(conversation.title, "Example");
+    assert_eq!(conversation.forkable_turn_ids, ["turn-1"]);
 
     let failed = &captured.events[1];
     assert_eq!(failed.kind, wire::HistoryEventKind::ThreadStartError as i32);
@@ -84,6 +90,36 @@ fn serializes_thread_start_outcomes() {
         failed.body,
         Some(wire::history_event::Body::ErrorMessage(
             "start failed".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn serializes_thread_fork_outcomes() {
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+
+    sink.emit_thread_forked("thread-2", thread(), vec!["turn-1".to_owned()]);
+    sink.emit_thread_fork_error("thread-1", "fork failed");
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.events.len(), 2);
+    let forked = &captured.events[0];
+    assert_eq!(forked.kind, wire::HistoryEventKind::ThreadForked as i32);
+    assert_eq!(forked.thread_id.as_deref(), Some("thread-2"));
+    let Some(wire::history_event::Body::Conversation(conversation)) = forked.body.as_ref() else {
+        panic!("the forked event must contain its complete conversation");
+    };
+    assert_eq!(conversation.title, "Example");
+    assert_eq!(conversation.forkable_turn_ids, ["turn-1"]);
+
+    let failed = &captured.events[1];
+    assert_eq!(failed.kind, wire::HistoryEventKind::ThreadForkError as i32);
+    assert_eq!(failed.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(
+        failed.body,
+        Some(wire::history_event::Body::ErrorMessage(
+            "fork failed".to_owned()
         ))
     );
 }

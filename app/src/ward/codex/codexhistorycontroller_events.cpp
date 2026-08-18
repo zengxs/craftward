@@ -7,6 +7,25 @@
 #include <utility>
 
 void
+CodexHistoryController::adoptConversation(const QString& threadId, const ward::codex::v1::Conversation& conversation)
+{
+    const bool wasLoading = std::exchange(loadingConversation_, false);
+    selectedThreadId_ = threadId;
+    selectedThreadTitle_ = conversation.title();
+    auto timeline = conversation.timeline();
+    timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds());
+    interactionModel_.clear();
+    setActivityHistoryPartial(conversation.activityHistoryIsPartial());
+    setTurnState(TurnState::Detached);
+    setWriteAvailability(WriteAvailability::NotRequested);
+    setConversationErrorMessage({});
+    setInterruptRequested(false);
+    emit selectionChanged();
+    if (wasLoading)
+        emit loadingChanged();
+}
+
+void
 CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, const QString& decodingError)
 {
     using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKind;
@@ -16,6 +35,10 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
         if (startingThread_) {
             setThreadStartErrorMessage(decodingError);
             setStartingThread(false);
+        }
+        if (forkingThread_) {
+            setForkingThread(false);
+            setConversationErrorMessage(decodingError);
         }
         if (changingThreadLifecycle_)
             setThreadErrorMessage(decodingError);
@@ -101,18 +124,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 break;
             }
 
-            const auto& conversation = event.conversation();
-            selectedThreadId_ = threadId;
-            selectedThreadTitle_ = conversation.title();
-            auto timeline = conversation.timeline();
-            timelineModel_.reconcileTimeline(std::move(timeline));
-            interactionModel_.clear();
-            setActivityHistoryPartial(conversation.activityHistoryIsPartial());
-            setTurnState(TurnState::Detached);
-            setWriteAvailability(WriteAvailability::NotRequested);
-            setConversationErrorMessage({});
-            setInterruptRequested(false);
-            emit selectionChanged();
+            adoptConversation(threadId, event.conversation());
             setThreadStartErrorMessage({});
             setStartingThread(false);
             break;
@@ -122,6 +134,36 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             setThreadStartErrorMessage(message.isEmpty() ? tr("The Codex conversation could not be started.")
                                                          : message);
             setStartingThread(false);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORKED: {
+            if (!forkingThread_)
+                return;
+            if (threadId.isEmpty() || !event.hasConversation()) {
+                setConversationErrorMessage(
+                  tr("Ward Core returned a forked Codex conversation without its initial state."));
+                setForkingThread(false);
+                break;
+            }
+
+            adoptConversation(threadId, event.conversation());
+            setForkingThread(false);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORK_ERROR: {
+            if (!forkingThread_)
+                return;
+            if (threadId.isEmpty()) {
+                setConversationErrorMessage(tr("Ward Core returned a thread-fork error without its source thread."));
+                setForkingThread(false);
+                break;
+            }
+            if (threadId != pendingForkSourceThreadId_)
+                return;
+            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
+            setConversationErrorMessage(message.isEmpty() ? tr("The Codex conversation could not be forked.")
+                                                          : message);
+            setForkingThread(false);
             break;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED: {
@@ -137,7 +179,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 emit selectionChanged();
             }
             auto timeline = conversation.timeline();
-            timelineModel_.reconcileTimeline(std::move(timeline));
+            timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds());
             setActivityHistoryPartial(conversation.activityHistoryIsPartial());
             finishConversationLoading({});
             break;

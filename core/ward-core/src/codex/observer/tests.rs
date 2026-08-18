@@ -9,16 +9,50 @@ use tokio::sync::mpsc;
 use ward_codex::{CodexHistoryCancellation, TurnMode, TurnOptions, TurnPermissionPreset};
 
 use super::commands::{
-    ObserverCommand, ThreadLifecycleAction, ThreadLifecycleRequest, ThreadListScope,
-    ThreadRenameRequest,
+    ObserverCommand, ThreadForkRequest, ThreadLifecycleAction, ThreadLifecycleRequest,
+    ThreadListScope, ThreadRenameRequest,
 };
 use super::{
     COMMAND_QUEUE_CAPACITY, ObserverOperation, ObserverOperationGate, WardCodexHistoryObserver,
     decode_turn_options, ward_core_codex_history_observer_archive_thread,
-    ward_core_codex_history_observer_rename_thread,
+    ward_core_codex_history_observer_fork_thread, ward_core_codex_history_observer_rename_thread,
     ward_core_codex_history_observer_restore_thread,
     ward_core_codex_history_observer_show_archived,
 };
+
+#[tokio::test]
+async fn queues_a_thread_fork_through_the_private_c_interface() {
+    let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let observer = WardCodexHistoryObserver {
+        commands,
+        cancellation: CodexHistoryCancellation::new(),
+        active_operation: Arc::new(ObserverOperationGate::new()),
+        runtime: Handle::current(),
+        worker: None,
+    };
+    let thread_id = CString::new("thread-1").expect("the thread ID is valid");
+    let last_turn_id = CString::new("turn-2").expect("the turn ID is valid");
+    let mut error = std::ptr::null_mut();
+
+    // SAFETY: The observer, thread ID, and turn ID remain live for the duration
+    // of the private C interface call, and the error output pointer is writable.
+    assert!(unsafe {
+        ward_core_codex_history_observer_fork_thread(
+            std::ptr::from_ref(&observer).cast_mut(),
+            thread_id.as_ptr(),
+            last_turn_id.as_ptr(),
+            &mut error,
+        )
+    });
+    assert!(error.is_null());
+    assert_eq!(
+        receiver.recv().await,
+        Some(ObserverCommand::ForkThread(ThreadForkRequest {
+            thread_id: "thread-1".to_owned(),
+            last_turn_id: "turn-2".to_owned(),
+        }))
+    );
+}
 
 #[test]
 fn reserves_only_one_observer_operation_at_a_time() {
@@ -31,6 +65,12 @@ fn reserves_only_one_observer_operation_at_a_time() {
     ));
     gate.release();
     assert!(gate.reserve(ObserverOperation::Turn).is_ok());
+    gate.release();
+    assert!(gate.reserve(ObserverOperation::ThreadFork).is_ok());
+    assert!(matches!(
+        gate.reserve(ObserverOperation::ThreadStart),
+        Err(ObserverOperation::ThreadFork)
+    ));
 }
 
 #[test]

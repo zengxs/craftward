@@ -162,6 +162,12 @@ CodexHistoryController::startingThread() const
 }
 
 bool
+CodexHistoryController::forkingThread() const
+{
+    return forkingThread_;
+}
+
+bool
 CodexHistoryController::changingThreadLifecycle() const
 {
     return changingThreadLifecycle_;
@@ -183,6 +189,18 @@ bool
 CodexHistoryController::turnInFlight() const
 {
     return turnRuntimeState_.status == TurnState::Starting || turnRuntimeState_.status == TurnState::Running;
+}
+
+bool
+CodexHistoryController::threadCreationInFlight() const
+{
+    return startingThread_ || forkingThread_;
+}
+
+bool
+CodexHistoryController::conversationMutationInFlight() const
+{
+    return threadCreationInFlight() || turnInFlight() || changingThreadLifecycle_;
 }
 
 bool
@@ -266,7 +284,7 @@ CodexHistoryController::writeAvailabilityMessage() const
 void
 CodexHistoryController::refresh()
 {
-    if (startingThread_ || turnInFlight())
+    if (threadCreationInFlight() || turnInFlight())
         return;
     if (historyObserver_ == nullptr) {
         setThreadErrorMessage(tr("The Codex history observer is unavailable."));
@@ -299,7 +317,7 @@ CodexHistoryController::showArchivedThreads(bool archived)
 {
     if (showingArchived_ == archived)
         return true;
-    if (loadingThreads_ || loadingConversation_ || startingThread_ || turnInFlight() || changingThreadLifecycle_)
+    if (loadingThreads_ || loadingConversation_ || conversationMutationInFlight())
         return false;
     if (historyObserver_ == nullptr) {
         setThreadErrorMessage(tr("The Codex history observer is unavailable."));
@@ -330,7 +348,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
 {
     if (threadId.isEmpty())
         return;
-    if (startingThread_)
+    if (threadCreationInFlight())
         return;
     if (turnInFlight() && threadId != selectedThreadId_)
         return;
@@ -375,7 +393,7 @@ CodexHistoryController::renameSelectedThread(const QString& name)
 {
     const QString normalizedName = name.trimmed();
     if (selectedThreadId_.isEmpty() || normalizedName.isEmpty() || normalizedName == selectedThreadTitle_.trimmed() ||
-        showingArchived_ || startingThread_ || turnInFlight() || loadingConversation_ || changingThreadLifecycle_)
+        showingArchived_ || conversationMutationInFlight() || loadingConversation_)
         return false;
     if (historyObserver_ == nullptr) {
         setConversationErrorMessage(tr("The Codex history observer is unavailable."));
@@ -399,6 +417,40 @@ CodexHistoryController::renameSelectedThread(const QString& name)
 }
 
 bool
+CodexHistoryController::forkSelectedThread(const QString& lastTurnId)
+{
+    const bool forkRuntimeReady =
+      turnRuntimeState_.status == TurnState::Detached || turnRuntimeState_.status == TurnState::Idle;
+    const bool forkWriteReady =
+      writeAvailability_ == WriteAvailability::NotRequested || writeAvailability_ == WriteAvailability::Writable;
+    if (selectedThreadId_.isEmpty() || lastTurnId.trimmed().isEmpty() || showingArchived_ || loadingThreads_ ||
+        loadingConversation_ || conversationMutationInFlight() || !forkRuntimeReady || !forkWriteReady)
+        return false;
+    if (historyObserver_ == nullptr) {
+        setConversationErrorMessage(tr("The Codex history observer is unavailable."));
+        return false;
+    }
+
+    const QByteArray threadId = selectedThreadId_.toUtf8();
+    const QByteArray encodedLastTurnId = lastTurnId.toUtf8();
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_fork_thread(
+          historyObserver_, threadId.constData(), encodedLastTurnId.constData(), &rawError)) {
+        QString message = copyError(rawError);
+        if (message.isEmpty())
+            message = tr("The Codex conversation could not be forked.");
+        setConversationErrorMessage(message);
+        return false;
+    }
+
+    setConversationErrorMessage({});
+    setForkingThread(true, selectedThreadId_);
+    if (!std::exchange(loadingThreads_, true))
+        emit loadingChanged();
+    return true;
+}
+
+bool
 CodexHistoryController::archiveSelectedThread()
 {
     return changeSelectedThreadLifecycle(ThreadLifecycleAction::Archive);
@@ -416,7 +468,7 @@ CodexHistoryController::changeSelectedThreadLifecycle(ThreadLifecycleAction acti
     const bool actionMatchesScope = (action == ThreadLifecycleAction::Archive && !showingArchived_) ||
                                     (action == ThreadLifecycleAction::Restore && showingArchived_);
     if (selectedThreadId_.isEmpty() || !actionMatchesScope || loadingThreads_ || loadingConversation_ ||
-        startingThread_ || turnInFlight() || changingThreadLifecycle_)
+        conversationMutationInFlight())
         return false;
     if (historyObserver_ == nullptr) {
         setConversationErrorMessage(tr("The Codex history observer is unavailable."));
@@ -455,8 +507,7 @@ CodexHistoryController::changeSelectedThreadLifecycle(ThreadLifecycleAction acti
 bool
 CodexHistoryController::startThread(const QUrl& workingDirectory)
 {
-    if (showingArchived_ || startingThread_ || turnInFlight() || loadingThreads_ || loadingConversation_ ||
-        changingThreadLifecycle_)
+    if (showingArchived_ || conversationMutationInFlight() || loadingThreads_ || loadingConversation_)
         return false;
     if (!workingDirectory.isLocalFile()) {
         setThreadStartErrorMessage(tr("Choose a local working directory for the new Codex conversation."));
@@ -492,9 +543,8 @@ CodexHistoryController::startThread(const QUrl& workingDirectory)
 void
 CodexHistoryController::acquireWriteAccess()
 {
-    if (showingArchived_ || selectedThreadId_.isEmpty() || startingThread_ || turnInFlight() ||
-        changingThreadLifecycle_ || writeAvailability_ == WriteAvailability::Checking ||
-        writeAvailability_ == WriteAvailability::Writable)
+    if (showingArchived_ || selectedThreadId_.isEmpty() || conversationMutationInFlight() ||
+        writeAvailability_ == WriteAvailability::Checking || writeAvailability_ == WriteAvailability::Writable)
         return;
     if (historyObserver_ == nullptr) {
         setWriteAvailability(WriteAvailability::Unavailable, tr("The Codex history observer is unavailable."));
@@ -517,7 +567,7 @@ CodexHistoryController::acquireWriteAccess()
 void
 CodexHistoryController::releaseWriteAccess()
 {
-    if (selectedThreadId_.isEmpty() || startingThread_ || turnInFlight() ||
+    if (selectedThreadId_.isEmpty() || threadCreationInFlight() || turnInFlight() ||
         writeAvailability_ == WriteAvailability::NotRequested)
         return;
     if (historyObserver_ == nullptr) {
@@ -541,8 +591,8 @@ CodexHistoryController::releaseWriteAccess()
 bool
 CodexHistoryController::startTurn(const QString& prompt)
 {
-    if (showingArchived_ || changingThreadLifecycle_ || prompt.trimmed().isEmpty() || selectedThreadId_.isEmpty() ||
-        startingThread_ || turnInFlight() || writeAvailability_ != WriteAvailability::Writable)
+    if (showingArchived_ || prompt.trimmed().isEmpty() || selectedThreadId_.isEmpty() ||
+        conversationMutationInFlight() || writeAvailability_ != WriteAvailability::Writable)
         return false;
     if (historyObserver_ == nullptr) {
         setConversationErrorMessage(tr("The Codex history observer is unavailable."));
@@ -766,6 +816,7 @@ CodexHistoryController::clearSelection()
     setWriteAvailability(WriteAvailability::NotRequested);
     setConversationErrorMessage({});
     setInterruptRequested(false);
+    setForkingThread(false);
     if (hadSelection)
         emit selectionChanged();
     if (wasLoading)
@@ -790,6 +841,17 @@ CodexHistoryController::setStartingThread(bool starting)
         return;
     startingThread_ = starting;
     emit startingThreadChanged();
+}
+
+void
+CodexHistoryController::setForkingThread(bool forking, const QString& sourceThreadId)
+{
+    const QString pendingSource = forking ? sourceThreadId : QString();
+    if (forkingThread_ == forking && pendingForkSourceThreadId_ == pendingSource)
+        return;
+    forkingThread_ = forking;
+    pendingForkSourceThreadId_ = pendingSource;
+    emit forkingThreadChanged();
 }
 
 void

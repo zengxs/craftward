@@ -16,8 +16,8 @@ use ward_codex::{
 };
 
 use self::commands::{
-    ObserverCommand, ThreadLifecycleAction, ThreadLifecycleRequest, ThreadListScope,
-    ThreadRenameRequest, ThreadStartRequest, TurnRequest, TurnSteerRequest,
+    ObserverCommand, ThreadForkRequest, ThreadLifecycleAction, ThreadLifecycleRequest,
+    ThreadListScope, ThreadRenameRequest, ThreadStartRequest, TurnRequest, TurnSteerRequest,
 };
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
@@ -40,6 +40,7 @@ const COMMAND_QUEUE_CAPACITY: usize = 64;
 enum ObserverOperation {
     Idle,
     ThreadStart,
+    ThreadFork,
     Turn,
 }
 
@@ -63,6 +64,9 @@ impl ObserverOperationGate {
             .map_err(|active| match active {
                 active if active == ObserverOperation::ThreadStart as u8 => {
                     ObserverOperation::ThreadStart
+                }
+                active if active == ObserverOperation::ThreadFork as u8 => {
+                    ObserverOperation::ThreadFork
                 }
                 active if active == ObserverOperation::Turn as u8 => ObserverOperation::Turn,
                 _ => unreachable!("the observer operation gate contains an invalid state"),
@@ -277,6 +281,66 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_rename_thread(
     send_command(
         observer,
         ObserverCommand::RenameThread(ThreadRenameRequest { thread_id, name }),
+        output_error,
+    )
+}
+
+/// Forks one active, loaded, and idle persisted Codex thread through a
+/// completed turn.
+///
+/// The asynchronous result is emitted as either a thread-forked event carrying
+/// the new conversation or a thread-fork-error event for the source thread.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `thread_id` and `last_turn_id`
+/// must point to NUL-terminated strings. `output_error`, when non-null, must be
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_fork_thread(
+    observer: *mut WardCodexHistoryObserver,
+    thread_id: *const c_char,
+    last_turn_id: *const c_char,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointer.
+    let Some(thread_id) =
+        (unsafe { required_string(thread_id, "the Codex thread identifier", output_error) })
+    else {
+        return false;
+    };
+    if thread_id.trim().is_empty() {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex thread identifier is empty") };
+        return false;
+    }
+    // SAFETY: The private C interface requires the documented string pointer.
+    let Some(last_turn_id) =
+        (unsafe { required_string(last_turn_id, "the Codex turn identifier", output_error) })
+    else {
+        return false;
+    };
+    if last_turn_id.trim().is_empty() {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex turn identifier is empty") };
+        return false;
+    }
+
+    send_exclusive_command(
+        observer,
+        ObserverOperation::ThreadFork,
+        ObserverCommand::ForkThread(ThreadForkRequest {
+            thread_id,
+            last_turn_id,
+        }),
         output_error,
     )
 }
@@ -640,6 +704,9 @@ fn reserve_operation(
             let message = match active {
                 ObserverOperation::ThreadStart => {
                     "a Codex thread start is already queued or running for this observer"
+                }
+                ObserverOperation::ThreadFork => {
+                    "a Codex thread fork is already queued or running for this observer"
                 }
                 ObserverOperation::Turn => {
                     "a Codex turn is already queued or running for this observer"

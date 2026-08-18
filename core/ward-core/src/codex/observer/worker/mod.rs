@@ -18,9 +18,10 @@ use super::super::live::{LiveRuntimeState, LiveThreadProjection, event_is_increm
 use super::super::wire;
 use super::ObserverOperationGate;
 use super::commands::{
-    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, ThreadLifecycleAction,
-    ThreadLifecycleRequest, ThreadListScope, ThreadRenameRequest, ThreadStartRequest, TurnRequest,
-    TurnSteerRequest, WriteAccessRequest, drain_commands, merge_command,
+    CommandUpdate, DrainedCommands, ObserverCommand, ThreadControlRequest, ThreadForkRequest,
+    ThreadLifecycleAction, ThreadLifecycleRequest, ThreadListScope, ThreadRenameRequest,
+    ThreadStartRequest, TurnRequest, TurnSteerRequest, WriteAccessRequest, drain_commands,
+    merge_command,
 };
 use super::events::HistoryEventSink;
 
@@ -39,6 +40,33 @@ enum OperationDrive<T> {
         deferred: Option<CommandUpdate>,
     },
     Stop,
+}
+
+fn finish_exclusive_operation<T>(
+    operation: OperationDrive<T>,
+    active_operation: &ObserverOperationGate,
+    following: &mut CommandUpdate,
+) -> Result<T, ()> {
+    active_operation.release();
+    let OperationDrive::Completed { output, deferred } = operation else {
+        return Err(());
+    };
+    if let Some(deferred) = deferred {
+        following.merge(deferred);
+    }
+    Ok(output)
+}
+
+fn watch_created_thread(
+    thread_id: String,
+    now: TokioInstant,
+    watched_thread: &mut Option<String>,
+    conversation_due: &mut Option<TokioInstant>,
+    live_emit_due: &mut Option<TokioInstant>,
+) {
+    *watched_thread = Some(thread_id);
+    *conversation_due = Some(now + CONVERSATION_POLL_INTERVAL);
+    *live_emit_due = None;
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -242,7 +270,11 @@ impl ObserverState {
                     .conversation()
                     .cloned()
                     .expect("a started writer always includes its thread snapshot");
-                sink.emit_thread_started(&thread_id, thread);
+                sink.emit_thread_started(
+                    &thread_id,
+                    thread,
+                    self.live.forkable_turn_ids().to_vec(),
+                );
                 sink.emit_pending_interactions(&thread_id, std::iter::empty());
                 sink.emit_thread_runtime_state(&thread_id, self.live.runtime());
                 sink.emit_thread_write_state(&thread_id, wire::ThreadWriteStatus::Writable, None);
@@ -288,7 +320,11 @@ impl ObserverState {
                 self.terminal_error = None;
                 self.pending_conversation_emit = false;
                 if let Some(thread) = self.live.conversation().cloned() {
-                    sink.emit_conversation_updated(thread_id, thread);
+                    sink.emit_conversation_updated(
+                        thread_id,
+                        thread,
+                        self.live.forkable_turn_ids().to_vec(),
+                    );
                 }
                 sink.emit_pending_interactions(thread_id, std::iter::empty());
                 sink.emit_thread_runtime_state(thread_id, self.live.runtime());
@@ -329,11 +365,17 @@ impl ObserverState {
         sink.emit_thread_write_state(thread_id, wire::ThreadWriteStatus::Idle, None);
     }
 
-    fn refresh(&mut self) {
+    fn refresh_thread_page(&mut self) {
         self.thread_page_health.reset();
-        self.conversation_health.reset();
         if let Some(session) = self.session.as_mut() {
             session.reset_thread_page_baseline();
+        }
+    }
+
+    fn refresh(&mut self) {
+        self.refresh_thread_page();
+        self.conversation_health.reset();
+        if let Some(session) = self.session.as_mut() {
             session.reset_thread_baseline();
         }
     }
@@ -367,6 +409,131 @@ impl ObserverState {
             Err(error) => {
                 sink.emit_conversation_error(&thread_id, &error.to_string());
                 false
+            }
+        }
+    }
+
+    async fn fork_thread(
+        &mut self,
+        request: ThreadForkRequest,
+        sink: &HistoryEventSink,
+    ) -> Option<String> {
+        let ThreadForkRequest {
+            thread_id,
+            last_turn_id,
+        } = request;
+        self.refresh_thread_page();
+        if self.thread_list_scope.is_archived() {
+            sink.emit_thread_fork_error(&thread_id, "Archived Codex history is read-only.");
+            return None;
+        }
+        let loaded = self
+            .live
+            .conversation()
+            .is_some_and(|thread| thread.summary.id == thread_id);
+        if !loaded {
+            sink.emit_thread_fork_error(
+                &thread_id,
+                "The conversation must be loaded before it can be forked.",
+            );
+            return None;
+        }
+
+        let source_writer_was_present = self
+            .writer
+            .as_ref()
+            .is_some_and(|writer| writer.thread_id() == thread_id);
+        if !source_writer_was_present {
+            if let Some(writer) = self.writer.take() {
+                writer.shutdown().await;
+            }
+            let result =
+                CodexThreadWriter::acquire_on(&self.source, self.cancellation.clone(), &thread_id)
+                    .await;
+            match classify_write_access_result(result, self.cancellation.is_cancelled()) {
+                WriteAccessEffect::Acquired(acquired) => {
+                    let (writer, subscription) = *acquired;
+                    self.live.attach(subscription);
+                    self.writer = Some(writer);
+                }
+                WriteAccessEffect::Busy => {
+                    self.live.detach();
+                    sink.emit_thread_fork_error(
+                        &thread_id,
+                        "The conversation is open in another Codex client.",
+                    );
+                    return None;
+                }
+                WriteAccessEffect::Unavailable(message) => {
+                    self.live.detach();
+                    sink.emit_thread_fork_error(&thread_id, &message);
+                    return None;
+                }
+                WriteAccessEffect::Cancelled => return None,
+            }
+        }
+        if self.live.runtime() != LiveRuntimeState::Idle {
+            if !source_writer_was_present {
+                if let Some(writer) = self.writer.take() {
+                    writer.shutdown().await;
+                }
+                self.live.detach();
+            }
+            sink.emit_thread_fork_error(
+                &thread_id,
+                "The conversation must be idle before it can be forked.",
+            );
+            return None;
+        }
+
+        let result = CodexThreadWriter::fork_on(
+            &self.source,
+            self.cancellation.clone(),
+            &thread_id,
+            Some(&last_turn_id),
+        )
+        .await;
+        match result {
+            Ok((writer, subscription)) => {
+                let forked_thread_id = writer.thread_id().to_owned();
+                self.select_thread().await;
+                self.live.attach(subscription);
+                self.writer = Some(writer);
+                self.initial_conversation_reads
+                    .mark_started(&forked_thread_id);
+                self.refresh();
+                let thread = self
+                    .live
+                    .conversation()
+                    .cloned()
+                    .expect("a forked writer always includes its thread snapshot");
+                sink.emit_thread_forked(
+                    &forked_thread_id,
+                    thread,
+                    self.live.forkable_turn_ids().to_vec(),
+                );
+                sink.emit_pending_interactions(&forked_thread_id, std::iter::empty());
+                sink.emit_thread_runtime_state(&forked_thread_id, self.live.runtime());
+                sink.emit_thread_write_state(
+                    &forked_thread_id,
+                    wire::ThreadWriteStatus::Writable,
+                    None,
+                );
+                Some(forked_thread_id)
+            }
+            Err(_) if self.cancellation.is_cancelled() => None,
+            Err(error) => {
+                if !source_writer_was_present {
+                    if let Some(writer) = self.writer.take() {
+                        writer.shutdown().await;
+                    }
+                    self.live.detach();
+                }
+                // A lost response can hide a fork that the app-server already
+                // created. Refresh the list, but never retry the mutation.
+                self.refresh();
+                sink.emit_thread_fork_error(&thread_id, &error.to_string());
+                None
             }
         }
     }
@@ -476,7 +643,11 @@ impl ObserverState {
         if self.live.accept_snapshot(thread)
             && let Some(thread) = self.live.conversation().cloned()
         {
-            sink.emit_conversation_updated(thread_id, thread);
+            sink.emit_conversation_updated(
+                thread_id,
+                thread,
+                self.live.forkable_turn_ids().to_vec(),
+            );
         }
     }
 
@@ -936,7 +1107,7 @@ fn classify_write_access_result(
 
 fn emit_live_conversation(live: &LiveThreadProjection, thread_id: &str, sink: &HistoryEventSink) {
     if let Some(thread) = live.conversation().cloned() {
-        sink.emit_conversation_updated(thread_id, thread);
+        sink.emit_conversation_updated(thread_id, thread, live.forkable_turn_ids().to_vec());
     }
 }
 
@@ -1081,6 +1252,7 @@ pub(super) async fn run_observer(
                         refresh,
                         write_access,
                         thread_rename,
+                        thread_fork,
                         thread_lifecycle,
                         thread_start,
                         turn,
@@ -1151,6 +1323,30 @@ pub(super) async fn run_observer(
                             if watched_thread.as_deref() == Some(renamed_thread_id.as_str()) {
                                 conversation_due = Some(now);
                             }
+                        }
+                    }
+                    if let Some(request) = thread_fork {
+                        let Ok(forked_thread_id) = finish_exclusive_operation(
+                            drive_operation(
+                                state.fork_thread(*request, &sink),
+                                &mut receiver,
+                                &cancellation,
+                            )
+                            .await,
+                            &active_operation,
+                            &mut following,
+                        ) else {
+                            break 'observer;
+                        };
+                        threads_due = now;
+                        if let Some(thread_id) = forked_thread_id {
+                            watch_created_thread(
+                                thread_id,
+                                now,
+                                &mut watched_thread,
+                                &mut conversation_due,
+                                &mut live_emit_due,
+                            );
                         }
                     }
                     for request in thread_lifecycle {
@@ -1228,29 +1424,28 @@ pub(super) async fn run_observer(
                         }
                     }
                     if let Some(request) = thread_start {
-                        let started = drive_operation(
-                            state.start_thread(request, &sink),
-                            &mut receiver,
-                            &cancellation,
-                        )
-                        .await;
-                        active_operation.release();
-                        let OperationDrive::Completed {
-                            output: started_thread_id,
-                            deferred,
-                        } = started
-                        else {
+                        let Ok(started_thread_id) = finish_exclusive_operation(
+                            drive_operation(
+                                state.start_thread(*request, &sink),
+                                &mut receiver,
+                                &cancellation,
+                            )
+                            .await,
+                            &active_operation,
+                            &mut following,
+                        ) else {
                             break 'observer;
                         };
-                        if let Some(deferred) = deferred {
-                            following.merge(deferred);
-                        }
                         if let Some(thread_id) = started_thread_id {
-                            watched_thread = Some(thread_id);
                             let now = TokioInstant::now();
                             threads_due = now;
-                            conversation_due = Some(now + CONVERSATION_POLL_INTERVAL);
-                            live_emit_due = None;
+                            watch_created_thread(
+                                thread_id,
+                                now,
+                                &mut watched_thread,
+                                &mut conversation_due,
+                                &mut live_emit_due,
+                            );
                         }
                     }
                     if let Some(request) = turn {

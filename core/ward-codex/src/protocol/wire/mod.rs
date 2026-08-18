@@ -88,6 +88,26 @@ pub(crate) struct ThreadArchiveResponse {}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadForkParams<'a> {
+    pub(crate) thread_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) last_turn_id: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ThreadForkResponse {
+    thread: WireThread,
+    model: String,
+}
+
+impl ThreadForkResponse {
+    pub(crate) fn into_parts(self) -> Result<(ThreadSubscription, String), serde_json::Error> {
+        Ok((self.thread.into_subscription()?, self.model))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadListParams<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     cursor: Option<&'a str>,

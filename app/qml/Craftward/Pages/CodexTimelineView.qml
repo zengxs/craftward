@@ -13,6 +13,8 @@ Control {
     id: root
 
     required property CodexHistoryController controller
+    required property bool forkEnabled
+    required property bool showForkActions
     property double wallClockUnixMilliseconds: Date.now()
 
     function activityStatusText(activity) {
@@ -142,6 +144,7 @@ Control {
 
             required property string entryId
             required property string turnId
+            required property bool forkBoundary
             required property bool activityGroup
             required property bool fromUser
             required property bool commentary
@@ -155,7 +158,7 @@ Control {
             property bool groupExpanded: activityItems.length > 0 && activityItems[0].reasoning
 
             width: ListView.view.width
-            implicitHeight: activityGroup ? activityCard.implicitHeight : messageCard.implicitHeight
+            implicitHeight: (activityGroup ? activityCard.implicitHeight : messageCard.implicitHeight) + (forkAction.visible ? forkAction.implicitHeight + 2 : 0)
 
             Rectangle {
                 id: messageCard
@@ -350,6 +353,19 @@ Control {
                         }
                     }
                 }
+            }
+
+            ToolButton {
+                id: forkAction
+
+                anchors.left: timelineDelegate.activityGroup ? activityCard.left : messageCard.left
+                anchors.top: timelineDelegate.activityGroup ? activityCard.bottom : messageCard.bottom
+                enabled: root.forkEnabled
+                font.pixelSize: 11
+                implicitHeight: 24
+                text: qsTr("Fork from here")
+                visible: timelineDelegate.forkBoundary && root.showForkActions
+                onClicked: root.controller.forkSelectedThread(timelineDelegate.turnId)
             }
         }
 

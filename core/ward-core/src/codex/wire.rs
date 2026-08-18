@@ -37,8 +37,8 @@ impl From<CodexThreadPage> for ThreadPage {
     }
 }
 
-impl From<CodexThread> for Conversation {
-    fn from(thread: CodexThread) -> Self {
+impl Conversation {
+    pub(super) fn from_thread(thread: CodexThread, forkable_turn_ids: Vec<String>) -> Self {
         let title = thread
             .summary
             .name
@@ -65,6 +65,7 @@ impl From<CodexThread> for Conversation {
             title,
             timeline,
             activity_history_is_partial: true,
+            forkable_turn_ids,
         }
     }
 }
@@ -307,67 +308,71 @@ mod tests {
 
     #[test]
     fn serializes_a_thread_as_an_ordered_timeline() {
-        let conversation = Conversation::from(CodexThread {
-            summary: CodexThreadSummary {
-                id: "thread-1".to_owned(),
-                name: Some("Example".to_owned()),
-                preview: "Preview".to_owned(),
-                cwd: PathBuf::from("/workspace"),
-                created_at_unix_seconds: 10,
-                updated_at_unix_seconds: 20,
+        let conversation = Conversation::from_thread(
+            CodexThread {
+                summary: CodexThreadSummary {
+                    id: "thread-1".to_owned(),
+                    name: Some("Example".to_owned()),
+                    preview: "Preview".to_owned(),
+                    cwd: PathBuf::from("/workspace"),
+                    created_at_unix_seconds: 10,
+                    updated_at_unix_seconds: 20,
+                },
+                turns: vec![Turn {
+                    id: "turn-1".to_owned(),
+                    status: TurnStatus::Completed,
+                    items: vec![
+                        CodexThreadItem::UserMessage {
+                            id: "user-1".to_owned(),
+                            content: vec![
+                                UserInput::Text("Hello".to_owned()),
+                                UserInput::LocalImage {
+                                    path: PathBuf::from("/workspace/image.png"),
+                                },
+                            ],
+                        },
+                        CodexThreadItem::AgentMessage {
+                            id: "commentary-1".to_owned(),
+                            text: "I will inspect the file.".to_owned(),
+                            phase: Some(AgentMessagePhase::Commentary),
+                        },
+                        CodexThreadItem::Other {
+                            id: "other-1".to_owned(),
+                            kind: "futureItem".to_owned(),
+                        },
+                        CodexThreadItem::Activity(CodexActivity {
+                            id: "activity-1".to_owned(),
+                            kind: CodexActivityKind::CommandExecution,
+                            status: CodexActivityStatus::Completed,
+                            started_at_unix_milliseconds: Some(1_000),
+                            completed_at_unix_milliseconds: Some(4_250),
+                            summary: "sed -n 1,80p src/main.rs".to_owned(),
+                            detail: Some("fn main() {}".to_owned()),
+                            context: Some("/workspace".to_owned()),
+                            command_actions: vec![CodexCommandAction {
+                                kind: CodexCommandActionKind::Read,
+                                command: "sed -n 1,80p src/main.rs".to_owned(),
+                                name: Some("src/main.rs".to_owned()),
+                                path: Some(PathBuf::from("/workspace/src/main.rs")),
+                                query: None,
+                            }],
+                        }),
+                        CodexThreadItem::AgentMessage {
+                            id: "agent-1".to_owned(),
+                            text: "Hi".to_owned(),
+                            phase: Some(AgentMessagePhase::FinalAnswer),
+                        },
+                    ],
+                }],
             },
-            turns: vec![Turn {
-                id: "turn-1".to_owned(),
-                status: TurnStatus::Completed,
-                items: vec![
-                    CodexThreadItem::UserMessage {
-                        id: "user-1".to_owned(),
-                        content: vec![
-                            UserInput::Text("Hello".to_owned()),
-                            UserInput::LocalImage {
-                                path: PathBuf::from("/workspace/image.png"),
-                            },
-                        ],
-                    },
-                    CodexThreadItem::AgentMessage {
-                        id: "commentary-1".to_owned(),
-                        text: "I will inspect the file.".to_owned(),
-                        phase: Some(AgentMessagePhase::Commentary),
-                    },
-                    CodexThreadItem::Other {
-                        id: "other-1".to_owned(),
-                        kind: "futureItem".to_owned(),
-                    },
-                    CodexThreadItem::Activity(CodexActivity {
-                        id: "activity-1".to_owned(),
-                        kind: CodexActivityKind::CommandExecution,
-                        status: CodexActivityStatus::Completed,
-                        started_at_unix_milliseconds: Some(1_000),
-                        completed_at_unix_milliseconds: Some(4_250),
-                        summary: "sed -n 1,80p src/main.rs".to_owned(),
-                        detail: Some("fn main() {}".to_owned()),
-                        context: Some("/workspace".to_owned()),
-                        command_actions: vec![CodexCommandAction {
-                            kind: CodexCommandActionKind::Read,
-                            command: "sed -n 1,80p src/main.rs".to_owned(),
-                            name: Some("src/main.rs".to_owned()),
-                            path: Some(PathBuf::from("/workspace/src/main.rs")),
-                            query: None,
-                        }],
-                    }),
-                    CodexThreadItem::AgentMessage {
-                        id: "agent-1".to_owned(),
-                        text: "Hi".to_owned(),
-                        phase: Some(AgentMessagePhase::FinalAnswer),
-                    },
-                ],
-            }],
-        });
+            vec!["turn-1".to_owned()],
+        );
         let encoded = conversation.encode_to_vec();
         let decoded = Conversation::decode(encoded.as_slice()).unwrap();
 
         assert_eq!(decoded.title, "Example");
         assert!(decoded.activity_history_is_partial);
+        assert_eq!(decoded.forkable_turn_ids, ["turn-1"]);
         assert_eq!(decoded.timeline.len(), 4);
         assert!(decoded.timeline.iter().all(|item| item.turn_id == "turn-1"));
 

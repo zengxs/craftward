@@ -22,6 +22,7 @@ struct WardCodexHistoryObserver;
 struct WardRuntime;
 
 namespace ward::codex::v1 {
+class Conversation;
 class HistoryEvent;
 }
 
@@ -40,6 +41,7 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(bool loadingThreads READ loadingThreads NOTIFY loadingChanged)
     Q_PROPERTY(bool loadingConversation READ loadingConversation NOTIFY loadingChanged)
     Q_PROPERTY(bool startingThread READ startingThread NOTIFY startingThreadChanged)
+    Q_PROPERTY(bool forkingThread READ forkingThread NOTIFY forkingThreadChanged)
     Q_PROPERTY(bool changingThreadLifecycle READ changingThreadLifecycle NOTIFY changingThreadLifecycleChanged)
     Q_PROPERTY(bool activityHistoryPartial READ activityHistoryPartial NOTIFY activityHistoryPartialChanged)
     Q_PROPERTY(TurnState turnState READ turnState NOTIFY turnStateChanged)
@@ -131,6 +133,7 @@ class CodexHistoryController : public QObject
     [[nodiscard]] bool loadingThreads() const;
     [[nodiscard]] bool loadingConversation() const;
     [[nodiscard]] bool startingThread() const;
+    [[nodiscard]] bool forkingThread() const;
     [[nodiscard]] bool changingThreadLifecycle() const;
     [[nodiscard]] bool activityHistoryPartial() const;
     [[nodiscard]] TurnState turnState() const;
@@ -152,6 +155,7 @@ class CodexHistoryController : public QObject
     Q_INVOKABLE bool showArchivedThreads(bool archived);
     Q_INVOKABLE void selectThread(const QString& threadId, const QString& title);
     Q_INVOKABLE bool renameSelectedThread(const QString& name);
+    Q_INVOKABLE bool forkSelectedThread(const QString& lastTurnId);
     Q_INVOKABLE bool archiveSelectedThread();
     Q_INVOKABLE bool restoreSelectedThread();
     Q_INVOKABLE bool startThread(const QUrl& workingDirectory);
@@ -170,6 +174,7 @@ class CodexHistoryController : public QObject
     void errorMessageChanged();
     void loadingChanged();
     void startingThreadChanged();
+    void forkingThreadChanged();
     void changingThreadLifecycleChanged();
     void activityHistoryPartialChanged();
     void turnStateChanged();
@@ -203,10 +208,12 @@ class CodexHistoryController : public QObject
     void setThreadErrorMessage(const QString& message);
     void setThreadStartErrorMessage(const QString& message);
     void setConversationErrorMessage(const QString& message);
+    void adoptConversation(const QString& threadId, const ward::codex::v1::Conversation& conversation);
     void clearSelection();
     bool changeSelectedThreadLifecycle(ThreadLifecycleAction action);
     void setChangingThreadLifecycle(bool changing, const QString& threadId = {});
     void setStartingThread(bool starting);
+    void setForkingThread(bool forking, const QString& sourceThreadId = {});
     void setActivityHistoryPartial(bool partial);
     void setTurnState(TurnState state,
                       const QString& activeTurnId = {},
@@ -215,6 +222,8 @@ class CodexHistoryController : public QObject
     void setSteeringTurn(bool steering);
     void setWriteAvailability(WriteAvailability availability, const QString& message = {});
     void setInterruptRequested(bool requested);
+    [[nodiscard]] bool threadCreationInFlight() const;
+    [[nodiscard]] bool conversationMutationInFlight() const;
     bool sendInteractionResponse(const QString& interactionId,
                                  const ward::codex::v1::PendingInteractionResponse& response);
     void updateErrorMessage();
@@ -238,6 +247,8 @@ class CodexHistoryController : public QObject
     bool loadingThreads_ = true;
     bool loadingConversation_ = false;
     bool startingThread_ = false;
+    bool forkingThread_ = false;
+    QString pendingForkSourceThreadId_;
     bool changingThreadLifecycle_ = false;
     QString pendingLifecycleThreadId_;
     bool activityHistoryPartial_ = false;

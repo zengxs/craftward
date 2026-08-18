@@ -31,6 +31,9 @@ message Conversation {
 
   // Displayable thread items in their original turn order.
   repeated TimelineItem timeline = 5;
+
+  // Terminal turn identifiers confirmed by an authoritative persisted snapshot.
+  repeated string forkable_turn_ids = 6;
 }
 
 enum HistoryEventKind {
@@ -58,6 +61,10 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_TURN_STEER_ERROR = 17;
   // Carries an error_message when a thread could not be archived or restored.
   HISTORY_EVENT_KIND_THREAD_LIFECYCLE_ERROR = 18;
+  // Carries the new thread identifier and its complete forked Conversation.
+  HISTORY_EVENT_KIND_THREAD_FORKED = 19;
+  // Carries an error_message for the source thread when it could not be forked.
+  HISTORY_EVENT_KIND_THREAD_FORK_ERROR = 20;
 }
 
 // The selected thread's writer availability for this Craftward observer.

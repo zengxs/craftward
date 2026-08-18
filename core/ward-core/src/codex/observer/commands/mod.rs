@@ -17,6 +17,7 @@ pub(super) enum ObserverCommand {
     AcquireWrite(String),
     ReleaseWrite(String),
     RenameThread(ThreadRenameRequest),
+    ForkThread(ThreadForkRequest),
     ChangeThreadLifecycle(ThreadLifecycleRequest),
     StartThread(ThreadStartRequest),
     StartTurn(TurnRequest),
@@ -84,6 +85,12 @@ pub(super) struct ThreadRenameRequest {
 }
 
 #[derive(Debug, Eq, PartialEq)]
+pub(super) struct ThreadForkRequest {
+    pub(super) thread_id: String,
+    pub(super) last_turn_id: String,
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub(super) struct ThreadStartRequest {
     pub(super) working_directory: PathBuf,
 }
@@ -95,8 +102,9 @@ pub(super) struct CommandUpdate {
     pub(super) refresh: bool,
     pub(super) write_access: Option<WriteAccessRequest>,
     pub(super) thread_rename: Option<Box<ThreadRenameRequest>>,
+    pub(super) thread_fork: Option<Box<ThreadForkRequest>>,
     pub(super) thread_lifecycle: Vec<ThreadLifecycleRequest>,
-    pub(super) thread_start: Option<ThreadStartRequest>,
+    pub(super) thread_start: Option<Box<ThreadStartRequest>>,
     pub(super) turn: Option<TurnRequest>,
     pub(super) controls: Vec<ThreadControlRequest>,
 }
@@ -116,6 +124,9 @@ impl CommandUpdate {
         if newer.thread_rename.is_some() {
             self.thread_rename = newer.thread_rename;
         }
+        if self.thread_fork.is_none() {
+            self.thread_fork = newer.thread_fork;
+        }
         self.thread_lifecycle.extend(newer.thread_lifecycle);
         if self.thread_start.is_none() {
             self.thread_start = newer.thread_start;
@@ -132,6 +143,7 @@ impl CommandUpdate {
             && !self.refresh
             && self.write_access.is_none()
             && self.thread_rename.is_none()
+            && self.thread_fork.is_none()
             && self.thread_lifecycle.is_empty()
             && self.thread_start.is_none()
             && self.turn.is_none()
@@ -145,7 +157,10 @@ impl CommandUpdate {
             && self.write_access.is_none()
             && self.thread_rename.is_none()
             && self.thread_lifecycle.is_empty()
-            && self.thread_start.is_some() != self.turn.is_some()
+            && usize::from(self.thread_fork.is_some())
+                + usize::from(self.thread_start.is_some())
+                + usize::from(self.turn.is_some())
+                == 1
             && self.controls.is_empty()
     }
 }
@@ -191,11 +206,15 @@ pub(super) fn merge_command(update: &mut CommandUpdate, command: ObserverCommand
             update.write_access = Some(WriteAccessRequest::Release(thread_id));
         }
         ObserverCommand::RenameThread(request) => update.thread_rename = Some(Box::new(request)),
+        ObserverCommand::ForkThread(request) if update.thread_fork.is_none() => {
+            update.thread_fork = Some(Box::new(request));
+        }
+        ObserverCommand::ForkThread(_) => {}
         ObserverCommand::ChangeThreadLifecycle(request) => {
             update.thread_lifecycle.push(request);
         }
         ObserverCommand::StartThread(request) if update.thread_start.is_none() => {
-            update.thread_start = Some(request);
+            update.thread_start = Some(Box::new(request));
         }
         ObserverCommand::StartThread(_) => {}
         ObserverCommand::StartTurn(request) if update.turn.is_none() => {

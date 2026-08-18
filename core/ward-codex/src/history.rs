@@ -94,6 +94,17 @@ pub struct CodexThreadWriter {
     client: CodexClient,
 }
 
+enum ThreadWriterCreation<'a> {
+    Start {
+        working_directory: &'a Path,
+        options: ThreadStartOptions,
+    },
+    Fork {
+        thread_id: &'a str,
+        last_turn_id: Option<&'a str>,
+    },
+}
+
 #[derive(Default)]
 struct ThreadTracker {
     previous: Option<Thread>,
@@ -284,6 +295,45 @@ impl CodexHistorySession {
 }
 
 impl CodexThreadWriter {
+    async fn create_on(
+        source: &CodexAppServerSource,
+        cancellation: CodexHistoryCancellation,
+        creation: ThreadWriterCreation<'_>,
+    ) -> Result<(Self, ThreadSubscription), CodexError> {
+        let mut client =
+            CodexClient::connect_with_cancellation(source, cancellation.token.clone()).await?;
+        let result = match creation {
+            ThreadWriterCreation::Start {
+                working_directory,
+                options,
+            } => client.start_thread(working_directory, options).await,
+            ThreadWriterCreation::Fork {
+                thread_id,
+                last_turn_id,
+            } => client.fork_thread(thread_id, last_turn_id).await,
+        };
+        let subscription = match result {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                client.shutdown().await;
+                return Err(error);
+            }
+        };
+        if cancellation.is_cancelled() {
+            client.shutdown().await;
+            return Err(CodexError::Interrupted);
+        }
+        let thread_id = subscription.thread.summary.id.clone();
+        Ok((
+            Self {
+                thread_id,
+                cancellation,
+                client,
+            },
+            subscription,
+        ))
+    }
+
     /// Starts a new thread in a dedicated app-server connection controlled by the
     /// supplied cancellation handle.
     ///
@@ -306,28 +356,15 @@ impl CodexThreadWriter {
         working_directory: &Path,
         options: ThreadStartOptions,
     ) -> Result<(Self, ThreadSubscription), CodexError> {
-        let mut client =
-            CodexClient::connect_with_cancellation(source, cancellation.token.clone()).await?;
-        let subscription = match client.start_thread(working_directory, options).await {
-            Ok(subscription) => subscription,
-            Err(error) => {
-                client.shutdown().await;
-                return Err(error);
-            }
-        };
-        if cancellation.is_cancelled() {
-            client.shutdown().await;
-            return Err(CodexError::Interrupted);
-        }
-        let thread_id = subscription.thread.summary.id.clone();
-        Ok((
-            Self {
-                thread_id,
-                cancellation,
-                client,
+        Self::create_on(
+            source,
+            cancellation,
+            ThreadWriterCreation::Start {
+                working_directory,
+                options,
             },
-            subscription,
-        ))
+        )
+        .await
     }
 
     /// Acquires the writer for a persisted thread on a dedicated app-server
@@ -380,6 +417,40 @@ impl CodexThreadWriter {
             },
             subscription,
         ))
+    }
+
+    /// Forks a persisted thread, optionally through an inclusive last turn,
+    /// and adopts the dedicated connection as the new thread's writer.
+    ///
+    /// A failed fork is not retried because the app-server may have created
+    /// the new thread before its response became unavailable.
+    pub async fn fork_with_cancellation(
+        executable: impl AsRef<OsStr>,
+        cancellation: CodexHistoryCancellation,
+        thread_id: &str,
+        last_turn_id: Option<&str>,
+    ) -> Result<(Self, ThreadSubscription), CodexError> {
+        let source = CodexAppServerSource::executable(executable);
+        Self::fork_on(&source, cancellation, thread_id, last_turn_id).await
+    }
+
+    /// Forks a persisted thread through a reusable app-server source,
+    /// optionally omitting turns after `last_turn_id`.
+    pub async fn fork_on(
+        source: &CodexAppServerSource,
+        cancellation: CodexHistoryCancellation,
+        thread_id: &str,
+        last_turn_id: Option<&str>,
+    ) -> Result<(Self, ThreadSubscription), CodexError> {
+        Self::create_on(
+            source,
+            cancellation,
+            ThreadWriterCreation::Fork {
+                thread_id,
+                last_turn_id,
+            },
+        )
+        .await
     }
 
     #[must_use]

@@ -225,6 +225,154 @@ async fn archives_and_restores_a_persisted_thread_through_the_public_history_ses
     history.shutdown().await;
 }
 
+#[tokio::test]
+async fn forks_through_a_completed_turn_and_continues_the_branch() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let (mut original_writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the original thread should start");
+    for prompt in [
+        "Explore the original approach",
+        "Refine the original approach",
+        "Finish the original approach",
+    ] {
+        original_writer
+            .begin_text_turn(prompt, TurnOptions::default())
+            .await
+            .expect("the original turn should start");
+        let original_outcome = finish_fake_turn(&mut original_writer).await;
+        assert_eq!(original_outcome.answer, "Done.");
+    }
+    original_writer.shutdown().await;
+
+    let mut history = CodexHistorySession::connect(source.clone())
+        .await
+        .expect("the public history session should connect");
+    history
+        .rename_thread("thread-new", "Original approach")
+        .await
+        .expect("the original thread should have a stable name");
+    let (mut fork_writer, fork_subscription) = CodexThreadWriter::fork_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        "thread-new",
+        Some("live-turn-1"),
+    )
+    .await
+    .expect("the thread should fork through the selected completed turn");
+    let fork = fork_subscription.thread;
+    assert_eq!(fork.summary.id, "thread-fork-1");
+    assert_eq!(fork.summary.cwd, Path::new("/workspace"));
+    assert_eq!(fork.turns.len(), 1);
+    assert_eq!(fork.turns[0].status, TurnStatus::Completed);
+    let [
+        ThreadItem::UserMessage { content, .. },
+        ThreadItem::AgentMessage { text, .. },
+    ] = fork.turns[0].items.as_slice()
+    else {
+        panic!("the fork should preserve the source turn's complete message history");
+    };
+    assert_eq!(
+        content.as_slice(),
+        [UserInput::Text("Explore the original approach".to_owned())]
+    );
+    assert_eq!(text, "Done.");
+
+    let ThreadPagePoll::Baseline(page) = history
+        .poll_thread_page(&ThreadListOptions {
+            archived: Some(false),
+            ..ThreadListOptions::default()
+        })
+        .await
+        .expect("the active thread page should include both branches")
+    else {
+        panic!("the first active page should establish a baseline");
+    };
+    let mut thread_ids = page
+        .threads
+        .iter()
+        .map(|thread| thread.id.as_str())
+        .collect::<Vec<_>>();
+    thread_ids.sort_unstable();
+    assert_eq!(thread_ids, ["thread-fork-1", "thread-new"]);
+
+    assert_eq!(fork_writer.thread_id(), "thread-fork-1");
+    fork_writer
+        .begin_text_turn("Try a different direction", TurnOptions::default())
+        .await
+        .expect("the fork should accept a new turn");
+    let fork_outcome = finish_fake_turn(&mut fork_writer).await;
+    assert_eq!(fork_outcome.answer, "Done.");
+    fork_writer.shutdown().await;
+
+    let ThreadPoll::Baseline(original) = history
+        .poll_thread("thread-new")
+        .await
+        .expect("the original thread should remain readable")
+    else {
+        panic!("reading the original thread should establish a baseline");
+    };
+    assert_eq!(original.summary.name.as_deref(), Some("Original approach"));
+    assert_eq!(original.turns.len(), 3);
+    let ThreadPoll::Baseline(fork) = history
+        .poll_thread("thread-fork-1")
+        .await
+        .expect("the continued fork should remain readable")
+    else {
+        panic!("switching to the fork should establish a baseline");
+    };
+    assert_eq!(fork.turns.len(), 2);
+
+    history.shutdown().await;
+}
+
+#[tokio::test]
+async fn does_not_retry_a_fork_after_its_applied_response_is_lost() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        lose_first_fork_response: true,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let source = fake_app_server.source();
+    let (writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the source thread should start");
+    writer.shutdown().await;
+
+    match CodexThreadWriter::fork_on(&source, CodexHistoryCancellation::new(), "thread-new", None)
+        .await
+    {
+        Err(_) => {}
+        Ok((writer, _)) => {
+            writer.shutdown().await;
+            panic!("a lost fork response must not be retried");
+        }
+    }
+
+    let mut history = CodexHistorySession::connect(source)
+        .await
+        .expect("the history session should reconnect independently");
+    let ThreadPagePoll::Baseline(page) = history
+        .poll_thread_page(&ThreadListOptions::default())
+        .await
+        .expect("the applied fork should be visible")
+    else {
+        panic!("the first thread page should establish a baseline");
+    };
+    assert_eq!(page.threads.len(), 2);
+    history.shutdown().await;
+}
+
 struct FakeTurnOutcome {
     command_status: Option<ActivityStatus>,
     streamed_answer: String,

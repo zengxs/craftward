@@ -4,14 +4,34 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    InitializeParams, ThreadReadResponse, ThreadResumeResponse, ThreadStartParams,
-    ThreadStartResponse, TurnStartParams, TurnSteerParams, turn_stream_event,
+    InitializeParams, ThreadForkParams, ThreadReadResponse, ThreadResumeResponse,
+    ThreadStartParams, ThreadStartResponse, TurnStartParams, TurnSteerParams, turn_stream_event,
 };
 use crate::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
     CommandActionKind, ThreadActiveFlag, ThreadItem, ThreadRuntimeStatus, ThreadStartOptions,
     ThreadStreamEvent, TurnMode, TurnOptions, TurnPermissionPreset, UserInput,
 };
+
+#[test]
+fn serializes_full_and_turn_bounded_forks_without_overrides() {
+    assert_eq!(
+        serde_json::to_value(ThreadForkParams {
+            thread_id: "thread-1",
+            last_turn_id: None,
+        })
+        .unwrap(),
+        serde_json::json!({ "threadId": "thread-1" })
+    );
+    assert_eq!(
+        serde_json::to_value(ThreadForkParams {
+            thread_id: "thread-1",
+            last_turn_id: Some("turn-2"),
+        })
+        .unwrap(),
+        serde_json::json!({ "threadId": "thread-1", "lastTurnId": "turn-2" })
+    );
+}
 
 #[test]
 fn opts_in_to_the_experimental_app_server_surface() {

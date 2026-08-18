@@ -66,6 +66,10 @@ extern "C"
                                                         const char* thread_id,
                                                         const char* name,
                                                         WardError** error);
+    bool ward_core_codex_history_observer_fork_thread(WardCodexHistoryObserver* observer,
+                                                      const char* thread_id,
+                                                      const char* last_turn_id,
+                                                      WardError** error);
     bool ward_core_codex_history_observer_archive_thread(WardCodexHistoryObserver* observer,
                                                          const char* thread_id,
                                                          WardError** error);

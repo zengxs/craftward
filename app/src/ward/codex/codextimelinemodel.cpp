@@ -36,6 +36,8 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
             return row.entryId;
         case TurnIdRole:
             return row.turnId;
+        case ForkBoundaryRole:
+            return row.forkBoundary;
         case ActivityGroupRole:
             return row.activityGroup;
         case FromUserRole:
@@ -67,6 +69,7 @@ CodexTimelineModel::roleNames() const
     return {
         { EntryIdRole, "entryId" },
         { TurnIdRole, "turnId" },
+        { ForkBoundaryRole, "forkBoundary" },
         { ActivityGroupRole, "activityGroup" },
         { FromUserRole, "fromUser" },
         { CommentaryRole, "commentary" },
@@ -81,7 +84,7 @@ CodexTimelineModel::roleNames() const
 }
 
 QList<CodexTimelineModel::TimelineRow>
-CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline) const
+CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline, const QSet<QString>& forkableTurnIds) const
 {
     QList<TimelineRow> rows;
     rows.reserve(timeline.size());
@@ -118,6 +121,10 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline) const
         };
         row.activities.append(std::move(activity));
         rows.append(std::move(row));
+    }
+    for (qsizetype index = 0; index < rows.size(); ++index) {
+        rows[index].forkBoundary = forkableTurnIds.contains(rows[index].turnId) &&
+                                   (index + 1 == rows.size() || rows[index + 1].turnId != rows[index].turnId);
     }
     return rows;
 }
@@ -367,9 +374,9 @@ CodexTimelineModel::rowRunning(const TimelineRow& row) const
 bool
 CodexTimelineModel::rowsEqual(const TimelineRow& left, const TimelineRow& right) const
 {
-    return left.entryId == right.entryId && left.turnId == right.turnId && left.activityGroup == right.activityGroup &&
-           left.message == right.message && left.activityKind == right.activityKind &&
-           left.activities == right.activities;
+    return left.entryId == right.entryId && left.turnId == right.turnId && left.forkBoundary == right.forkBoundary &&
+           left.activityGroup == right.activityGroup && left.message == right.message &&
+           left.activityKind == right.activityKind && left.activities == right.activities;
 }
 
 void
@@ -381,9 +388,10 @@ CodexTimelineModel::replaceRows(QList<TimelineRow> rows)
 }
 
 void
-CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline)
+CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline, const QStringList& forkableTurnIds)
 {
-    QList<TimelineRow> rows = buildRows(std::move(timeline));
+    QList<TimelineRow> rows =
+      buildRows(std::move(timeline), QSet<QString>(forkableTurnIds.cbegin(), forkableTurnIds.cend()));
     const qsizetype sharedSize = std::min(rows_.size(), rows.size());
     qsizetype commonPrefix = 0;
     while (commonPrefix < sharedSize && rows_.at(commonPrefix).entryId == rows.at(commonPrefix).entryId)
