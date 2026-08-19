@@ -3,17 +3,12 @@
 
 #pragma once
 
-#include "codexinteractionmodel.h"
-#include "codexmodelcatalogmodel.h"
+#include "codexconversationcontroller.h"
 #include "codexthreadmodel.h"
-#include "codextimelinemodel.h"
 
-#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QUrl>
-#include <QVariantList>
-#include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
 
 #include <cstdint>
@@ -25,7 +20,6 @@ struct WardCodexHistoryObserver;
 struct WardRuntime;
 
 namespace ward::codex::v1 {
-class Conversation;
 class HistoryEvent;
 }
 
@@ -35,138 +29,26 @@ class CodexHistoryController : public QObject
     QML_ELEMENT
     QML_UNCREATABLE("CodexHistoryController is provided by the application.")
     Q_PROPERTY(CodexThreadModel* threads READ threads CONSTANT)
-    Q_PROPERTY(CodexModelCatalogModel* modelCatalog READ modelCatalog CONSTANT)
-    Q_PROPERTY(CodexTimelineModel* timeline READ timeline CONSTANT)
-    Q_PROPERTY(CodexInteractionModel* interactions READ interactions CONSTANT)
+    Q_PROPERTY(CodexConversationController* conversation READ conversation CONSTANT)
     Q_PROPERTY(bool showingArchived READ showingArchived NOTIFY historyScopeChanged)
-    Q_PROPERTY(QString selectedThreadId READ selectedThreadId NOTIFY selectionChanged)
-    Q_PROPERTY(QString selectedThreadTitle READ selectedThreadTitle NOTIFY selectionChanged)
-    Q_PROPERTY(QString conversationModel READ conversationModel NOTIFY conversationModelChanged)
-    Q_PROPERTY(
-      QString conversationReasoningEffort READ conversationReasoningEffort NOTIFY conversationReasoningEffortChanged)
-    Q_PROPERTY(QVariantList conversationReasoningEfforts READ conversationReasoningEfforts NOTIFY
-                 conversationReasoningEffortsChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool loadingThreads READ loadingThreads NOTIFY loadingChanged)
-    Q_PROPERTY(bool loadingModelCatalog READ loadingModelCatalog NOTIFY modelCatalogStateChanged)
-    Q_PROPERTY(QString modelCatalogErrorMessage READ modelCatalogErrorMessage NOTIFY modelCatalogStateChanged)
-    Q_PROPERTY(bool loadingConversation READ loadingConversation NOTIFY loadingChanged)
     Q_PROPERTY(bool startingThread READ startingThread NOTIFY startingThreadChanged)
     Q_PROPERTY(bool forkingThread READ forkingThread NOTIFY forkingThreadChanged)
     Q_PROPERTY(bool changingThreadLifecycle READ changingThreadLifecycle NOTIFY changingThreadLifecycleChanged)
-    Q_PROPERTY(bool activityHistoryPartial READ activityHistoryPartial NOTIFY activityHistoryPartialChanged)
-    Q_PROPERTY(TurnState turnState READ turnState NOTIFY turnStateChanged)
-    Q_PROPERTY(bool turnInFlight READ turnInFlight NOTIFY turnStateChanged)
-    Q_PROPERTY(bool turnRunning READ turnRunning NOTIFY turnStateChanged)
-    Q_PROPERTY(QString activeTurnId READ activeTurnId NOTIFY turnStateChanged)
-    Q_PROPERTY(bool waitingOnApproval READ waitingOnApproval NOTIFY turnStateChanged)
-    Q_PROPERTY(bool waitingOnUserInput READ waitingOnUserInput NOTIFY turnStateChanged)
-    Q_PROPERTY(bool steeringTurn READ steeringTurn NOTIFY steeringTurnChanged)
-    Q_PROPERTY(bool interruptRequested READ interruptRequested NOTIFY interruptRequestedChanged)
-    Q_PROPERTY(TurnMode turnMode READ turnMode WRITE setTurnMode NOTIFY turnOptionsChanged)
-    Q_PROPERTY(
-      PermissionPreset permissionPreset READ permissionPreset WRITE setPermissionPreset NOTIFY turnOptionsChanged)
-    Q_PROPERTY(WriteAvailability writeAvailability READ writeAvailability NOTIFY writeAvailabilityChanged)
-    Q_PROPERTY(QString writeAvailabilityMessage READ writeAvailabilityMessage NOTIFY writeAvailabilityChanged)
 
   public:
-    enum class TurnState
-    {
-        Detached,
-        Starting,
-        Idle,
-        Running,
-        SystemError,
-        Unknown,
-    };
-    Q_ENUM(TurnState)
-
-    enum class WriteAvailability
-    {
-        NotRequested,
-        Checking,
-        Writable,
-        Busy,
-        Unavailable,
-    };
-    Q_ENUM(WriteAvailability)
-
-    enum class TurnMode
-    {
-        DefaultMode = 0,
-        PlanMode = 1,
-    };
-    Q_ENUM(TurnMode)
-
-    enum class PermissionPreset
-    {
-        InheritPermissions = 0,
-        RequestApproval = 1,
-        ReadOnlyPermissions = 2,
-    };
-    Q_ENUM(PermissionPreset)
-
-    enum class InteractionKind
-    {
-        CommandApproval = static_cast<int>(ward::codex::v1::PendingInteractionKindGadget::PendingInteractionKind::
-                                             PENDING_INTERACTION_KIND_COMMAND_APPROVAL),
-        FileChangeApproval = static_cast<int>(ward::codex::v1::PendingInteractionKindGadget::PendingInteractionKind::
-                                                PENDING_INTERACTION_KIND_FILE_CHANGE_APPROVAL),
-        UserInput = static_cast<int>(
-          ward::codex::v1::PendingInteractionKindGadget::PendingInteractionKind::PENDING_INTERACTION_KIND_USER_INPUT),
-    };
-    Q_ENUM(InteractionKind)
-
-    enum class InteractionDecision
-    {
-        Accept = static_cast<int>(ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision::
-                                    PENDING_INTERACTION_DECISION_ACCEPT),
-        AcceptForSession =
-          static_cast<int>(ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision::
-                             PENDING_INTERACTION_DECISION_ACCEPT_FOR_SESSION),
-        Decline = static_cast<int>(ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision::
-                                     PENDING_INTERACTION_DECISION_DECLINE),
-        Cancel = static_cast<int>(ward::codex::v1::PendingInteractionDecisionGadget::PendingInteractionDecision::
-                                    PENDING_INTERACTION_DECISION_CANCEL),
-    };
-    Q_ENUM(InteractionDecision)
-
     explicit CodexHistoryController(const WardRuntime* runtime, QObject* parent = nullptr);
     ~CodexHistoryController() override;
 
     [[nodiscard]] CodexThreadModel* threads();
-    [[nodiscard]] CodexModelCatalogModel* modelCatalog();
-    [[nodiscard]] CodexTimelineModel* timeline();
-    [[nodiscard]] CodexInteractionModel* interactions();
+    [[nodiscard]] CodexConversationController* conversation();
     [[nodiscard]] bool showingArchived() const;
-    [[nodiscard]] QString selectedThreadId() const;
-    [[nodiscard]] QString selectedThreadTitle() const;
-    [[nodiscard]] QString conversationModel() const;
-    [[nodiscard]] QString conversationReasoningEffort() const;
-    [[nodiscard]] QVariantList conversationReasoningEfforts() const;
     [[nodiscard]] QString errorMessage() const;
     [[nodiscard]] bool loadingThreads() const;
-    [[nodiscard]] bool loadingModelCatalog() const;
-    [[nodiscard]] QString modelCatalogErrorMessage() const;
-    [[nodiscard]] bool loadingConversation() const;
     [[nodiscard]] bool startingThread() const;
     [[nodiscard]] bool forkingThread() const;
     [[nodiscard]] bool changingThreadLifecycle() const;
-    [[nodiscard]] bool activityHistoryPartial() const;
-    [[nodiscard]] TurnState turnState() const;
-    [[nodiscard]] bool turnInFlight() const;
-    [[nodiscard]] bool turnRunning() const;
-    [[nodiscard]] QString activeTurnId() const;
-    [[nodiscard]] bool waitingOnApproval() const;
-    [[nodiscard]] bool waitingOnUserInput() const;
-    [[nodiscard]] bool steeringTurn() const;
-    [[nodiscard]] bool interruptRequested() const;
-    [[nodiscard]] TurnMode turnMode() const;
-    void setTurnMode(TurnMode mode);
-    [[nodiscard]] PermissionPreset permissionPreset() const;
-    void setPermissionPreset(PermissionPreset preset);
-    [[nodiscard]] WriteAvailability writeAvailability() const;
-    [[nodiscard]] QString writeAvailabilityMessage() const;
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE bool showArchivedThreads(bool archived);
@@ -176,37 +58,15 @@ class CodexHistoryController : public QObject
     Q_INVOKABLE bool archiveSelectedThread();
     Q_INVOKABLE bool restoreSelectedThread();
     Q_INVOKABLE bool startThread(const QUrl& workingDirectory);
-    Q_INVOKABLE void acquireWriteAccess();
-    Q_INVOKABLE void releaseWriteAccess();
-    Q_INVOKABLE bool startTurn(const QString& prompt);
-    Q_INVOKABLE bool selectConversationModel(const QString& model);
-    Q_INVOKABLE bool selectConversationReasoningEffort(const QString& effort);
-    Q_INVOKABLE bool steerTurn(const QString& prompt);
-    Q_INVOKABLE bool interruptTurn();
-    Q_INVOKABLE bool respondToApproval(const QString& interactionId, InteractionDecision decision);
-    Q_INVOKABLE bool respondToUserInput(const QString& interactionId, const QVariantMap& answers);
     Q_INVOKABLE void clearError();
 
   signals:
     void historyScopeChanged();
-    void selectionChanged();
-    void conversationModelChanged();
-    void conversationReasoningEffortChanged();
-    void conversationReasoningEffortsChanged();
     void errorMessageChanged();
     void loadingChanged();
-    void modelCatalogStateChanged();
     void startingThreadChanged();
     void forkingThreadChanged();
     void changingThreadLifecycleChanged();
-    void activityHistoryPartialChanged();
-    void turnStateChanged();
-    void steeringTurnChanged();
-    void interruptRequestedChanged();
-    void turnOptionsChanged();
-    void turnStarted();
-    void turnSteered();
-    void writeAvailabilityChanged();
 
   private:
     friend class CodexHistoryControllerTest;
@@ -217,95 +77,35 @@ class CodexHistoryController : public QObject
         Restore,
     };
 
-    struct TurnRuntimeState
-    {
-        TurnState status = TurnState::Detached;
-        QString activeTurnId;
-        bool waitingOnApproval = false;
-        bool waitingOnUserInput = false;
-    };
-
-    struct InferenceState
-    {
-        QString model;
-        QString reasoningEffort;
-    };
-
-    struct ThreadInferenceSelection
-    {
-        InferenceState active;
-        InferenceState selected;
-    };
-
     static void handleHistoryEvent(void* context, const WardBuffer* event);
 
     void setErrorMessage(const QString& message);
     void setThreadErrorMessage(const QString& message);
     void setThreadStartErrorMessage(const QString& message);
-    void setConversationErrorMessage(const QString& message);
-    void adoptConversation(const QString& threadId, const ward::codex::v1::Conversation& conversation);
+    void handleConversationErrorChanged();
     void clearSelection();
     bool changeSelectedThreadLifecycle(ThreadLifecycleAction action);
     void setChangingThreadLifecycle(bool changing, const QString& threadId = {});
     void setStartingThread(bool starting);
     void setForkingThread(bool forking, const QString& sourceThreadId = {});
-    void setActivityHistoryPartial(bool partial);
-    void setTurnState(TurnState state,
-                      const QString& activeTurnId = {},
-                      bool waitingOnApproval = false,
-                      bool waitingOnUserInput = false);
-    void setSteeringTurn(bool steering);
-    void setWriteAvailability(WriteAvailability availability, const QString& message = {});
-    void setInterruptRequested(bool requested);
-    void applyThreadInferenceOptions(const QString& threadId, const QString& model, const QString& reasoningEffort);
-    void restoreConversationInferenceSelection();
-    void reconcileThreadInferenceSelections();
-    void setDisplayedConversationModel(const QString& model);
-    void setDisplayedConversationReasoningEffort(const QString& effort);
-    [[nodiscard]] QString conversationModelOverride() const;
-    [[nodiscard]] QString conversationReasoningEffortOverride() const;
     [[nodiscard]] bool threadCreationInFlight() const;
-    [[nodiscard]] bool conversationMutationInFlight() const;
-    bool sendInteractionResponse(const QString& interactionId,
-                                 const ward::codex::v1::PendingInteractionResponse& response);
     void updateErrorMessage();
     void finishThreadLoading(const QString& errorMessage);
-    void finishModelCatalogLoading(const QString& errorMessage);
-    void finishConversationLoading(const QString& errorMessage);
     void applyHistoryEvent(ward::codex::v1::HistoryEvent event, const QString& decodingError);
 
     CodexThreadModel threadModel_;
-    CodexModelCatalogModel modelCatalogModel_;
-    CodexTimelineModel timelineModel_;
-    CodexInteractionModel interactionModel_;
+    CodexConversationController conversationController_;
     WardCodexHistoryObserver* historyObserver_ = nullptr;
     std::unique_ptr<CodexHistoryCallbackContext> callbackContext_;
     bool showingArchived_ = false;
-    QString selectedThreadId_;
-    QString selectedThreadTitle_;
-    QHash<QString, ThreadInferenceSelection> threadInferenceSelections_;
-    QString conversationModel_;
-    QString conversationReasoningEffort_;
     QString errorMessage_;
     QString threadErrorMessage_;
     QString threadStartErrorMessage_;
-    QString conversationErrorMessage_;
     std::uint64_t observerGeneration_ = 0;
     bool loadingThreads_ = true;
-    bool loadingModelCatalog_ = true;
-    QString modelCatalogErrorMessage_;
-    bool loadingConversation_ = false;
     bool startingThread_ = false;
     bool forkingThread_ = false;
     QString pendingForkSourceThreadId_;
     bool changingThreadLifecycle_ = false;
     QString pendingLifecycleThreadId_;
-    bool activityHistoryPartial_ = false;
-    TurnRuntimeState turnRuntimeState_;
-    bool steeringTurn_ = false;
-    bool interruptRequested_ = false;
-    TurnMode turnMode_ = TurnMode::DefaultMode;
-    PermissionPreset permissionPreset_ = PermissionPreset::InheritPermissions;
-    WriteAvailability writeAvailability_ = WriteAvailability::NotRequested;
-    QString writeAvailabilityMessage_;
 };

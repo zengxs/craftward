@@ -31,7 +31,7 @@ Rectangle {
         id: approvalActions
 
         advertisedDecisions: root.availableDecisions
-        defaultDecisions: [CodexHistoryController.Accept, CodexHistoryController.AcceptForSession, CodexHistoryController.Decline, CodexHistoryController.Cancel]
+        defaultDecisions: [CodexConversationController.Accept, CodexConversationController.AcceptForSession, CodexConversationController.Decline, CodexConversationController.Cancel]
     }
 
     function collectAnswers() {
@@ -79,9 +79,9 @@ Rectangle {
             Label {
                 Layout.fillWidth: true
                 text: {
-                    if (root.kind === CodexHistoryController.CommandApproval)
+                    if (root.kind === CodexConversationController.CommandApproval)
                         return qsTr("Command approval");
-                    if (root.kind === CodexHistoryController.FileChangeApproval)
+                    if (root.kind === CodexConversationController.FileChangeApproval)
                         return qsTr("File change approval");
                     return qsTr("Codex needs your input");
                 }
@@ -233,7 +233,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
-            visible: root.kind !== CodexHistoryController.UserInput
+            visible: root.kind !== CodexConversationController.UserInput
 
             Item {
                 Layout.fillWidth: true
@@ -242,36 +242,36 @@ Rectangle {
             Button {
                 text: qsTr("Cancel turn")
                 enabled: !root.resolving
-                visible: approvalActions.offers(CodexHistoryController.Cancel)
-                onClicked: root.approvalSubmitted(CodexHistoryController.Cancel)
+                visible: approvalActions.offers(CodexConversationController.Cancel)
+                onClicked: root.approvalSubmitted(CodexConversationController.Cancel)
             }
 
             Button {
                 text: qsTr("Decline")
                 enabled: !root.resolving
-                visible: approvalActions.offers(CodexHistoryController.Decline)
-                onClicked: root.approvalSubmitted(CodexHistoryController.Decline)
+                visible: approvalActions.offers(CodexConversationController.Decline)
+                onClicked: root.approvalSubmitted(CodexConversationController.Decline)
             }
 
             Button {
                 text: qsTr("Allow for session")
                 enabled: !root.resolving
-                visible: approvalActions.offers(CodexHistoryController.AcceptForSession)
-                onClicked: root.approvalSubmitted(CodexHistoryController.AcceptForSession)
+                visible: approvalActions.offers(CodexConversationController.AcceptForSession)
+                onClicked: root.approvalSubmitted(CodexConversationController.AcceptForSession)
             }
 
             Button {
                 text: qsTr("Allow")
                 enabled: !root.resolving
-                visible: approvalActions.offers(CodexHistoryController.Accept)
+                visible: approvalActions.offers(CodexConversationController.Accept)
                 highlighted: true
-                onClicked: root.approvalSubmitted(CodexHistoryController.Accept)
+                onClicked: root.approvalSubmitted(CodexConversationController.Accept)
             }
         }
 
         RowLayout {
             Layout.fillWidth: true
-            visible: root.kind === CodexHistoryController.UserInput
+            visible: root.kind === CodexConversationController.UserInput
 
             Item {
                 Layout.fillWidth: true

@@ -11,7 +11,9 @@ import Craftward.Codex
 Pane {
     id: root
 
-    required property CodexHistoryController controller
+    required property CodexConversationController controller
+    required property bool readOnly
+    required property bool startingThread
 
     signal turnSubmitted
 
@@ -23,9 +25,11 @@ Pane {
 
     function releaseWriteAccessWhenHidden() {
         const window = root.ApplicationWindow.window;
-        if (window && !window.visible && !root.controller.startingThread && !root.controller.turnInFlight && root.controller.writeAvailability === CodexHistoryController.Writable)
+        if (window && !window.visible && !root.startingThread && !root.controller.turnInFlight && root.controller.writeAvailability === CodexConversationController.Writable)
             root.controller.releaseWriteAccess();
     }
+
+    onStartingThreadChanged: releaseWriteAccessWhenHidden()
 
     padding: 10
 
@@ -53,11 +57,11 @@ Pane {
             CodexModelSelector {
                 Layout.preferredWidth: 220
                 catalogModel: root.controller.modelCatalog
-                selectedModel: root.controller.conversationModel
+                selectedModel: root.controller.model
                 loading: root.controller.loadingModelCatalog
                 errorMessage: root.controller.modelCatalogErrorMessage
-                selectionEnabled: !root.controller.turnInFlight && !root.controller.showingArchived
-                onModelSelected: model => root.controller.selectConversationModel(model)
+                selectionEnabled: !root.controller.turnInFlight && !root.readOnly
+                onModelSelected: model => root.controller.selectModel(model)
             }
 
             Item {
@@ -77,10 +81,10 @@ Pane {
 
             CodexReasoningEffortSelector {
                 Layout.preferredWidth: 160
-                efforts: root.controller.conversationReasoningEfforts
-                selectedEffort: root.controller.conversationReasoningEffort
-                selectionEnabled: !root.controller.turnInFlight && !root.controller.showingArchived
-                onEffortSelected: effort => root.controller.selectConversationReasoningEffort(effort)
+                efforts: root.controller.reasoningEfforts
+                selectedEffort: root.controller.reasoningEffort
+                selectionEnabled: !root.controller.turnInFlight && !root.readOnly
+                onEffortSelected: effort => root.controller.selectReasoningEffort(effort)
             }
 
             Item {
@@ -107,18 +111,18 @@ Pane {
                 model: [
                     {
                         text: qsTr("Default"),
-                        value: CodexHistoryController.DefaultMode
+                        value: CodexConversationController.DefaultMode
                     },
                     {
                         text: qsTr("Plan"),
-                        value: CodexHistoryController.PlanMode
+                        value: CodexConversationController.PlanMode
                     }
                 ]
                 currentIndex: indexOfValue(root.controller.turnMode)
                 onActivated: root.controller.turnMode = currentValue
 
                 ToolTip.delay: 500
-                ToolTip.text: currentValue === CodexHistoryController.PlanMode ? qsTr("Plan mode can pause to ask structured questions before acting.") : qsTr("Default mode is optimized for carrying out the requested work.")
+                ToolTip.text: currentValue === CodexConversationController.PlanMode ? qsTr("Plan mode can pause to ask structured questions before acting.") : qsTr("Default mode is optimized for carrying out the requested work.")
                 ToolTip.visible: hovered
             }
 
@@ -137,15 +141,15 @@ Pane {
                 model: [
                     {
                         text: qsTr("Current"),
-                        value: CodexHistoryController.InheritPermissions
+                        value: CodexConversationController.InheritPermissions
                     },
                     {
                         text: qsTr("Ask"),
-                        value: CodexHistoryController.RequestApproval
+                        value: CodexConversationController.RequestApproval
                     },
                     {
                         text: qsTr("Read only"),
-                        value: CodexHistoryController.ReadOnlyPermissions
+                        value: CodexConversationController.ReadOnlyPermissions
                     }
                 ]
                 currentIndex: indexOfValue(root.controller.permissionPreset)
@@ -153,9 +157,9 @@ Pane {
 
                 ToolTip.delay: 500
                 ToolTip.text: {
-                    if (currentValue === CodexHistoryController.RequestApproval)
+                    if (currentValue === CodexConversationController.RequestApproval)
                         return qsTr("Allow workspace edits and ask before network access or sandbox escalation.");
-                    if (currentValue === CodexHistoryController.ReadOnlyPermissions)
+                    if (currentValue === CodexConversationController.ReadOnlyPermissions)
                         return qsTr("Keep the turn read-only and ask before an escalation.");
                     return qsTr("Keep the permission settings already associated with this conversation.");
                 }
@@ -210,35 +214,35 @@ Pane {
 
         RowLayout {
             Layout.fillWidth: true
-            visible: root.controller.writeAvailability === CodexHistoryController.Checking || root.controller.writeAvailability === CodexHistoryController.Busy || root.controller.writeAvailability === CodexHistoryController.Unavailable
+            visible: root.controller.writeAvailability === CodexConversationController.Checking || root.controller.writeAvailability === CodexConversationController.Busy || root.controller.writeAvailability === CodexConversationController.Unavailable
             spacing: 6
 
             BusyIndicator {
                 Layout.preferredWidth: 16
                 Layout.preferredHeight: 16
-                running: root.controller.writeAvailability === CodexHistoryController.Checking
+                running: root.controller.writeAvailability === CodexConversationController.Checking
                 visible: running
             }
 
             Label {
                 Layout.fillWidth: true
                 text: {
-                    if (root.controller.writeAvailability === CodexHistoryController.Checking)
+                    if (root.controller.writeAvailability === CodexConversationController.Checking)
                         return qsTr("Checking whether this conversation is available for writing…");
                     if (root.controller.writeAvailabilityMessage.length > 0)
                         return root.controller.writeAvailabilityMessage;
-                    if (root.controller.writeAvailability === CodexHistoryController.Busy)
+                    if (root.controller.writeAvailability === CodexConversationController.Busy)
                         return qsTr("This conversation is open in another Codex client. Your draft is kept here.");
                     return qsTr("Writing is currently unavailable for this conversation.");
                 }
-                color: root.controller.writeAvailability === CodexHistoryController.Busy ? root.palette.placeholderText : root.palette.text
+                color: root.controller.writeAvailability === CodexConversationController.Busy ? root.palette.placeholderText : root.palette.text
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
             }
 
             Button {
                 text: qsTr("Retry")
-                visible: root.controller.writeAvailability === CodexHistoryController.Busy || root.controller.writeAvailability === CodexHistoryController.Unavailable
+                visible: root.controller.writeAvailability === CodexConversationController.Busy || root.controller.writeAvailability === CodexConversationController.Unavailable
                 onClicked: root.controller.acquireWriteAccess()
             }
         }
@@ -247,7 +251,7 @@ Pane {
     CodexComposerState {
         id: composerState
 
-        threadId: root.controller.selectedThreadId
+        threadId: root.controller.threadId
         onDraftChanged: {
             if (promptEditor.text !== draft)
                 promptEditor.text = draft;
@@ -262,7 +266,7 @@ Pane {
         turnRunning: root.controller.turnRunning
         steerPending: root.controller.steeringTurn
         interruptPending: root.controller.interruptRequested
-        writable: root.controller.writeAvailability === CodexHistoryController.Writable
+        writable: root.controller.writeAvailability === CodexConversationController.Writable
         promptReady: promptEditor.text.trim().length > 0
         onSendRequested: root.submitPrompt()
         onStopRequested: root.controller.interruptTurn()
@@ -280,10 +284,6 @@ Pane {
         target: root.controller
 
         function onTurnStateChanged() {
-            root.releaseWriteAccessWhenHidden();
-        }
-
-        function onStartingThreadChanged() {
             root.releaseWriteAccessWhenHidden();
         }
 

@@ -12,7 +12,7 @@
 
 using CodexModelInfo = ward::codex::v1::ModelInfo;
 
-class CodexHistoryController;
+class CodexConversationController;
 
 class CodexModelCatalogModel : public QAbstractListModel
 {
@@ -39,7 +39,7 @@ class CodexModelCatalogModel : public QAbstractListModel
     void replaceModels(QList<CodexModelInfo> models);
 
   private:
-    friend class CodexHistoryController;
+    friend class CodexConversationController;
 
     [[nodiscard]] const CodexModelInfo* findModel(const QString& model) const;
     [[nodiscard]] bool containsModel(const QString& model) const;

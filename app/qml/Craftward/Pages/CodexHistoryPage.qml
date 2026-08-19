@@ -14,18 +14,19 @@ Page {
     id: root
 
     required property CodexHistoryController controller
+    readonly property CodexConversationController conversation: root.controller.conversation
 
     CodexHistoryActionState {
         id: historyActionState
 
         archived: root.controller.showingArchived
-        hasSelection: root.controller.selectedThreadId.length > 0
-        forkReady: (root.controller.turnState === CodexHistoryController.Detached || root.controller.turnState === CodexHistoryController.Idle) && (root.controller.writeAvailability === CodexHistoryController.NotRequested || root.controller.writeAvailability === CodexHistoryController.Writable)
+        hasSelection: root.conversation.threadId.length > 0
+        forkReady: (root.conversation.turnState === CodexConversationController.Detached || root.conversation.turnState === CodexConversationController.Idle) && (root.conversation.writeAvailability === CodexConversationController.NotRequested || root.conversation.writeAvailability === CodexConversationController.Writable)
         loadingThreads: root.controller.loadingThreads
-        loadingConversation: root.controller.loadingConversation
+        loadingConversation: root.conversation.loading
         startingThread: root.controller.startingThread
         forkingThread: root.controller.forkingThread
-        turnInFlight: root.controller.turnInFlight
+        turnInFlight: root.conversation.turnInFlight
         changingThreadLifecycle: root.controller.changingThreadLifecycle
     }
 
@@ -39,7 +40,7 @@ Page {
     CodexConversationRenameDialog {
         id: renameDialog
 
-        currentName: root.controller.selectedThreadTitle
+        currentName: root.conversation.title
         renameAllowed: historyActionState.renameAllowed
         onRenameRequested: name => {
             if (root.controller.renameSelectedThread(name))
@@ -177,7 +178,7 @@ Page {
 
                         width: ListView.view.width
                         checkable: true
-                        checked: root.controller.selectedThreadId === threadId
+                        checked: root.conversation.threadId === threadId
                         enabled: !historyActionState.busy
                         hoverEnabled: true
                         leftPadding: 12
@@ -244,7 +245,7 @@ Page {
 
                     Label {
                         Layout.fillWidth: true
-                        text: root.controller.selectedThreadTitle || qsTr("Conversation")
+                        text: root.conversation.title || qsTr("Conversation")
                         font.pixelSize: 24
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
@@ -252,14 +253,14 @@ Page {
 
                     Button {
                         text: qsTr("Rename…")
-                        visible: root.controller.selectedThreadId.length > 0 && !root.controller.showingArchived
+                        visible: root.conversation.threadId.length > 0 && !root.controller.showingArchived
                         enabled: renameDialog.renameAllowed
                         onClicked: renameDialog.begin()
                     }
 
                     Button {
                         text: root.controller.showingArchived ? qsTr("Restore") : qsTr("Archive…")
-                        visible: root.controller.selectedThreadId.length > 0
+                        visible: root.conversation.threadId.length > 0
                         enabled: root.controller.showingArchived ? historyActionState.canRestore : historyActionState.canArchive
                         onClicked: {
                             if (root.controller.showingArchived)
@@ -273,9 +274,9 @@ Page {
                         implicitWidth: runtimeStateLayout.implicitWidth + 16
                         implicitHeight: runtimeStateLayout.implicitHeight + 8
                         radius: height / 2
-                        color: root.controller.turnState === CodexHistoryController.SystemError ? Qt.rgba(0.82, 0.12, 0.16, 0.08) : root.palette.alternateBase
-                        border.color: root.controller.turnState === CodexHistoryController.SystemError ? Qt.rgba(0.82, 0.12, 0.16, 0.24) : root.palette.mid
-                        visible: root.controller.selectedThreadId.length > 0
+                        color: root.conversation.turnState === CodexConversationController.SystemError ? Qt.rgba(0.82, 0.12, 0.16, 0.08) : root.palette.alternateBase
+                        border.color: root.conversation.turnState === CodexConversationController.SystemError ? Qt.rgba(0.82, 0.12, 0.16, 0.24) : root.palette.mid
+                        visible: root.conversation.threadId.length > 0
 
                         RowLayout {
                             id: runtimeStateLayout
@@ -288,9 +289,9 @@ Page {
                                 Layout.preferredHeight: 7
                                 radius: width / 2
                                 color: {
-                                    if (root.controller.turnState === CodexHistoryController.SystemError)
+                                    if (root.conversation.turnState === CodexConversationController.SystemError)
                                         return "#B4232A";
-                                    if (root.controller.turnState === CodexHistoryController.Running || root.controller.turnState === CodexHistoryController.Starting)
+                                    if (root.conversation.turnState === CodexConversationController.Running || root.conversation.turnState === CodexConversationController.Starting)
                                         return root.palette.highlight;
                                     return root.palette.mid;
                                 }
@@ -300,24 +301,24 @@ Page {
                                 text: {
                                     if (root.controller.showingArchived)
                                         return qsTr("Archived · Read only");
-                                    if (root.controller.turnState === CodexHistoryController.Starting)
+                                    if (root.conversation.turnState === CodexConversationController.Starting)
                                         return qsTr("Starting…");
-                                    if (root.controller.turnState === CodexHistoryController.Running) {
-                                        if (root.controller.waitingOnApproval)
+                                    if (root.conversation.turnState === CodexConversationController.Running) {
+                                        if (root.conversation.waitingOnApproval)
                                             return qsTr("Waiting for approval");
-                                        if (root.controller.waitingOnUserInput)
+                                        if (root.conversation.waitingOnUserInput)
                                             return qsTr("Waiting for input");
                                         return qsTr("Running");
                                     }
-                                    if (root.controller.turnState === CodexHistoryController.Idle)
+                                    if (root.conversation.turnState === CodexConversationController.Idle)
                                         return qsTr("Live · Idle");
-                                    if (root.controller.turnState === CodexHistoryController.SystemError)
+                                    if (root.conversation.turnState === CodexConversationController.SystemError)
                                         return qsTr("Runtime error");
-                                    if (root.controller.turnState === CodexHistoryController.Unknown)
+                                    if (root.conversation.turnState === CodexConversationController.Unknown)
                                         return qsTr("Status unknown");
                                     return qsTr("History only");
                                 }
-                                color: root.controller.turnState === CodexHistoryController.SystemError ? "#B4232A" : root.palette.placeholderText
+                                color: root.conversation.turnState === CodexConversationController.SystemError ? "#B4232A" : root.palette.placeholderText
                                 font.pixelSize: 11
                             }
                         }
@@ -326,7 +327,7 @@ Page {
                     BusyIndicator {
                         Layout.preferredWidth: 22
                         Layout.preferredHeight: 22
-                        running: root.controller.loadingConversation || root.controller.startingThread || root.controller.forkingThread || root.controller.turnInFlight || root.controller.changingThreadLifecycle
+                        running: root.conversation.loading || root.controller.startingThread || root.controller.forkingThread || root.conversation.turnInFlight || root.controller.changingThreadLifecycle
                         visible: running
                     }
                 }
@@ -339,7 +340,7 @@ Page {
                     Layout.maximumHeight: 360
                     clip: true
                     spacing: 8
-                    model: root.controller.interactions
+                    model: root.conversation.interactions
                     enabled: !root.controller.startingThread
                     visible: count > 0 && !root.controller.showingArchived
                     ScrollBar.vertical: OverlayScrollBar {}
@@ -348,8 +349,8 @@ Page {
                         id: interactionCard
 
                         width: ListView.view.width
-                        onApprovalSubmitted: decision => root.controller.respondToApproval(interactionId, decision)
-                        onUserInputSubmitted: answers => root.controller.respondToUserInput(interactionId, answers)
+                        onApprovalSubmitted: decision => root.conversation.respondToApproval(interactionId, decision)
+                        onUserInputSubmitted: answers => root.conversation.respondToUserInput(interactionId, answers)
                     }
                 }
 
@@ -390,7 +391,7 @@ Page {
                     color: root.palette.placeholderText
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
-                    visible: root.controller.selectedThreadId.length > 0 && root.controller.activityHistoryPartial
+                    visible: root.conversation.threadId.length > 0 && root.conversation.activityHistoryPartial
                 }
 
                 CodexTimelineView {
@@ -398,14 +399,17 @@ Page {
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    controller: root.controller
+                    controller: root.conversation
                     forkEnabled: historyActionState.canFork
-                    showForkActions: root.controller.selectedThreadId.length > 0 && !root.controller.showingArchived
+                    showForkActions: root.conversation.threadId.length > 0 && !root.controller.showingArchived
+                    onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
                 }
 
                 CodexComposer {
                     Layout.fillWidth: true
-                    controller: root.controller
+                    controller: root.conversation
+                    readOnly: root.controller.showingArchived
+                    startingThread: root.controller.startingThread
                     enabled: !root.controller.startingThread && !root.controller.forkingThread
                     visible: historyActionState.composerVisible
                     onTurnSubmitted: timelineView.followLatest()

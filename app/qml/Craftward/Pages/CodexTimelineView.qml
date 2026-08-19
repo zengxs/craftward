@@ -12,10 +12,12 @@ import Craftward.Components
 Control {
     id: root
 
-    required property CodexHistoryController controller
+    required property CodexConversationController controller
     required property bool forkEnabled
     required property bool showForkActions
     property double wallClockUnixMilliseconds: Date.now()
+
+    signal forkRequested(string turnId)
 
     function activityStatusText(activity) {
         if (!activity.reasoning)
@@ -41,8 +43,8 @@ Control {
     contentItem: ListView {
         id: timelineList
 
-        readonly property bool conversationLoading: root.controller.loadingConversation
-        readonly property string selectedThreadId: root.controller.selectedThreadId
+        readonly property bool conversationLoading: root.controller.loading
+        readonly property string selectedThreadId: root.controller.threadId
         property bool initialPositionActive: false
         property bool initialPositionScheduled: false
         property string pendingInitialPositionThreadId
@@ -365,14 +367,14 @@ Control {
                 implicitHeight: 24
                 text: qsTr("Fork from here")
                 visible: timelineDelegate.forkBoundary && root.showForkActions
-                onClicked: root.controller.forkSelectedThread(timelineDelegate.turnId)
+                onClicked: root.forkRequested(timelineDelegate.turnId)
             }
         }
 
         Label {
             anchors.centerIn: parent
             width: Math.min(parent.width - 48, 360)
-            text: root.controller.loadingConversation ? qsTr("Loading conversation…") : (root.controller.selectedThreadId ? qsTr("This conversation contains no displayable history.") : qsTr("Select a conversation to read it."))
+            text: root.controller.loading ? qsTr("Loading conversation…") : (root.controller.threadId ? qsTr("This conversation contains no displayable history.") : qsTr("Select a conversation to read it."))
             color: root.palette.placeholderText
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap

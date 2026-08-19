@@ -2,6 +2,9 @@ qt_add_qml_module(CraftwardCodex
     STATIC
     URI Craftward.Codex
     SOURCES
+        codexconversationcontroller.cpp
+        codexconversationcontroller_events.cpp
+        codexconversationcontroller.h
         codexhistorycontroller.cpp
         codexhistorycontroller_events.cpp
         codexhistorycontroller.h

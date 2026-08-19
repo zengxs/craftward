@@ -7,50 +7,29 @@
 #include <utility>
 
 void
-CodexHistoryController::adoptConversation(const QString& threadId, const ward::codex::v1::Conversation& conversation)
-{
-    const bool wasLoading = std::exchange(loadingConversation_, false);
-    selectedThreadId_ = threadId;
-    selectedThreadTitle_ = conversation.title();
-    restoreConversationInferenceSelection();
-    auto timeline = conversation.timeline();
-    timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds());
-    interactionModel_.clear();
-    setActivityHistoryPartial(conversation.activityHistoryIsPartial());
-    setTurnState(TurnState::Detached);
-    setWriteAvailability(WriteAvailability::NotRequested);
-    setConversationErrorMessage({});
-    setInterruptRequested(false);
-    emit selectionChanged();
-    if (wasLoading)
-        emit loadingChanged();
-}
-
-void
 CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, const QString& decodingError)
 {
     using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKind;
 
     if (!decodingError.isEmpty()) {
-        if (loadingModelCatalog_)
-            finishModelCatalogLoading(decodingError);
-        setSteeringTurn(false);
+        conversationController_.applyDecodingError(decodingError);
         if (startingThread_) {
             setThreadStartErrorMessage(decodingError);
             setStartingThread(false);
         }
         if (forkingThread_) {
             setForkingThread(false);
-            setConversationErrorMessage(decodingError);
+            conversationController_.setErrorMessage(decodingError);
         }
         if (changingThreadLifecycle_)
             setThreadErrorMessage(decodingError);
         else
             finishThreadLoading(decodingError);
-        if (!selectedThreadId_.isEmpty())
-            finishConversationLoading(decodingError);
         return;
     }
+
+    if (conversationController_.applyHistoryEvent(event))
+        return;
 
     const QString threadId = event.hasThreadId() ? event.threadId() : QString();
     const auto rejectThreadListEvent = [this](const QString& message) {
@@ -60,35 +39,6 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             finishThreadLoading(message);
     };
     switch (event.kind()) {
-        case HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_UPDATED: {
-            if (!event.hasModelCatalog()) {
-                finishModelCatalogLoading(tr("Ward Core returned a model update without a catalog."));
-                break;
-            }
-            auto models = event.modelCatalog().models();
-            modelCatalogModel_.replaceModels(std::move(models));
-            reconcileThreadInferenceSelections();
-            emit conversationReasoningEffortsChanged();
-            finishModelCatalogLoading({});
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_ERROR: {
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            finishModelCatalogLoading(message.isEmpty() ? tr("The Codex model catalog could not be loaded.") : message);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_MODEL_CHANGED: {
-            if (threadId.isEmpty() || !event.hasThreadModelState() ||
-                event.threadModelState().model().trimmed().isEmpty()) {
-                if (threadId.isEmpty() || threadId == selectedThreadId_)
-                    setConversationErrorMessage(tr("Ward Core returned a thread model update without a model."));
-                break;
-            }
-            const auto& state = event.threadModelState();
-            applyThreadInferenceOptions(
-              threadId, state.model(), state.hasReasoningEffort() ? state.reasoningEffort() : QString());
-            break;
-        }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED: {
             if (!event.hasArchived()) {
                 rejectThreadListEvent(tr("Ward Core returned a thread update without its history scope."));
@@ -107,7 +57,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                     return thread.threadId() == candidate;
                 });
             };
-            const bool selectedThreadRemains = selectedThreadId_.isEmpty() || containsThread(selectedThreadId_);
+            const bool selectedThreadRemains =
+              conversationController_.threadId().isEmpty() || containsThread(conversationController_.threadId());
             const bool lifecycleTargetRemains = !changingThreadLifecycle_ || containsThread(pendingLifecycleThreadId_);
             threadModel_.reconcileThreads(std::move(threads));
             setThreadErrorMessage({});
@@ -120,7 +71,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             finishThreadLoading({});
             break;
         }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_RECOVERED: {
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_RECOVERED:
             if (!event.hasArchived()) {
                 rejectThreadListEvent(tr("Ward Core returned a thread-list event without its history scope."));
                 break;
@@ -130,7 +81,6 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             if (!changingThreadLifecycle_)
                 finishThreadLoading({});
             break;
-        }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_ERROR: {
             if (!event.hasArchived()) {
                 rejectThreadListEvent(tr("Ward Core returned a thread-list event without its history scope."));
@@ -141,26 +91,23 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             const QString normalizedMessage =
               message.isEmpty() ? tr("The Codex conversation list could not be observed.") : message;
-            if (changingThreadLifecycle_) {
+            if (changingThreadLifecycle_)
                 setThreadErrorMessage(normalizedMessage);
-                break;
-            }
-            finishThreadLoading(normalizedMessage);
+            else
+                finishThreadLoading(normalizedMessage);
             break;
         }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED: {
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED:
             if (threadId.isEmpty() || !event.hasConversation()) {
                 setThreadStartErrorMessage(
                   tr("Ward Core returned a started Codex conversation without its initial state."));
                 setStartingThread(false);
                 break;
             }
-
-            adoptConversation(threadId, event.conversation());
+            conversationController_.adoptConversation(threadId, event.conversation());
             setThreadStartErrorMessage({});
             setStartingThread(false);
             break;
-        }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_START_ERROR: {
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             setThreadStartErrorMessage(message.isEmpty() ? tr("The Codex conversation could not be started.")
@@ -168,70 +115,37 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             setStartingThread(false);
             break;
         }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORKED: {
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORKED:
             if (!forkingThread_)
                 return;
             if (threadId.isEmpty() || !event.hasConversation()) {
-                setConversationErrorMessage(
+                conversationController_.setErrorMessage(
                   tr("Ward Core returned a forked Codex conversation without its initial state."));
                 setForkingThread(false);
                 break;
             }
-
-            adoptConversation(threadId, event.conversation());
+            conversationController_.adoptConversation(threadId, event.conversation());
             setForkingThread(false);
             break;
-        }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORK_ERROR: {
             if (!forkingThread_)
                 return;
             if (threadId.isEmpty()) {
-                setConversationErrorMessage(tr("Ward Core returned a thread-fork error without its source thread."));
+                conversationController_.setErrorMessage(
+                  tr("Ward Core returned a thread-fork error without its source thread."));
                 setForkingThread(false);
                 break;
             }
             if (threadId != pendingForkSourceThreadId_)
                 return;
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            setConversationErrorMessage(message.isEmpty() ? tr("The Codex conversation could not be forked.")
-                                                          : message);
+            conversationController_.setErrorMessage(
+              message.isEmpty() ? tr("The Codex conversation could not be forked.") : message);
             setForkingThread(false);
             break;
         }
-        case HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED: {
-            if (threadId != selectedThreadId_)
-                return;
-            if (!event.hasConversation()) {
-                finishConversationLoading(tr("Ward Core returned a conversation update without a conversation."));
-                break;
-            }
-            const auto& conversation = event.conversation();
-            if (!conversation.title().trimmed().isEmpty() && conversation.title() != selectedThreadTitle_) {
-                selectedThreadTitle_ = conversation.title();
-                emit selectionChanged();
-            }
-            auto timeline = conversation.timeline();
-            timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds());
-            setActivityHistoryPartial(conversation.activityHistoryIsPartial());
-            finishConversationLoading({});
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_RECOVERED:
-            if (threadId != selectedThreadId_)
-                return;
-            finishConversationLoading({});
-            break;
-        case HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_ERROR: {
-            if (threadId != selectedThreadId_)
-                return;
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            const QString normalizedMessage =
-              message.isEmpty() ? tr("The Codex conversation could not be observed.") : message;
-            finishConversationLoading(normalizedMessage);
-            break;
-        }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_LIFECYCLE_ERROR: {
-            if (threadId != selectedThreadId_ || threadId != pendingLifecycleThreadId_)
+            if (threadId != conversationController_.threadId() || threadId != pendingLifecycleThreadId_)
                 return;
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             const QString normalizedMessage =
@@ -239,151 +153,11 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             if (changingThreadLifecycle_) {
                 setChangingThreadLifecycle(false);
                 const bool wasLoadingThreads = std::exchange(loadingThreads_, false);
-                setConversationErrorMessage(normalizedMessage);
+                conversationController_.setErrorMessage(normalizedMessage);
                 if (wasLoadingThreads)
                     emit loadingChanged();
             }
-            finishConversationLoading(normalizedMessage);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STARTED:
-            if (threadId != selectedThreadId_)
-                return;
-            emit turnStarted();
-            break;
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_COMPLETED:
-            if (threadId != selectedThreadId_)
-                return;
-            break;
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STEERED:
-            if (threadId != selectedThreadId_)
-                return;
-            if (!steeringTurn_)
-                break;
-            setSteeringTurn(false);
-            emit turnSteered();
-            break;
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STEER_ERROR: {
-            if (threadId != selectedThreadId_)
-                return;
-            setSteeringTurn(false);
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            setConversationErrorMessage(message.isEmpty() ? tr("The Codex turn could not be guided.") : message);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_ERROR: {
-            if (threadId != selectedThreadId_)
-                return;
-            setSteeringTurn(false);
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            setConversationErrorMessage(message.isEmpty() ? tr("The Codex turn failed.") : message);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_TURN_NOTICE: {
-            if (threadId != selectedThreadId_)
-                return;
-            setInterruptRequested(false);
-            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            if (!message.isEmpty())
-                setConversationErrorMessage(message);
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_WRITE_STATE_CHANGED: {
-            if (threadId != selectedThreadId_)
-                return;
-            if (!event.hasThreadWriteState()) {
-                setWriteAvailability(WriteAvailability::Unavailable,
-                                     tr("Ward Core returned a write-state update without a state."));
-                break;
-            }
-            const auto& state = event.threadWriteState();
-            const QString message = state.hasMessage() ? state.message() : QString();
-            using ThreadWriteStatus = ward::codex::v1::ThreadWriteStatusGadget::ThreadWriteStatus;
-            switch (state.status()) {
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_IDLE:
-                    setWriteAvailability(WriteAvailability::NotRequested);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_CHECKING:
-                    setWriteAvailability(WriteAvailability::Checking, message);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_WRITABLE:
-                    setWriteAvailability(WriteAvailability::Writable, message);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_BUSY:
-                    setWriteAvailability(WriteAvailability::Busy, message);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_UNAVAILABLE:
-                    setWriteAvailability(WriteAvailability::Unavailable, message);
-                    break;
-                case ThreadWriteStatus::THREAD_WRITE_STATUS_UNSPECIFIED:
-                default:
-                    setWriteAvailability(WriteAvailability::Unavailable,
-                                         tr("Ward Core returned an unsupported write state."));
-                    break;
-            }
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_RUNTIME_STATE_CHANGED: {
-            if (threadId != selectedThreadId_)
-                return;
-            if (!event.hasThreadRuntimeState()) {
-                setTurnState(TurnState::Unknown);
-                setConversationErrorMessage(tr("Ward Core returned a runtime update without a state."));
-                break;
-            }
-            const auto& state = event.threadRuntimeState();
-            bool waitingOnApproval = false;
-            bool waitingOnUserInput = false;
-            using ThreadActiveFlag = ward::codex::v1::ThreadActiveFlagGadget::ThreadActiveFlag;
-            for (const auto flag : state.activeFlags()) {
-                switch (flag) {
-                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_WAITING_ON_APPROVAL:
-                        waitingOnApproval = true;
-                        break;
-                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_WAITING_ON_USER_INPUT:
-                        waitingOnUserInput = true;
-                        break;
-                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_UNSPECIFIED:
-                    case ThreadActiveFlag::THREAD_ACTIVE_FLAG_UNKNOWN:
-                    default:
-                        break;
-                }
-            }
-            const QString activeTurnId = state.hasTurnId() ? state.turnId() : QString();
-            using ThreadRuntimeStatus = ward::codex::v1::ThreadRuntimeStatusGadget::ThreadRuntimeStatus;
-            switch (state.status()) {
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_DETACHED:
-                    setTurnState(TurnState::Detached);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_STARTING:
-                    setTurnState(TurnState::Starting);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_IDLE:
-                    setTurnState(TurnState::Idle);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_ACTIVE:
-                    setTurnState(TurnState::Running, activeTurnId, waitingOnApproval, waitingOnUserInput);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_SYSTEM_ERROR:
-                    setTurnState(TurnState::SystemError);
-                    break;
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_UNKNOWN:
-                case ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_UNSPECIFIED:
-                default:
-                    setTurnState(TurnState::Unknown);
-                    break;
-            }
-            break;
-        }
-        case HistoryEventKind::HISTORY_EVENT_KIND_PENDING_INTERACTIONS_UPDATED: {
-            if (threadId != selectedThreadId_)
-                return;
-            if (!event.hasPendingInteractions()) {
-                setConversationErrorMessage(tr("Ward Core returned an interaction update without its interactions."));
-                break;
-            }
-            auto interactions = event.pendingInteractions().interactions();
-            interactionModel_.reconcileInteractions(std::move(interactions));
+            conversationController_.finishLoading(normalizedMessage);
             break;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_UNSPECIFIED:
@@ -391,8 +165,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             const QString message = tr("Ward Core returned an unsupported Codex history event.");
             if (threadId.isEmpty())
                 finishThreadLoading(message);
-            else if (threadId == selectedThreadId_)
-                finishConversationLoading(message);
+            else if (threadId == conversationController_.threadId())
+                conversationController_.finishLoading(message);
             break;
         }
     }

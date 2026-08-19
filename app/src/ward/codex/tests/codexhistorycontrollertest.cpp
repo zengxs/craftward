@@ -179,20 +179,21 @@ void
 CodexHistoryControllerTest::appliesModelCatalogUpdatesAndErrors()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
 
     HistoryEvent error;
     error.setKind(HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_ERROR);
     error.setErrorMessage(QStringLiteral("Catalog unavailable"));
     controller.applyHistoryEvent(std::move(error), {});
 
-    QVERIFY(!controller.loadingModelCatalog());
-    QCOMPARE(controller.modelCatalogErrorMessage(), QStringLiteral("Catalog unavailable"));
+    QVERIFY(!conversation->loadingModelCatalog());
+    QCOMPARE(conversation->modelCatalogErrorMessage(), QStringLiteral("Catalog unavailable"));
 
     controller.applyHistoryEvent(modelCatalogEvent(), {});
 
-    QVERIFY(!controller.loadingModelCatalog());
-    QVERIFY(controller.modelCatalogErrorMessage().isEmpty());
-    CodexModelCatalogModel* catalog = controller.modelCatalog();
+    QVERIFY(!conversation->loadingModelCatalog());
+    QVERIFY(conversation->modelCatalogErrorMessage().isEmpty());
+    CodexModelCatalogModel* catalog = conversation->modelCatalog();
     QCOMPARE(catalog->rowCount(), 2);
     const QModelIndex index = catalog->index(0);
     QCOMPARE(catalog->data(index, CodexModelCatalogModel::ModelIdRole).toString(), QStringLiteral("balanced"));
@@ -213,67 +214,68 @@ void
 CodexHistoryControllerTest::keepsInferenceSelectionScopedToTheConversationUntilAccepted()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(modelCatalogEvent(), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
-    QSignalSpy modelSpy(&controller, &CodexHistoryController::conversationModelChanged);
-    QSignalSpy effortSpy(&controller, &CodexHistoryController::conversationReasoningEffortChanged);
+    QSignalSpy modelSpy(conversation, &CodexConversationController::modelChanged);
+    QSignalSpy effortSpy(conversation, &CodexConversationController::reasoningEffortChanged);
 
     controller.applyHistoryEvent(threadModelEvent(QStringLiteral("gpt-balanced")), {});
-    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-balanced"));
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("medium"));
-    QCOMPARE(controller.conversationReasoningEfforts().size(), 3);
+    QCOMPARE(conversation->model(), QStringLiteral("gpt-balanced"));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("medium"));
+    QCOMPARE(conversation->reasoningEfforts().size(), 3);
     QCOMPARE(modelSpy.count(), 1);
     QCOMPARE(effortSpy.count(), 1);
 
-    QVERIFY(controller.selectConversationReasoningEffort(QStringLiteral("high")));
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("high"));
-    QVERIFY(controller.selectConversationModel(QStringLiteral("gpt-fast")));
-    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
-    QCOMPARE(controller.conversationReasoningEfforts().size(), 2);
-    QCOMPARE(controller.conversationModelOverride(), QStringLiteral("gpt-fast"));
-    QCOMPARE(controller.conversationReasoningEffortOverride(), QStringLiteral("low"));
+    QVERIFY(conversation->selectReasoningEffort(QStringLiteral("high")));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("high"));
+    QVERIFY(conversation->selectModel(QStringLiteral("gpt-fast")));
+    QCOMPARE(conversation->model(), QStringLiteral("gpt-fast"));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("low"));
+    QCOMPARE(conversation->reasoningEfforts().size(), 2);
+    QCOMPARE(conversation->modelOverride(), QStringLiteral("gpt-fast"));
+    QCOMPARE(conversation->reasoningEffortOverride(), QStringLiteral("low"));
     QCOMPARE(modelSpy.count(), 2);
-    QVERIFY(!controller.selectConversationModel(QStringLiteral("gpt-missing")));
-    QVERIFY(!controller.selectConversationReasoningEffort(QStringLiteral("high")));
+    QVERIFY(!conversation->selectModel(QStringLiteral("gpt-missing")));
+    QVERIFY(!conversation->selectReasoningEffort(QStringLiteral("high")));
 
     controller.applyHistoryEvent(
       threadModelEvent(QStringLiteral("gpt-balanced"), QStringLiteral("thread-new"), QStringLiteral("medium")), {});
-    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
+    QCOMPARE(conversation->model(), QStringLiteral("gpt-fast"));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("low"));
     QCOMPARE(modelSpy.count(), 2);
 
     controller.applyHistoryEvent(
       threadModelEvent(QStringLiteral("gpt-fast"), QStringLiteral("thread-new"), QStringLiteral("low")), {});
-    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
-    QCOMPARE(controller.conversationModelOverride(), QString());
-    QCOMPARE(controller.conversationReasoningEffortOverride(), QString());
+    QCOMPARE(conversation->model(), QStringLiteral("gpt-fast"));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("low"));
+    QCOMPARE(conversation->modelOverride(), QString());
+    QCOMPARE(conversation->reasoningEffortOverride(), QString());
     QCOMPARE(modelSpy.count(), 2);
 
     controller.applyHistoryEvent(
       threadModelEvent(QStringLiteral("gpt-balanced"), QStringLiteral("thread-other"), QStringLiteral("low")), {});
-    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
+    QCOMPARE(conversation->model(), QStringLiteral("gpt-fast"));
     controller.selectThread(QStringLiteral("thread-other"), QStringLiteral("Other conversation"));
-    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-balanced"));
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
-    QVERIFY(controller.selectConversationReasoningEffort(QStringLiteral("medium")));
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("medium"));
-    QCOMPARE(controller.conversationReasoningEffortOverride(), QStringLiteral("medium"));
+    QCOMPARE(conversation->model(), QStringLiteral("gpt-balanced"));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("low"));
+    QVERIFY(conversation->selectReasoningEffort(QStringLiteral("medium")));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("medium"));
+    QCOMPARE(conversation->reasoningEffortOverride(), QStringLiteral("medium"));
     controller.applyHistoryEvent(
       threadModelEvent(QStringLiteral("gpt-balanced"), QStringLiteral("thread-other"), QStringLiteral("low")), {});
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("medium"));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("medium"));
     controller.applyHistoryEvent(
       threadModelEvent(QStringLiteral("gpt-balanced"), QStringLiteral("thread-other"), QStringLiteral("medium")), {});
-    QCOMPARE(controller.conversationReasoningEffortOverride(), QString());
+    QCOMPARE(conversation->reasoningEffortOverride(), QString());
 
     controller.selectThread(QStringLiteral("thread-new"), QStringLiteral("New conversation"));
-    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
-    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
+    QCOMPARE(conversation->model(), QStringLiteral("gpt-fast"));
+    QCOMPARE(conversation->reasoningEffort(), QStringLiteral("low"));
 
     controller.clearSelection();
-    QVERIFY(controller.conversationModel().isEmpty());
-    QVERIFY(controller.conversationReasoningEffort().isEmpty());
+    QVERIFY(conversation->model().isEmpty());
+    QVERIFY(conversation->reasoningEffort().isEmpty());
     QVERIFY(modelSpy.count() >= 4);
     QVERIFY(effortSpy.count() >= 4);
 }
@@ -282,6 +284,7 @@ void
 CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
                                                    {
@@ -298,7 +301,7 @@ CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()
                                                    }),
                                  {});
 
-    CodexTimelineModel* timeline = controller.timeline();
+    CodexTimelineModel* timeline = conversation->timeline();
     QCOMPARE(timeline->rowCount(), 2);
     QCOMPARE(timeline->data(timeline->index(0), CodexTimelineModel::EntryIdRole).toString(),
              QStringLiteral("message:live-turn-1:live-user-1"));
@@ -337,6 +340,7 @@ void
 CodexHistoryControllerTest::marksOnlyAuthoritativeTurnEndsAsForkBoundaries()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED,
                                                    {
                                                      messageItem(QStringLiteral("turn-1"),
@@ -364,7 +368,7 @@ CodexHistoryControllerTest::marksOnlyAuthoritativeTurnEndsAsForkBoundaries()
                                                    { QStringLiteral("turn-1") }),
                                  {});
 
-    CodexTimelineModel* timeline = controller.timeline();
+    CodexTimelineModel* timeline = conversation->timeline();
     QCOMPARE(timeline->rowCount(), 4);
     QVERIFY(!timeline->data(timeline->index(0), CodexTimelineModel::ForkBoundaryRole).toBool());
     QVERIFY(timeline->data(timeline->index(1), CodexTimelineModel::ForkBoundaryRole).toBool());
@@ -376,13 +380,14 @@ void
 CodexHistoryControllerTest::confirmsAcceptedTurnGuidance()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
-    QSignalSpy steeredSpy(&controller, &CodexHistoryController::turnSteered);
-    controller.setSteeringTurn(true);
+    QSignalSpy steeredSpy(conversation, &CodexConversationController::turnSteered);
+    conversation->setSteeringTurn(true);
 
     controller.applyHistoryEvent(turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_TURN_STEERED), {});
 
-    QVERIFY(!controller.steeringTurn());
+    QVERIFY(!conversation->steeringTurn());
     QCOMPARE(steeredSpy.count(), 1);
 }
 
@@ -390,15 +395,16 @@ void
 CodexHistoryControllerTest::reportsRejectedTurnGuidanceWithoutConfirmation()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
-    QSignalSpy steeredSpy(&controller, &CodexHistoryController::turnSteered);
-    controller.setSteeringTurn(true);
+    QSignalSpy steeredSpy(conversation, &CodexConversationController::turnSteered);
+    conversation->setSteeringTurn(true);
 
     controller.applyHistoryEvent(
       turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_TURN_STEER_ERROR, QStringLiteral("The turn finished.")),
       {});
 
-    QVERIFY(!controller.steeringTurn());
+    QVERIFY(!conversation->steeringTurn());
     QCOMPARE(steeredSpy.count(), 0);
     QCOMPARE(controller.errorMessage(), QStringLiteral("The turn finished."));
 }
@@ -425,10 +431,11 @@ void
 CodexHistoryControllerTest::appliesForkedConversationAndSelectsIt()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.setForkingThread(true, QStringLiteral("thread-new"));
     controller.loadingThreads_ = true;
-    QSignalSpy selectionSpy(&controller, &CodexHistoryController::selectionChanged);
+    QSignalSpy selectionSpy(conversation, &CodexConversationController::selectionChanged);
 
     HistoryEvent forked = conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORKED,
                                             { messageItem(QStringLiteral("turn-1"),
@@ -440,15 +447,16 @@ CodexHistoryControllerTest::appliesForkedConversationAndSelectsIt()
     forked.setThreadId(QStringLiteral("thread-fork-1"));
     controller.applyHistoryEvent(std::move(forked), {});
 
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-fork-1"));
-    QCOMPARE(controller.selectedThreadTitle(), QStringLiteral("Forked conversation"));
-    QCOMPARE(controller.timeline()->rowCount(), 1);
-    QCOMPARE(controller.timeline()->data(controller.timeline()->index(0), CodexTimelineModel::TextRole).toString(),
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-fork-1"));
+    QCOMPARE(conversation->title(), QStringLiteral("Forked conversation"));
+    CodexTimelineModel* timeline = conversation->timeline();
+    QCOMPARE(timeline->rowCount(), 1);
+    QCOMPARE(timeline->data(timeline->index(0), CodexTimelineModel::TextRole).toString(),
              QStringLiteral("Copied answer"));
     QVERIFY(!controller.forkingThread());
     QVERIFY(controller.loadingThreads());
-    QCOMPARE(controller.turnState(), CodexHistoryController::TurnState::Detached);
-    QCOMPARE(controller.writeAvailability(), CodexHistoryController::WriteAvailability::NotRequested);
+    QCOMPARE(conversation->turnState(), CodexConversationController::TurnState::Detached);
+    QCOMPARE(conversation->writeAvailability(), CodexConversationController::WriteAvailability::NotRequested);
     QCOMPARE(selectionSpy.count(), 1);
 
     ward::codex::v1::ThreadWriteState writeState;
@@ -459,13 +467,14 @@ CodexHistoryControllerTest::appliesForkedConversationAndSelectsIt()
     writable.setThreadWriteState(std::move(writeState));
     controller.applyHistoryEvent(std::move(writable), {});
 
-    QCOMPARE(controller.writeAvailability(), CodexHistoryController::WriteAvailability::Writable);
+    QCOMPARE(conversation->writeAvailability(), CodexConversationController::WriteAvailability::Writable);
 }
 
 void
 CodexHistoryControllerTest::reportsDedicatedThreadForkErrors()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.setForkingThread(true, QStringLiteral("thread-new"));
     controller.loadingThreads_ = true;
@@ -481,7 +490,7 @@ CodexHistoryControllerTest::reportsDedicatedThreadForkErrors()
     controller.applyHistoryEvent(
       turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORK_ERROR, QStringLiteral("Fork failed")), {});
 
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(!controller.forkingThread());
     QVERIFY(controller.loadingThreads());
     QCOMPARE(controller.errorMessage(), QStringLiteral("Fork failed"));
@@ -489,7 +498,7 @@ CodexHistoryControllerTest::reportsDedicatedThreadForkErrors()
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
 
     QVERIFY(!controller.loadingThreads());
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QCOMPARE(controller.errorMessage(), QStringLiteral("Fork failed"));
 }
 
@@ -497,23 +506,24 @@ void
 CodexHistoryControllerTest::validatesConversationForksBeforeDispatch()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.clearError();
 
     QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
     QVERIFY(controller.errorMessage().isEmpty());
 
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
-    controller.loadingConversation_ = true;
+    conversation->loading_ = true;
     QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
-    controller.loadingConversation_ = false;
-    controller.setWriteAvailability(CodexHistoryController::WriteAvailability::Checking);
-    QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
-    QVERIFY(controller.errorMessage().isEmpty());
-    controller.setWriteAvailability(CodexHistoryController::WriteAvailability::NotRequested);
-    controller.setTurnState(CodexHistoryController::TurnState::SystemError);
+    conversation->loading_ = false;
+    conversation->setWriteAvailability(CodexConversationController::WriteAvailability::Checking);
     QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
     QVERIFY(controller.errorMessage().isEmpty());
-    controller.setTurnState(CodexHistoryController::TurnState::Detached);
+    conversation->setWriteAvailability(CodexConversationController::WriteAvailability::NotRequested);
+    conversation->setTurnState(CodexConversationController::TurnState::SystemError);
+    QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
+    QVERIFY(controller.errorMessage().isEmpty());
+    conversation->setTurnState(CodexConversationController::TurnState::Detached);
     QVERIFY(!controller.forkSelectedThread({}));
     QVERIFY(controller.errorMessage().isEmpty());
     QVERIFY(!controller.forkSelectedThread(QStringLiteral("turn-1")));
@@ -529,9 +539,10 @@ void
 CodexHistoryControllerTest::appliesRenamedConversationTitles()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
-    QSignalSpy selectionSpy(&controller, &CodexHistoryController::selectionChanged);
+    QSignalSpy selectionSpy(conversation, &CodexConversationController::selectionChanged);
 
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("Focused work")), {});
     controller.applyHistoryEvent(
@@ -541,7 +552,7 @@ CodexHistoryControllerTest::appliesRenamedConversationTitles()
     QCOMPARE(controller.threads()->rowCount(), 1);
     QCOMPARE(controller.threads()->data(controller.threads()->index(0), CodexThreadModel::TitleRole).toString(),
              QStringLiteral("Focused work"));
-    QCOMPARE(controller.selectedThreadTitle(), QStringLiteral("Focused work"));
+    QCOMPARE(conversation->title(), QStringLiteral("Focused work"));
     QCOMPARE(selectionSpy.count(), 1);
 }
 
@@ -549,6 +560,7 @@ void
 CodexHistoryControllerTest::ignoresStaleThreadPagesAndWaitsForLifecycleConfirmation()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
@@ -557,12 +569,12 @@ CodexHistoryControllerTest::ignoresStaleThreadPagesAndWaitsForLifecycleConfirmat
 
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation"), true, false), {});
     QCOMPARE(controller.threads()->rowCount(), 1);
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(controller.changingThreadLifecycle());
     QVERIFY(controller.loadingThreads());
 
     controller.applyHistoryEvent(threadListErrorEvent(true, QStringLiteral("Stale archived error")), {});
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(controller.changingThreadLifecycle());
     QVERIFY(controller.loadingThreads());
     QVERIFY(controller.errorMessage().isEmpty());
@@ -570,28 +582,28 @@ CodexHistoryControllerTest::ignoresStaleThreadPagesAndWaitsForLifecycleConfirmat
     controller.applyHistoryEvent(turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_ERROR,
                                                   QStringLiteral("Temporary conversation error")),
                                  {});
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(controller.changingThreadLifecycle());
     QVERIFY(controller.loadingThreads());
     QCOMPARE(controller.errorMessage(), QStringLiteral("Temporary conversation error"));
 
     controller.clearError();
     controller.applyHistoryEvent(threadListErrorEvent(false, QStringLiteral("Temporary active error")), {});
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(controller.changingThreadLifecycle());
     QVERIFY(controller.loadingThreads());
     QCOMPARE(controller.errorMessage(), QStringLiteral("Temporary active error"));
 
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
     QCOMPARE(controller.threads()->rowCount(), 1);
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(controller.changingThreadLifecycle());
     QVERIFY(controller.loadingThreads());
 
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation"), false, false), {});
     QCOMPARE(controller.threads()->rowCount(), 0);
-    QVERIFY(controller.selectedThreadId().isEmpty());
-    QCOMPARE(controller.timeline()->rowCount(), 0);
+    QVERIFY(conversation->threadId().isEmpty());
+    QCOMPARE(conversation->timeline()->rowCount(), 0);
     QVERIFY(!controller.changingThreadLifecycle());
     QVERIFY(!controller.loadingThreads());
 }
@@ -600,6 +612,7 @@ void
 CodexHistoryControllerTest::keepsLifecyclePendingAfterHistoryDecodingFailure()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
     controller.changingThreadLifecycle_ = true;
@@ -607,7 +620,7 @@ CodexHistoryControllerTest::keepsLifecyclePendingAfterHistoryDecodingFailure()
 
     controller.applyHistoryEvent({}, QStringLiteral("Malformed history event"));
 
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(controller.changingThreadLifecycle());
     QVERIFY(controller.loadingThreads());
     QCOMPARE(controller.errorMessage(), QStringLiteral("Malformed history event"));
@@ -617,6 +630,7 @@ void
 CodexHistoryControllerTest::keepsLifecyclePendingAfterMalformedThreadUpdates()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
     controller.changingThreadLifecycle_ = true;
@@ -635,7 +649,7 @@ CodexHistoryControllerTest::keepsLifecyclePendingAfterMalformedThreadUpdates()
     missingPage.setArchived(false);
     controller.applyHistoryEvent(std::move(missingPage), {});
 
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(controller.changingThreadLifecycle());
     QVERIFY(controller.loadingThreads());
 }
@@ -675,6 +689,7 @@ void
 CodexHistoryControllerTest::reportsDedicatedThreadLifecycleErrors()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
     controller.changingThreadLifecycle_ = true;
@@ -684,7 +699,7 @@ CodexHistoryControllerTest::reportsDedicatedThreadLifecycleErrors()
       turnOutcomeEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_LIFECYCLE_ERROR, QStringLiteral("Archive failed")),
       {});
 
-    QCOMPARE(controller.selectedThreadId(), QStringLiteral("thread-new"));
+    QCOMPARE(conversation->threadId(), QStringLiteral("thread-new"));
     QVERIFY(!controller.changingThreadLifecycle());
     QVERIFY(!controller.loadingThreads());
     QCOMPARE(controller.errorMessage(), QStringLiteral("Archive failed"));
@@ -694,6 +709,7 @@ void
 CodexHistoryControllerTest::keepsArchivedConversationsReadOnly()
 {
     CodexHistoryController controller(nullptr);
+    CodexConversationController* conversation = controller.conversation();
     controller.showingArchived_ = true;
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("Archived conversation"), true), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED,
@@ -705,10 +721,10 @@ CodexHistoryControllerTest::keepsArchivedConversationsReadOnly()
     QVERIFY(controller.showingArchived());
     QVERIFY(!controller.renameSelectedThread(QStringLiteral("Renamed")));
     QVERIFY(!controller.startThread(QUrl::fromLocalFile(QStringLiteral("/workspace"))));
-    controller.acquireWriteAccess();
-    QCOMPARE(controller.writeAvailability(), CodexHistoryController::WriteAvailability::NotRequested);
-    controller.setWriteAvailability(CodexHistoryController::WriteAvailability::Writable);
-    QVERIFY(!controller.startTurn(QStringLiteral("Continue")));
+    conversation->acquireWriteAccess();
+    QCOMPARE(conversation->writeAvailability(), CodexConversationController::WriteAvailability::NotRequested);
+    conversation->setWriteAvailability(CodexConversationController::WriteAvailability::Writable);
+    QVERIFY(!conversation->startTurn(QStringLiteral("Continue")));
     QVERIFY(controller.errorMessage().isEmpty());
 }
 
