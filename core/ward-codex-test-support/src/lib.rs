@@ -28,6 +28,138 @@ const LIVE_COMMAND_ID: &str = "live-command-1";
 const LIVE_TOOL_ID: &str = "live-tool-1";
 const COMMAND_APPROVAL_REQUEST_ID: &str = "command-approval-1";
 const USER_INPUT_REQUEST_ID: &str = "user-input-1";
+const SECOND_MODEL_PAGE_CURSOR: &str = "models-page-2";
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FakeModelPage {
+    First,
+    Second,
+}
+
+struct FakeReasoningEffort {
+    value: &'static str,
+    description: &'static str,
+}
+
+struct FakeModelDefinition {
+    id: &'static str,
+    model: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    hidden: bool,
+    is_default: bool,
+    default_reasoning_effort: &'static str,
+    supported_reasoning_efforts: &'static [FakeReasoningEffort],
+    page: FakeModelPage,
+}
+
+impl FakeModelDefinition {
+    fn supports_reasoning_effort(&self, effort: &str) -> bool {
+        self.supported_reasoning_efforts
+            .iter()
+            .any(|option| option.value == effort)
+    }
+
+    fn to_json(&self) -> Value {
+        let supported_reasoning_efforts = self
+            .supported_reasoning_efforts
+            .iter()
+            .map(|option| {
+                json!({
+                    "reasoningEffort": option.value,
+                    "description": option.description,
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "id": self.id,
+            "model": self.model,
+            "displayName": self.display_name,
+            "description": self.description,
+            "hidden": self.hidden,
+            "isDefault": self.is_default,
+            "defaultReasoningEffort": self.default_reasoning_effort,
+            "supportedReasoningEfforts": supported_reasoning_efforts,
+        })
+    }
+}
+
+const BALANCED_REASONING_EFFORTS: &[FakeReasoningEffort] = &[
+    FakeReasoningEffort {
+        value: "low",
+        description: "Faster responses",
+    },
+    FakeReasoningEffort {
+        value: "medium",
+        description: "Balanced reasoning",
+    },
+    FakeReasoningEffort {
+        value: "high",
+        description: "Deeper reasoning",
+    },
+];
+const FAST_REASONING_EFFORTS: &[FakeReasoningEffort] = &[
+    FakeReasoningEffort {
+        value: "low",
+        description: "Faster responses",
+    },
+    FakeReasoningEffort {
+        value: "medium",
+        description: "Balanced reasoning",
+    },
+];
+const INTERNAL_REASONING_EFFORTS: &[FakeReasoningEffort] = &[FakeReasoningEffort {
+    value: "medium",
+    description: "Balanced reasoning",
+}];
+const FAKE_MODELS: &[FakeModelDefinition] = &[
+    FakeModelDefinition {
+        id: "balanced",
+        model: "gpt-balanced",
+        display_name: "Balanced",
+        description: "Balances capability and speed.",
+        hidden: false,
+        is_default: true,
+        default_reasoning_effort: "medium",
+        supported_reasoning_efforts: BALANCED_REASONING_EFFORTS,
+        page: FakeModelPage::First,
+    },
+    FakeModelDefinition {
+        id: "internal",
+        model: "gpt-internal",
+        display_name: "Internal",
+        description: "Hidden test model.",
+        hidden: true,
+        is_default: false,
+        default_reasoning_effort: "medium",
+        supported_reasoning_efforts: INTERNAL_REASONING_EFFORTS,
+        page: FakeModelPage::First,
+    },
+    FakeModelDefinition {
+        id: "fast",
+        model: "gpt-fast",
+        display_name: "Fast",
+        description: "Optimized for quick iteration.",
+        hidden: false,
+        is_default: false,
+        default_reasoning_effort: "low",
+        supported_reasoning_efforts: FAST_REASONING_EFFORTS,
+        page: FakeModelPage::Second,
+    },
+];
+
+fn fake_model(model: &str) -> Option<&'static FakeModelDefinition> {
+    FAKE_MODELS
+        .iter()
+        .find(|definition| definition.model == model)
+}
+
+fn default_fake_model() -> &'static FakeModelDefinition {
+    FAKE_MODELS
+        .iter()
+        .find(|model| model.is_default)
+        .expect("the fake model catalog must declare a default")
+}
 
 /// Mutually exclusive turn behaviors supported by the fake app-server.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -57,6 +189,8 @@ pub struct FakeCodexAppServerOptions {
     /// Whether the first fork is applied before its connection closes without
     /// returning the mutation response.
     pub lose_first_fork_response: bool,
+    /// Number of initial model-list requests that return a temporary error.
+    pub model_list_failures: usize,
     /// Behavior exercised by each started turn.
     pub turn_scenario: FakeTurnScenario,
 }
@@ -68,6 +202,7 @@ impl Default for FakeCodexAppServerOptions {
             initial_thread_read_failures: 0,
             renumber_persisted_first_turn: false,
             lose_first_fork_response: false,
+            model_list_failures: 0,
             turn_scenario: FakeTurnScenario::default(),
         }
     }
@@ -152,6 +287,8 @@ impl FakeState {
 struct FakeThread {
     id: String,
     cwd: String,
+    model: String,
+    reasoning_effort: String,
     ephemeral: bool,
     archived: bool,
     name: Option<String>,
@@ -260,6 +397,7 @@ fn handle_client_message(
     };
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
     Some(match method {
+        "model/list" => vec![model_list_response(id, &params, state)],
         "thread/archive" => vec![thread_archive_response(id, &params, state)],
         "thread/fork" => {
             return thread_fork_response(id, &params, state, connection_id)
@@ -278,6 +416,51 @@ fn handle_client_message(
             "id": id,
             "error": { "code": -32601, "message": format!("unsupported fake method: {method}") }
         })],
+    })
+}
+
+fn model_list_response(id: Value, params: &Value, state: &Arc<Mutex<FakeState>>) -> Value {
+    let mut state = state.lock().unwrap();
+    if state.options.model_list_failures > 0 {
+        state.options.model_list_failures -= 1;
+        return json!({
+            "id": id,
+            "error": {
+                "code": -32603,
+                "message": "the model catalog is temporarily unavailable"
+            }
+        });
+    }
+    drop(state);
+
+    let (page, next_cursor) = match params.get("cursor").and_then(Value::as_str) {
+        None => (FakeModelPage::First, Some(SECOND_MODEL_PAGE_CURSOR)),
+        Some(SECOND_MODEL_PAGE_CURSOR) => (FakeModelPage::Second, None),
+        Some(cursor) => {
+            return json!({
+                "id": id,
+                "error": {
+                    "code": -32600,
+                    "message": format!("unknown model-list cursor: {cursor}")
+                }
+            });
+        }
+    };
+    let include_hidden = params
+        .get("includeHidden")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let data = FAKE_MODELS
+        .iter()
+        .filter(|model| model.page == page && (include_hidden || !model.hidden))
+        .map(FakeModelDefinition::to_json)
+        .collect::<Vec<_>>();
+    json!({
+        "id": id,
+        "result": {
+            "data": data,
+            "nextCursor": next_cursor,
+        }
     })
 }
 
@@ -455,11 +638,14 @@ fn thread_fork_response(
         return None;
     }
     let fork = state.threads.last().expect("the fork was inserted above");
+    let model = fork.model.clone();
+    let reasoning_effort = fork.reasoning_effort.clone();
     let thread = thread_json(fork, state.options, true);
     Some(json!({
         "id": id,
         "result": {
-            "model": "gpt-5.6-sol",
+            "model": model,
+            "reasoningEffort": reasoning_effort,
             "thread": thread
         }
     }))
@@ -547,6 +733,17 @@ fn thread_start_response(
         .get("ephemeral")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let model = params
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or(default_fake_model().model)
+        .to_owned();
+    let reasoning_effort = params
+        .get("effort")
+        .and_then(Value::as_str)
+        .or_else(|| fake_model(&model).map(|model| model.default_reasoning_effort))
+        .unwrap_or(default_fake_model().default_reasoning_effort)
+        .to_owned();
     let mut state = state.lock().unwrap();
     let ephemeral = requested_ephemeral && state.options.confirm_ephemeral_thread_starts;
     state.threads.retain(|thread| thread.id != THREAD_ID);
@@ -554,6 +751,8 @@ fn thread_start_response(
     state.threads.push(FakeThread {
         id: THREAD_ID.to_owned(),
         cwd,
+        model,
+        reasoning_effort,
         ephemeral,
         archived: false,
         name: None,
@@ -570,9 +769,27 @@ fn thread_start_response(
         state.options,
         false,
     );
+    let model = state
+        .threads
+        .iter()
+        .find(|thread| thread.id == THREAD_ID)
+        .expect("the thread was inserted above")
+        .model
+        .clone();
+    let reasoning_effort = state
+        .threads
+        .iter()
+        .find(|thread| thread.id == THREAD_ID)
+        .expect("the thread was inserted above")
+        .reasoning_effort
+        .clone();
     json!({
         "id": id,
-        "result": { "model": "gpt-5.6-sol", "thread": thread }
+        "result": {
+            "model": model,
+            "reasoningEffort": reasoning_effort,
+            "thread": thread
+        }
     })
 }
 
@@ -608,10 +825,13 @@ fn thread_resume_response(
         });
     }
     thread.writer_connection_id = Some(connection_id);
+    let model = thread.model.clone();
+    let reasoning_effort = thread.reasoning_effort.clone();
     json!({
         "id": id,
         "result": {
-            "model": "gpt-5.6-sol",
+            "model": model,
+            "reasoningEffort": reasoning_effort,
             "thread": thread_json(thread, options, true)
         }
     })
@@ -636,6 +856,14 @@ fn turn_start_messages(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
+    let selected_model = params
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let selected_reasoning_effort = params
+        .get("effort")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let (turn_scenario, turn_number) = {
         let mut state = state.lock().unwrap();
         let turn_scenario = state.options.turn_scenario;
@@ -650,6 +878,43 @@ fn turn_start_messages(
                 }
             })];
         };
+        let effective_model = selected_model
+            .as_deref()
+            .unwrap_or(&thread.model)
+            .to_owned();
+        let Some(model_definition) = fake_model(&effective_model) else {
+            return vec![json!({
+                "id": id,
+                "error": {
+                    "code": -32602,
+                    "message": format!("unsupported model: {effective_model}")
+                }
+            })];
+        };
+        let effective_reasoning_effort = selected_reasoning_effort
+            .as_deref()
+            .or_else(|| {
+                model_definition
+                    .supports_reasoning_effort(&thread.reasoning_effort)
+                    .then_some(thread.reasoning_effort.as_str())
+            })
+            .unwrap_or(model_definition.default_reasoning_effort)
+            .to_owned();
+        if !model_definition.supports_reasoning_effort(&effective_reasoning_effort) {
+            return vec![json!({
+                "id": id,
+                "error": {
+                    "code": -32602,
+                    "message": format!(
+                        "unsupported reasoning effort for {effective_model}: {effective_reasoning_effort}"
+                    )
+                }
+            })];
+        }
+        if let Some(model) = selected_model {
+            thread.model = model;
+        }
+        thread.reasoning_effort = effective_reasoning_effort;
         let turn_number = thread.turns.len() + 1;
         thread.turns.push(FakeTurn {
             number: turn_number,

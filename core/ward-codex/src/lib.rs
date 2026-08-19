@@ -14,6 +14,8 @@ mod history;
 mod model;
 mod protocol;
 
+pub(crate) use model::ThreadInferenceState;
+
 pub use app_server::{CodexAppServerConnector, CodexAppServerSource, CodexAppServerTransport};
 pub use client::{CodexClient, ThreadListOptions};
 pub use error::CodexError;
@@ -22,9 +24,10 @@ pub use history::{
 };
 pub use model::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
-    CommandActionKind, InteractionAnswer, InteractionDecision, InteractionId, InteractionOption,
-    InteractionQuestion, InteractionResponse, InteractionResponseBody, PendingInteraction,
-    PendingInteractionKind, ServerInfo, Thread, ThreadActiveFlag, ThreadItem, ThreadPage,
+    CommandActionKind, InferenceOverride, InteractionAnswer, InteractionDecision, InteractionId,
+    InteractionOption, InteractionQuestion, InteractionResponse, InteractionResponseBody,
+    ModelCatalog, ModelInfo, PendingInteraction, PendingInteractionKind, ReasoningEffort,
+    ReasoningEffortOption, ServerInfo, Thread, ThreadActiveFlag, ThreadItem, ThreadPage,
     ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription, ThreadSummary,
     Turn, TurnMode, TurnOptions, TurnPermissionPreset, TurnStatus, UserInput,
 };

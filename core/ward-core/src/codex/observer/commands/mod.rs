@@ -105,7 +105,7 @@ pub(super) struct CommandUpdate {
     pub(super) thread_fork: Option<Box<ThreadForkRequest>>,
     pub(super) thread_lifecycle: Vec<ThreadLifecycleRequest>,
     pub(super) thread_start: Option<Box<ThreadStartRequest>>,
-    pub(super) turn: Option<TurnRequest>,
+    pub(super) turn: Option<Box<TurnRequest>>,
     pub(super) controls: Vec<ThreadControlRequest>,
 }
 
@@ -218,7 +218,7 @@ pub(super) fn merge_command(update: &mut CommandUpdate, command: ObserverCommand
         }
         ObserverCommand::StartThread(_) => {}
         ObserverCommand::StartTurn(request) if update.turn.is_none() => {
-            update.turn = Some(request);
+            update.turn = Some(Box::new(request));
         }
         ObserverCommand::StartTurn(_) => {}
         ObserverCommand::SteerTurn(request) => {

@@ -14,6 +14,153 @@ pub struct ServerInfo {
     pub user_agent: String,
 }
 
+/// The complete visible model catalog advertised by one Codex app-server.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelCatalog {
+    pub models: Vec<ModelInfo>,
+}
+
+/// One model available for Codex conversations and turns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelInfo {
+    /// Catalog identity assigned by the app-server.
+    pub id: String,
+    /// Canonical model value accepted by thread and turn requests.
+    pub model: String,
+    pub display_name: String,
+    pub description: String,
+    pub is_default: bool,
+    pub default_reasoning_effort: ReasoningEffort,
+    pub supported_reasoning_efforts: Vec<ReasoningEffortOption>,
+}
+
+impl ModelInfo {
+    pub(crate) fn resolve_reasoning_effort(
+        &self,
+        preferred_effort: Option<&str>,
+    ) -> ReasoningEffort {
+        preferred_effort
+            .and_then(|preferred| {
+                self.supported_reasoning_efforts
+                    .iter()
+                    .find(|option| option.effort.as_str() == preferred)
+                    .map(|option| option.effort.clone())
+            })
+            .unwrap_or_else(|| self.default_reasoning_effort.clone())
+    }
+}
+
+/// A non-empty reasoning-effort value advertised by a Codex model.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ReasoningEffort(String);
+
+impl ReasoningEffort {
+    /// Creates a reasoning effort when the supplied value is non-empty.
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Option<Self> {
+        let value = value.into();
+        (!value.is_empty()).then_some(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ReasoningEffort {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// One reasoning-effort choice supported by a Codex model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReasoningEffortOption {
+    pub effort: ReasoningEffort,
+    pub description: String,
+}
+
+/// One requested change to a thread's active inference options.
+///
+/// Model-only overrides are resolved against the advertised model catalog so
+/// the client can report the reasoning effort that actually became active.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InferenceOverride {
+    model: Option<String>,
+    reasoning_effort: Option<ReasoningEffort>,
+}
+
+impl InferenceOverride {
+    #[must_use]
+    pub fn model(model: impl Into<String>) -> Self {
+        Self {
+            model: Some(model.into()),
+            reasoning_effort: None,
+        }
+    }
+
+    #[must_use]
+    pub fn reasoning_effort(reasoning_effort: ReasoningEffort) -> Self {
+        Self {
+            model: None,
+            reasoning_effort: Some(reasoning_effort),
+        }
+    }
+
+    #[must_use]
+    pub fn selection(model: impl Into<String>, reasoning_effort: ReasoningEffort) -> Self {
+        Self {
+            model: Some(model.into()),
+            reasoning_effort: Some(reasoning_effort),
+        }
+    }
+
+    pub(crate) fn model_override(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    pub(crate) fn reasoning_effort_override(&self) -> Option<&ReasoningEffort> {
+        self.reasoning_effort.as_ref()
+    }
+
+    pub(crate) fn set_reasoning_effort(&mut self, reasoning_effort: ReasoningEffort) {
+        self.reasoning_effort = Some(reasoning_effort);
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ThreadInferenceState {
+    model: Option<String>,
+    reasoning_effort: Option<String>,
+}
+
+impl ThreadInferenceState {
+    pub(crate) fn new(model: Option<String>, reasoning_effort: Option<String>) -> Self {
+        Self {
+            model,
+            reasoning_effort,
+        }
+    }
+
+    pub(crate) fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    pub(crate) fn reasoning_effort(&self) -> Option<&str> {
+        self.reasoning_effort.as_deref()
+    }
+
+    pub(crate) fn apply(&mut self, inference_override: &InferenceOverride) {
+        if let Some(model) = inference_override.model_override() {
+            self.model = Some(model.to_owned());
+        }
+        if let Some(reasoning_effort) = inference_override.reasoning_effort_override() {
+            self.reasoning_effort = Some(reasoning_effort.to_string());
+        }
+    }
+}
+
 /// Collaboration behavior selected for one Codex turn.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -37,10 +184,13 @@ pub enum TurnPermissionPreset {
 }
 
 /// User-facing controls that affect how a Codex turn runs.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TurnOptions {
     pub mode: TurnMode,
     pub permission_preset: TurnPermissionPreset,
+    /// Override the thread's active inference options for this turn and
+    /// subsequent turns.
+    pub inference: Option<InferenceOverride>,
 }
 
 /// Controls how a new Codex thread is created.

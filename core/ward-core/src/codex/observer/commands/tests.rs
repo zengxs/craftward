@@ -90,7 +90,7 @@ fn coalesces_commands_and_prioritizes_stop() {
             thread_fork: None,
             thread_lifecycle: vec![],
             thread_start: None,
-            turn: Some(turn_request("thread-2", "Continue")),
+            turn: Some(Box::new(turn_request("thread-2", "Continue"))),
             controls: vec![],
         })
     );
@@ -130,7 +130,7 @@ fn recognizes_an_update_with_exactly_one_exclusive_operation() {
         ..CommandUpdate::default()
     };
     let turn = CommandUpdate {
-        turn: Some(turn_request("thread-1", "Continue")),
+        turn: Some(Box::new(turn_request("thread-1", "Continue"))),
         ..CommandUpdate::default()
     };
     let fork = CommandUpdate {
@@ -139,7 +139,7 @@ fn recognizes_an_update_with_exactly_one_exclusive_operation() {
     };
     let both = CommandUpdate {
         thread_start: Some(Box::new(thread_start_request("/workspace"))),
-        turn: Some(turn_request("thread-1", "Continue")),
+        turn: Some(Box::new(turn_request("thread-1", "Continue"))),
         ..CommandUpdate::default()
     };
 
@@ -278,7 +278,7 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
         thread_fork: None,
         thread_lifecycle: vec![],
         thread_start: Some(Box::new(thread_start_request("/workspace/one"))),
-        turn: Some(turn_request("thread-1", "First")),
+        turn: Some(Box::new(turn_request("thread-1", "First"))),
         controls: vec![],
     };
 
@@ -291,7 +291,7 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
         thread_fork: None,
         thread_lifecycle: vec![],
         thread_start: Some(Box::new(thread_start_request("/workspace/two"))),
-        turn: Some(turn_request("thread-2", "Second")),
+        turn: Some(Box::new(turn_request("thread-2", "Second"))),
         controls: vec![],
     });
 
@@ -306,7 +306,7 @@ fn merges_deferred_updates_without_replacing_the_reserved_turn() {
             thread_fork: None,
             thread_lifecycle: vec![],
             thread_start: Some(Box::new(thread_start_request("/workspace/one"))),
-            turn: Some(turn_request("thread-1", "First")),
+            turn: Some(Box::new(turn_request("thread-1", "First"))),
             controls: vec![],
         }
     );
@@ -320,7 +320,7 @@ fn processes_control_commands_before_a_reserved_turn() {
         .unwrap();
     sender.try_send(ObserverCommand::Refresh).unwrap();
     let mut update = CommandUpdate {
-        turn: Some(turn_request("thread-1", "Continue")),
+        turn: Some(Box::new(turn_request("thread-1", "Continue"))),
         ..CommandUpdate::default()
     };
 

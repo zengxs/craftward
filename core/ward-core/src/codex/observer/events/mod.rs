@@ -4,7 +4,7 @@
 use std::ffi::c_void;
 
 use prost::Message as _;
-use ward_codex::{PendingInteraction, Thread, ThreadActiveFlag, ThreadPage};
+use ward_codex::{ModelCatalog, PendingInteraction, Thread, ThreadActiveFlag, ThreadPage};
 
 use super::super::live::LiveRuntimeState;
 use super::super::{WardBuffer, wire};
@@ -39,6 +39,24 @@ impl HistoryEventSink {
             thread_id: None,
             archived: Some(archived),
             body: Some(wire::history_event::Body::ThreadPage(page.into())),
+        });
+    }
+
+    pub(super) fn emit_model_catalog_updated(&self, catalog: ModelCatalog) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ModelCatalogUpdated as i32,
+            thread_id: None,
+            archived: None,
+            body: Some(wire::history_event::Body::ModelCatalog(catalog.into())),
+        });
+    }
+
+    pub(super) fn emit_model_catalog_error(&self, message: &str) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ModelCatalogError as i32,
+            thread_id: None,
+            archived: None,
+            body: Some(wire::history_event::Body::ErrorMessage(message.to_owned())),
         });
     }
 
@@ -195,6 +213,25 @@ impl HistoryEventSink {
                 wire::ThreadWriteState {
                     status: status as i32,
                     message: message.map(str::to_owned),
+                },
+            )),
+        });
+    }
+
+    pub(super) fn emit_thread_model_changed(
+        &self,
+        thread_id: &str,
+        model: &str,
+        reasoning_effort: Option<&str>,
+    ) {
+        self.emit(wire::HistoryEvent {
+            kind: wire::HistoryEventKind::ThreadModelChanged as i32,
+            thread_id: Some(thread_id.to_owned()),
+            archived: None,
+            body: Some(wire::history_event::Body::ThreadModelState(
+                wire::ThreadModelState {
+                    model: model.to_owned(),
+                    reasoning_effort: reasoning_effort.map(str::to_owned),
                 },
             )),
         });

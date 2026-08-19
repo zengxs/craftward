@@ -7,8 +7,10 @@ use ward_codex::{
     CommandActionKind as CodexCommandActionKind, InteractionDecision, InteractionId,
     InteractionOption as CodexInteractionOption, InteractionQuestion as CodexInteractionQuestion,
     InteractionResponse as CodexInteractionResponse, InteractionResponseBody,
+    ModelCatalog as CodexModelCatalog, ModelInfo as CodexModelInfo,
     PendingInteraction as CodexPendingInteraction,
-    PendingInteractionKind as CodexPendingInteractionKind, Thread as CodexThread,
+    PendingInteractionKind as CodexPendingInteractionKind,
+    ReasoningEffortOption as CodexReasoningEffortOption, Thread as CodexThread,
     ThreadItem as CodexThreadItem, ThreadPage as CodexThreadPage,
     ThreadSummary as CodexThreadSummary, UserInput,
 };
@@ -33,6 +35,41 @@ impl From<CodexThreadPage> for ThreadPage {
         Self {
             threads: page.threads.into_iter().map(Into::into).collect(),
             next_cursor: page.next_cursor,
+        }
+    }
+}
+
+impl From<CodexModelCatalog> for ModelCatalog {
+    fn from(catalog: CodexModelCatalog) -> Self {
+        Self {
+            models: catalog.models.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<CodexModelInfo> for ModelInfo {
+    fn from(model: CodexModelInfo) -> Self {
+        Self {
+            model_id: model.id,
+            model: model.model,
+            display_name: model.display_name,
+            description: model.description,
+            is_default: model.is_default,
+            default_reasoning_effort: model.default_reasoning_effort.to_string(),
+            supported_reasoning_efforts: model
+                .supported_reasoning_efforts
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }
+    }
+}
+
+impl From<CodexReasoningEffortOption> for ReasoningEffortOption {
+    fn from(option: CodexReasoningEffortOption) -> Self {
+        Self {
+            reasoning_effort: option.effort.to_string(),
+            description: option.description,
         }
     }
 }

@@ -6,18 +6,21 @@ use std::sync::Arc;
 
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
-use ward_codex::{CodexHistoryCancellation, TurnMode, TurnOptions, TurnPermissionPreset};
+use ward_codex::{
+    CodexHistoryCancellation, InferenceOverride, ReasoningEffort, TurnMode, TurnOptions,
+    TurnPermissionPreset,
+};
 
 use super::commands::{
     ObserverCommand, ThreadForkRequest, ThreadLifecycleAction, ThreadLifecycleRequest,
-    ThreadListScope, ThreadRenameRequest,
+    ThreadListScope, ThreadRenameRequest, TurnRequest,
 };
 use super::{
     COMMAND_QUEUE_CAPACITY, ObserverOperation, ObserverOperationGate, WardCodexHistoryObserver,
     decode_turn_options, ward_core_codex_history_observer_archive_thread,
     ward_core_codex_history_observer_fork_thread, ward_core_codex_history_observer_rename_thread,
     ward_core_codex_history_observer_restore_thread,
-    ward_core_codex_history_observer_show_archived,
+    ward_core_codex_history_observer_show_archived, ward_core_codex_history_observer_start_turn,
 };
 
 #[tokio::test]
@@ -54,6 +57,51 @@ async fn queues_a_thread_fork_through_the_private_c_interface() {
     );
 }
 
+#[tokio::test]
+async fn queues_conversation_inference_overrides_through_the_private_c_interface() {
+    let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let observer = WardCodexHistoryObserver {
+        commands,
+        cancellation: CodexHistoryCancellation::new(),
+        active_operation: Arc::new(ObserverOperationGate::new()),
+        runtime: Handle::current(),
+        worker: None,
+    };
+    let thread_id = CString::new("thread-1").expect("the thread ID is valid");
+    let prompt = CString::new("Continue").expect("the prompt is valid");
+    let model = CString::new("gpt-fast").expect("the model is valid");
+    let reasoning_effort = CString::new("low").expect("the reasoning effort is valid");
+    let mut error = std::ptr::null_mut();
+
+    // SAFETY: The observer and strings remain live for the duration of the
+    // private C interface call, and the error output pointer is writable.
+    assert!(unsafe {
+        ward_core_codex_history_observer_start_turn(
+            std::ptr::from_ref(&observer).cast_mut(),
+            thread_id.as_ptr(),
+            prompt.as_ptr(),
+            model.as_ptr(),
+            reasoning_effort.as_ptr(),
+            0,
+            0,
+            &mut error,
+        )
+    });
+    assert!(error.is_null());
+    assert_eq!(
+        receiver.recv().await,
+        Some(ObserverCommand::StartTurn(TurnRequest {
+            thread_id: "thread-1".to_owned(),
+            prompt: "Continue".to_owned(),
+            options: TurnOptions {
+                inference: ReasoningEffort::new("low")
+                    .map(|effort| InferenceOverride::selection("gpt-fast", effort)),
+                ..TurnOptions::default()
+            },
+        }))
+    );
+}
+
 #[test]
 fn reserves_only_one_observer_operation_at_a_time() {
     let gate = ObserverOperationGate::new();
@@ -80,6 +128,7 @@ fn decodes_the_private_turn_control_values() {
         Ok(TurnOptions {
             mode: TurnMode::Plan,
             permission_preset: TurnPermissionPreset::RequestApproval,
+            inference: None,
         })
     );
     assert_eq!(
@@ -87,6 +136,7 @@ fn decodes_the_private_turn_control_values() {
         Ok(TurnOptions {
             mode: TurnMode::Default,
             permission_preset: TurnPermissionPreset::ReadOnly,
+            inference: None,
         })
     );
     assert_eq!(

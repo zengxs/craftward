@@ -8,14 +8,16 @@ use serde::{Deserialize, Serialize};
 pub(crate) use self::interactions::{
     interaction_result, pending_interaction, resolved_server_request,
 };
+pub(crate) use self::model_catalog::{ModelListParams, ModelListResponse};
 pub(crate) use self::notifications::turn_stream_event;
 use self::thread::{WireThread, WireTurn};
 use crate::{
-    CodexError, ServerInfo, ThreadStartOptions, ThreadSubscription, Turn, TurnMode, TurnOptions,
-    TurnPermissionPreset,
+    CodexError, ServerInfo, ThreadInferenceState, ThreadStartOptions, ThreadSubscription, Turn,
+    TurnMode, TurnOptions, TurnPermissionPreset,
 };
 
 mod interactions;
+mod model_catalog;
 mod notifications;
 mod thread;
 
@@ -95,14 +97,21 @@ pub(crate) struct ThreadForkParams<'a> {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadForkResponse {
     thread: WireThread,
     model: String,
+    reasoning_effort: Option<String>,
 }
 
 impl ThreadForkResponse {
-    pub(crate) fn into_parts(self) -> Result<(ThreadSubscription, String), serde_json::Error> {
-        Ok((self.thread.into_subscription()?, self.model))
+    pub(crate) fn into_parts(
+        self,
+    ) -> Result<(ThreadSubscription, ThreadInferenceState), serde_json::Error> {
+        Ok((
+            self.thread.into_subscription()?,
+            ThreadInferenceState::new(Some(self.model), self.reasoning_effort),
+        ))
     }
 }
 
@@ -198,17 +207,23 @@ fn is_false(value: &bool) -> bool {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadStartResponse {
     thread: WireThread,
     model: String,
+    reasoning_effort: Option<String>,
 }
 
 impl ThreadStartResponse {
     pub(crate) fn into_parts(
         self,
-    ) -> Result<(ThreadSubscription, String, Option<bool>), serde_json::Error> {
+    ) -> Result<(ThreadSubscription, ThreadInferenceState, Option<bool>), serde_json::Error> {
         let ephemeral = self.thread.ephemeral();
-        Ok((self.thread.into_subscription()?, self.model, ephemeral))
+        Ok((
+            self.thread.into_subscription()?,
+            ThreadInferenceState::new(Some(self.model), self.reasoning_effort),
+            ephemeral,
+        ))
     }
 }
 
@@ -224,13 +239,18 @@ pub(crate) struct ThreadResumeResponse {
     pub(crate) thread: WireThread,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    reasoning_effort: Option<String>,
 }
 
 impl ThreadResumeResponse {
     pub(crate) fn into_parts(
         self,
-    ) -> Result<(ThreadSubscription, Option<String>), serde_json::Error> {
-        Ok((self.thread.into_subscription()?, self.model))
+    ) -> Result<(ThreadSubscription, ThreadInferenceState), serde_json::Error> {
+        Ok((
+            self.thread.into_subscription()?,
+            ThreadInferenceState::new(self.model, self.reasoning_effort),
+        ))
     }
 }
 
@@ -239,6 +259,10 @@ impl ThreadResumeResponse {
 pub(crate) struct TurnStartParams<'a> {
     pub(crate) thread_id: &'a str,
     input: Vec<TextTurnInput<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     collaboration_mode: Option<CollaborationMode<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,11 +277,37 @@ impl<'a> TurnStartParams<'a> {
     pub(crate) fn text(
         thread_id: &'a str,
         text: &'a str,
-        model: Option<&'a str>,
-        options: TurnOptions,
+        active_inference: &'a ThreadInferenceState,
+        options: &'a TurnOptions,
     ) -> Result<Self, CodexError> {
-        let collaboration_mode = match model {
-            Some(model) => Some(CollaborationMode::new(options.mode, model)),
+        let selected_model = options
+            .inference
+            .as_ref()
+            .and_then(crate::InferenceOverride::model_override);
+        let selected_reasoning_effort = options
+            .inference
+            .as_ref()
+            .and_then(crate::InferenceOverride::reasoning_effort_override)
+            .map(crate::ReasoningEffort::as_str);
+        if selected_model.is_some_and(str::is_empty) {
+            return Err(CodexError::UnsupportedTurnControls {
+                description: "the selected model is empty".to_owned(),
+            });
+        }
+        if selected_reasoning_effort.is_some_and(str::is_empty) {
+            return Err(CodexError::UnsupportedTurnControls {
+                description: "the selected reasoning effort is empty".to_owned(),
+            });
+        }
+        let collaboration_model = selected_model.or(active_inference.model());
+        let collaboration_reasoning_effort =
+            selected_reasoning_effort.or(active_inference.reasoning_effort());
+        let collaboration_mode = match collaboration_model {
+            Some(model) => Some(CollaborationMode::new(
+                options.mode,
+                model,
+                collaboration_reasoning_effort,
+            )),
             None if options.mode == TurnMode::Default => None,
             None => {
                 return Err(CodexError::UnsupportedTurnControls {
@@ -286,6 +336,8 @@ impl<'a> TurnStartParams<'a> {
         Ok(Self {
             thread_id,
             input: vec![TextTurnInput { kind: "text", text }],
+            model: selected_model,
+            effort: selected_reasoning_effort,
             collaboration_mode,
             approval_policy,
             approvals_reviewer,
@@ -301,7 +353,7 @@ struct CollaborationMode<'a> {
 }
 
 impl<'a> CollaborationMode<'a> {
-    fn new(mode: TurnMode, model: &'a str) -> Self {
+    fn new(mode: TurnMode, model: &'a str, reasoning_effort: Option<&'a str>) -> Self {
         Self {
             mode: match mode {
                 TurnMode::Default => WireTurnMode::Default,
@@ -310,7 +362,7 @@ impl<'a> CollaborationMode<'a> {
             settings: CollaborationSettings {
                 developer_instructions: None,
                 model,
-                reasoning_effort: None,
+                reasoning_effort,
             },
         }
     }

@@ -9,9 +9,17 @@ use super::{
 };
 use crate::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
-    CommandActionKind, ThreadActiveFlag, ThreadItem, ThreadRuntimeStatus, ThreadStartOptions,
-    ThreadStreamEvent, TurnMode, TurnOptions, TurnPermissionPreset, UserInput,
+    CommandActionKind, InferenceOverride, ReasoningEffort, ThreadActiveFlag, ThreadInferenceState,
+    ThreadItem, ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnMode, TurnOptions,
+    TurnPermissionPreset, UserInput,
 };
+
+fn inference_state(model: Option<&str>, reasoning_effort: Option<&str>) -> ThreadInferenceState {
+    ThreadInferenceState::new(
+        model.map(str::to_owned),
+        reasoning_effort.map(str::to_owned),
+    )
+}
 
 #[test]
 fn serializes_full_and_turn_bounded_forks_without_overrides() {
@@ -363,6 +371,7 @@ fn maps_live_reasoning_summary_deltas() {
 fn maps_the_subscription_runtime_status_from_the_resume_response() {
     let response: ThreadResumeResponse = serde_json::from_value(serde_json::json!({
         "model": "gpt-5.6-sol",
+        "reasoningEffort": "high",
         "thread": {
             "id": "thread-1",
             "name": null,
@@ -383,9 +392,10 @@ fn maps_the_subscription_runtime_status_from_the_resume_response() {
     }))
     .expect("the resume response should decode");
 
-    let (subscription, model) = response.into_parts().expect("the subscription should map");
+    let (subscription, inference) = response.into_parts().expect("the subscription should map");
 
-    assert_eq!(model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(inference.model(), Some("gpt-5.6-sol"));
+    assert_eq!(inference.reasoning_effort(), Some("high"));
     assert_eq!(subscription.thread.summary.id, "thread-1");
     assert_eq!(
         subscription.runtime_status,
@@ -418,6 +428,7 @@ fn maps_a_started_thread_to_the_normalized_subscription() {
         "approvalsReviewer": "user",
         "cwd": "/workspace",
         "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
         "modelProvider": "openai",
         "sandbox": { "type": "workspaceWrite" },
         "thread": {
@@ -434,11 +445,12 @@ fn maps_a_started_thread_to_the_normalized_subscription() {
     }))
     .expect("the thread start response should decode");
 
-    let (subscription, model, ephemeral) = response
+    let (subscription, inference, ephemeral) = response
         .into_parts()
         .expect("the started thread should map");
 
-    assert_eq!(model, "gpt-5.6-sol");
+    assert_eq!(inference.model(), Some("gpt-5.6-sol"));
+    assert_eq!(inference.reasoning_effort(), Some("medium"));
     assert_eq!(ephemeral, Some(false));
     assert_eq!(subscription.thread.summary.id, "thread-new");
     assert_eq!(subscription.thread.summary.cwd, PathBuf::from("/workspace"));
@@ -617,8 +629,8 @@ fn serializes_a_text_turn_start_request() {
             TurnStartParams::text(
                 "thread-1",
                 "Continue",
-                Some("gpt-5.6-sol"),
-                TurnOptions::default(),
+                &inference_state(Some("gpt-5.6-sol"), Some("medium")),
+                &TurnOptions::default(),
             )
             .unwrap(),
         )
@@ -631,7 +643,43 @@ fn serializes_a_text_turn_start_request() {
                 "settings": {
                     "developer_instructions": null,
                     "model": "gpt-5.6-sol",
-                    "reasoning_effort": null
+                    "reasoning_effort": "medium"
+                }
+            }
+        })
+    );
+}
+
+#[test]
+fn serializes_a_conversation_model_override_for_this_and_subsequent_turns() {
+    assert_eq!(
+        serde_json::to_value(
+            TurnStartParams::text(
+                "thread-1",
+                "Continue with the faster model",
+                &inference_state(Some("gpt-balanced"), Some("medium")),
+                &TurnOptions {
+                    inference: Some(InferenceOverride::selection(
+                        "gpt-fast",
+                        ReasoningEffort::new("low").expect("the reasoning effort is valid"),
+                    )),
+                    ..TurnOptions::default()
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+        serde_json::json!({
+            "threadId": "thread-1",
+            "input": [{ "type": "text", "text": "Continue with the faster model" }],
+            "model": "gpt-fast",
+            "effort": "low",
+            "collaborationMode": {
+                "mode": "default",
+                "settings": {
+                    "developer_instructions": null,
+                    "model": "gpt-fast",
+                    "reasoning_effort": "low"
                 }
             }
         })
@@ -662,10 +710,11 @@ fn serializes_plan_mode_with_interactive_workspace_permissions() {
             TurnStartParams::text(
                 "thread-1",
                 "Plan this change",
-                Some("gpt-5.6-sol"),
-                TurnOptions {
+                &inference_state(Some("gpt-5.6-sol"), Some("high")),
+                &TurnOptions {
                     mode: TurnMode::Plan,
                     permission_preset: TurnPermissionPreset::RequestApproval,
+                    ..TurnOptions::default()
                 },
             )
             .unwrap(),
@@ -679,7 +728,7 @@ fn serializes_plan_mode_with_interactive_workspace_permissions() {
                 "settings": {
                     "developer_instructions": null,
                     "model": "gpt-5.6-sol",
-                    "reasoning_effort": null
+                    "reasoning_effort": "high"
                 }
             },
             "approvalPolicy": "on-request",
@@ -694,16 +743,13 @@ fn serializes_plan_mode_with_interactive_workspace_permissions() {
 
 #[test]
 fn serializes_read_only_permissions() {
-    let params = TurnStartParams::text(
-        "thread-1",
-        "Inspect only",
-        Some("gpt-5.6-sol"),
-        TurnOptions {
-            mode: TurnMode::Default,
-            permission_preset: TurnPermissionPreset::ReadOnly,
-        },
-    )
-    .unwrap();
+    let options = TurnOptions {
+        permission_preset: TurnPermissionPreset::ReadOnly,
+        ..TurnOptions::default()
+    };
+    let active_inference = inference_state(Some("gpt-5.6-sol"), Some("medium"));
+    let params =
+        TurnStartParams::text("thread-1", "Inspect only", &active_inference, &options).unwrap();
     let value = serde_json::to_value(params).unwrap();
 
     assert_eq!(value["approvalPolicy"], "on-request");
@@ -716,15 +762,12 @@ fn serializes_read_only_permissions() {
 
 #[test]
 fn rejects_plan_mode_when_an_older_resume_response_omits_the_model() {
-    let result = TurnStartParams::text(
-        "thread-1",
-        "Plan this change",
-        None,
-        TurnOptions {
-            mode: TurnMode::Plan,
-            permission_preset: TurnPermissionPreset::Inherit,
-        },
-    );
+    let options = TurnOptions {
+        mode: TurnMode::Plan,
+        ..TurnOptions::default()
+    };
+    let active_inference = ThreadInferenceState::default();
+    let result = TurnStartParams::text("thread-1", "Plan this change", &active_inference, &options);
 
     assert!(matches!(
         result,

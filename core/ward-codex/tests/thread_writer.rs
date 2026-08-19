@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use ward_codex::{
     ActivityKind, ActivityStatus, CodexError, CodexHistoryCancellation, CodexHistorySession,
-    CodexThreadWriter, InteractionAnswer, InteractionDecision, InteractionResponse,
-    InteractionResponseBody, PendingInteraction, PendingInteractionKind, ThreadItem,
-    ThreadListOptions, ThreadPagePoll, ThreadPoll, ThreadRuntimeStatus, ThreadStartOptions,
-    ThreadStreamEvent, TurnOptions, TurnStatus, UserInput,
+    CodexThreadWriter, InferenceOverride, InteractionAnswer, InteractionDecision,
+    InteractionResponse, InteractionResponseBody, PendingInteraction, PendingInteractionKind,
+    ReasoningEffort, ThreadItem, ThreadListOptions, ThreadPagePoll, ThreadPoll,
+    ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnOptions, TurnStatus, UserInput,
 };
 use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions, FakeTurnScenario};
 
@@ -28,10 +28,148 @@ async fn starts_a_thread_through_the_public_writer_seam() {
     .expect("the public writer seam should start a thread");
 
     assert_eq!(writer.thread_id(), "thread-new");
+    assert_eq!(writer.active_model(), Some("gpt-balanced"));
+    assert_eq!(writer.active_reasoning_effort(), Some("medium"));
     assert_eq!(subscription.thread.summary.id, "thread-new");
     assert_eq!(subscription.thread.summary.cwd, Path::new("/workspace"));
     assert_eq!(subscription.runtime_status, ThreadRuntimeStatus::Idle);
 
+    writer.shutdown().await;
+}
+
+#[tokio::test]
+async fn changes_and_restores_conversation_inference_options_through_the_public_writer_seam() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let cancellation = CodexHistoryCancellation::new();
+    let (mut writer, _) = CodexThreadWriter::start_on(
+        &source,
+        cancellation.clone(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the public writer seam should start a thread");
+
+    let rejected = writer
+        .begin_text_turn(
+            "Try an unavailable model",
+            TurnOptions {
+                inference: Some(InferenceOverride::model("gpt-missing")),
+                ..TurnOptions::default()
+            },
+        )
+        .await;
+    assert!(matches!(
+        rejected,
+        Err(CodexError::UnsupportedTurnControls { .. })
+    ));
+    assert_eq!(writer.active_model(), Some("gpt-balanced"));
+    assert_eq!(writer.active_reasoning_effort(), Some("medium"));
+
+    let rejected = writer
+        .begin_text_turn(
+            "Try an unavailable reasoning effort",
+            TurnOptions {
+                inference: ReasoningEffort::new("ultra").map(InferenceOverride::reasoning_effort),
+                ..TurnOptions::default()
+            },
+        )
+        .await;
+    assert!(matches!(
+        rejected,
+        Err(CodexError::Server {
+            method: "turn/start",
+            ..
+        })
+    ));
+    assert_eq!(writer.active_reasoning_effort(), Some("medium"));
+
+    writer
+        .begin_text_turn(
+            "Use deeper reasoning",
+            TurnOptions {
+                inference: ReasoningEffort::new("high").map(InferenceOverride::reasoning_effort),
+                ..TurnOptions::default()
+            },
+        )
+        .await
+        .expect("the reasoning-effort-changing turn should start");
+    finish_fake_turn(&mut writer).await;
+    assert_eq!(writer.active_reasoning_effort(), Some("high"));
+
+    writer
+        .begin_text_turn(
+            "Use the faster model",
+            TurnOptions {
+                inference: ReasoningEffort::new("low")
+                    .map(|effort| InferenceOverride::selection("gpt-fast", effort)),
+                ..TurnOptions::default()
+            },
+        )
+        .await
+        .expect("the model-changing turn should start");
+    finish_fake_turn(&mut writer).await;
+    assert_eq!(writer.active_model(), Some("gpt-fast"));
+    assert_eq!(writer.active_reasoning_effort(), Some("low"));
+    writer.shutdown().await;
+
+    let (writer, _) = CodexThreadWriter::acquire_on(&source, cancellation, "thread-new")
+        .await
+        .expect("the thread should resume with its selected model");
+    assert_eq!(writer.active_model(), Some("gpt-fast"));
+    assert_eq!(writer.active_reasoning_effort(), Some("low"));
+    writer.shutdown().await;
+}
+
+#[tokio::test]
+async fn defaults_the_effort_when_a_model_only_override_rejects_the_active_effort() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let cancellation = CodexHistoryCancellation::new();
+    let (mut writer, _) = CodexThreadWriter::start_on(
+        &source,
+        cancellation.clone(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the public writer seam should start a thread");
+
+    writer
+        .begin_text_turn(
+            "Use deeper reasoning",
+            TurnOptions {
+                inference: ReasoningEffort::new("high").map(InferenceOverride::reasoning_effort),
+                ..TurnOptions::default()
+            },
+        )
+        .await
+        .expect("the reasoning-effort-changing turn should start");
+    finish_fake_turn(&mut writer).await;
+    assert_eq!(writer.active_reasoning_effort(), Some("high"));
+
+    writer
+        .begin_text_turn(
+            "Use the faster model",
+            TurnOptions {
+                inference: Some(InferenceOverride::model("gpt-fast")),
+                ..TurnOptions::default()
+            },
+        )
+        .await
+        .expect("the model-changing turn should start");
+    assert_eq!(writer.active_model(), Some("gpt-fast"));
+    assert_eq!(writer.active_reasoning_effort(), Some("low"));
+    finish_fake_turn(&mut writer).await;
+
+    writer.shutdown().await;
+
+    let (writer, _) = CodexThreadWriter::acquire_on(&source, cancellation, "thread-new")
+        .await
+        .expect("the thread should resume with the server's effective inference options");
+    assert_eq!(writer.active_model(), Some("gpt-fast"));
+    assert_eq!(writer.active_reasoning_effort(), Some("low"));
     writer.shutdown().await;
 }
 

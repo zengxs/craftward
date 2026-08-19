@@ -7,8 +7,8 @@ use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    CodexAppServerSource, CodexClient, CodexError, InteractionResponse, Thread, ThreadListOptions,
-    ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
+    CodexAppServerSource, CodexClient, CodexError, InteractionResponse, ModelCatalog, Thread,
+    ThreadListOptions, ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
 };
 
 /// A cloneable handle that interrupts in-flight Codex session operations.
@@ -69,7 +69,7 @@ pub enum ThreadPagePoll {
     Unchanged,
 }
 
-/// A reusable observer for persisted Codex history.
+/// A reusable observer for Codex model metadata and persisted history.
 ///
 /// The session owns one read-only app-server connection and retains the last
 /// successful page and conversation snapshots. If the app-server stream is
@@ -185,6 +185,21 @@ impl CodexHistorySession {
             thread_tracker: ThreadTracker::default(),
             page_tracker: ThreadPageTracker::default(),
         })
+    }
+
+    /// Loads the complete visible model catalog through this read-only session.
+    pub async fn load_model_catalog(&mut self) -> Result<ModelCatalog, CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        let result = self.client.list_models().await;
+        match result {
+            Err(error) if error.is_connection_lost() && !self.cancellation.is_cancelled() => {
+                self.reconnect().await?;
+                self.client.list_models().await
+            }
+            result => result,
+        }
     }
 
     /// Lists persisted threads and reports whether the complete page changed.
@@ -456,6 +471,18 @@ impl CodexThreadWriter {
     #[must_use]
     pub fn thread_id(&self) -> &str {
         &self.thread_id
+    }
+
+    /// Returns the active model reported for this thread writer.
+    #[must_use]
+    pub fn active_model(&self) -> Option<&str> {
+        self.client.active_model()
+    }
+
+    /// Returns the active reasoning effort reported for this thread writer.
+    #[must_use]
+    pub fn active_reasoning_effort(&self) -> Option<&str> {
+        self.client.active_reasoning_effort()
     }
 
     /// Starts a text turn without resuming again, preserving the writer lease

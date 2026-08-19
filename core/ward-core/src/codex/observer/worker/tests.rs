@@ -8,9 +8,10 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use ward_codex::{
     Activity, ActivityKind, ActivityStatus, CodexError, CodexHistoryCancellation,
-    InteractionDecision, InteractionId, InteractionResponse, InteractionResponseBody,
-    PendingInteraction, PendingInteractionKind, ThreadActiveFlag, ThreadItem, ThreadStreamEvent,
-    ThreadSubscription, Turn, TurnOptions, TurnStatus,
+    InferenceOverride, InteractionDecision, InteractionId, InteractionResponse,
+    InteractionResponseBody, PendingInteraction, PendingInteractionKind, ReasoningEffort,
+    ThreadActiveFlag, ThreadItem, ThreadStreamEvent, ThreadSubscription, Turn, TurnOptions,
+    TurnStatus,
 };
 use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions, FakeTurnScenario};
 
@@ -73,7 +74,7 @@ async fn starts_a_persisted_thread_and_adopts_its_writer() {
 
     {
         let captured = captured.lock().unwrap();
-        assert_eq!(captured.events.len(), 4);
+        assert_eq!(captured.events.len(), 5);
         assert_eq!(
             captured.events[0].kind,
             wire::HistoryEventKind::ThreadStarted as i32
@@ -87,16 +88,100 @@ async fn starts_a_persisted_thread_and_adopts_its_writer() {
         assert!(conversation.timeline.is_empty());
         assert_eq!(
             captured.events[1].kind,
+            wire::HistoryEventKind::ThreadModelChanged as i32
+        );
+        let Some(wire::history_event::Body::ThreadModelState(model_state)) =
+            captured.events[1].body.as_ref()
+        else {
+            panic!("the start event must report the thread model");
+        };
+        assert_eq!(model_state.model, "gpt-balanced");
+        assert_eq!(model_state.reasoning_effort.as_deref(), Some("medium"));
+        assert_eq!(
+            captured.events[2].kind,
             wire::HistoryEventKind::PendingInteractionsUpdated as i32
         );
         assert_eq!(
-            captured.events[2].kind,
+            captured.events[3].kind,
             wire::HistoryEventKind::ThreadRuntimeStateChanged as i32
         );
         assert_eq!(
-            captured.events[3].kind,
+            captured.events[4].kind,
             wire::HistoryEventKind::ThreadWriteStateChanged as i32
         );
+    }
+
+    state.shutdown().await;
+}
+
+#[tokio::test]
+async fn publishes_conversation_inference_changes_after_the_turn_is_accepted() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    captured.lock().unwrap().events.clear();
+    let (_commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+
+    let result = state
+        .run_turn(
+            TurnRequest {
+                thread_id: thread_id.clone(),
+                prompt: "Use the faster model".to_owned(),
+                options: TurnOptions {
+                    inference: ReasoningEffort::new("low")
+                        .map(|effort| InferenceOverride::selection("gpt-fast", effort)),
+                    ..TurnOptions::default()
+                },
+            },
+            &sink,
+            &mut receiver,
+            vec![],
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        OperationDrive::Completed {
+            output: true,
+            deferred: None,
+        }
+    ));
+    assert_eq!(
+        state
+            .writer
+            .as_ref()
+            .and_then(CodexThreadWriter::active_model),
+        Some("gpt-fast")
+    );
+    assert_eq!(
+        state
+            .writer
+            .as_ref()
+            .and_then(CodexThreadWriter::active_reasoning_effort),
+        Some("low")
+    );
+    {
+        let captured = captured.lock().unwrap();
+        let model_state = captured
+            .events
+            .iter()
+            .find_map(|event| match event.body.as_ref() {
+                Some(wire::history_event::Body::ThreadModelState(model_state)) => Some(model_state),
+                _ => None,
+            })
+            .expect("the accepted turn should publish the selected model");
+        assert_eq!(model_state.model, "gpt-fast");
+        assert_eq!(model_state.reasoning_effort.as_deref(), Some("low"));
     }
 
     state.shutdown().await;
@@ -219,8 +304,15 @@ async fn forks_the_loaded_idle_thread_through_the_selected_turn() {
                 .iter()
                 .all(|item| item.turn_id == "live-turn-1")
         );
+        let Some(wire::history_event::Body::ThreadModelState(model_state)) =
+            captured.events[1].body.as_ref()
+        else {
+            panic!("the fork should publish its inherited model");
+        };
+        assert_eq!(model_state.model, "gpt-balanced");
+        assert_eq!(model_state.reasoning_effort.as_deref(), Some("medium"));
         let Some(wire::history_event::Body::ThreadWriteState(write_state)) =
-            captured.events[3].body.as_ref()
+            captured.events[4].body.as_ref()
         else {
             panic!("the fork should publish its adopted writer state");
         };
@@ -602,6 +694,100 @@ async fn applies_history_scope_and_lifecycle_commands_through_the_observer_actor
         .await
         .unwrap();
     wait_for_thread_page(&captured, &mut event_cursor, true, &[]).await;
+
+    sender.send(ObserverCommand::Stop).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .expect("the observer should stop after its stop command")
+        .expect("the observer task should not panic");
+}
+
+#[tokio::test]
+async fn publishes_the_complete_model_catalog_when_the_observer_starts() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let cancellation = CodexHistoryCancellation::new();
+    let captured = Arc::new(Mutex::new(CapturedEvent::default()));
+    let sink = event_sink(&captured);
+    let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let worker = tokio::spawn(run_observer(
+        fake_app_server.source(),
+        receiver,
+        sink,
+        cancellation,
+        Arc::new(ObserverOperationGate::new()),
+    ));
+    let mut event_cursor = 0;
+
+    let event = wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::ModelCatalogUpdated,
+    )
+    .await;
+    assert_eq!(event.thread_id, None);
+    let Some(wire::history_event::Body::ModelCatalog(catalog)) = event.body else {
+        panic!("the model-catalog event should carry the complete catalog");
+    };
+    assert_eq!(catalog.models.len(), 2);
+    assert_eq!(catalog.models[0].model_id, "balanced");
+    assert_eq!(catalog.models[0].model, "gpt-balanced");
+    assert_eq!(catalog.models[0].default_reasoning_effort, "medium");
+    assert_eq!(
+        catalog.models[0].supported_reasoning_efforts[0].reasoning_effort,
+        "low"
+    );
+    assert_eq!(catalog.models[1].model_id, "fast");
+
+    sender.send(ObserverCommand::Stop).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .expect("the observer should stop after its stop command")
+        .expect("the observer task should not panic");
+}
+
+#[tokio::test]
+async fn reports_and_recovers_from_a_model_catalog_error_without_blocking_history() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        model_list_failures: 1,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let cancellation = CodexHistoryCancellation::new();
+    let captured = Arc::new(Mutex::new(CapturedEvent::default()));
+    let sink = event_sink(&captured);
+    let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let worker = tokio::spawn(run_observer(
+        fake_app_server.source(),
+        receiver,
+        sink,
+        cancellation,
+        Arc::new(ObserverOperationGate::new()),
+    ));
+    let mut event_cursor = 0;
+
+    wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::ThreadsUpdated,
+    )
+    .await;
+    let failed = wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::ModelCatalogError,
+    )
+    .await;
+    assert_eq!(failed.thread_id, None);
+    assert!(matches!(
+        failed.body,
+        Some(wire::history_event::Body::ErrorMessage(message))
+            if message.contains("model catalog is temporarily unavailable")
+    ));
+    wait_for_event_kind(
+        &captured,
+        &mut event_cursor,
+        wire::HistoryEventKind::ModelCatalogUpdated,
+    )
+    .await;
 
     sender.send(ObserverCommand::Stop).await.unwrap();
     tokio::time::timeout(Duration::from_secs(5), worker)

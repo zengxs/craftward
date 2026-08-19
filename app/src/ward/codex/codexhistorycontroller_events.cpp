@@ -12,6 +12,7 @@ CodexHistoryController::adoptConversation(const QString& threadId, const ward::c
     const bool wasLoading = std::exchange(loadingConversation_, false);
     selectedThreadId_ = threadId;
     selectedThreadTitle_ = conversation.title();
+    restoreConversationInferenceSelection();
     auto timeline = conversation.timeline();
     timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds());
     interactionModel_.clear();
@@ -31,6 +32,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
     using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKind;
 
     if (!decodingError.isEmpty()) {
+        if (loadingModelCatalog_)
+            finishModelCatalogLoading(decodingError);
         setSteeringTurn(false);
         if (startingThread_) {
             setThreadStartErrorMessage(decodingError);
@@ -57,6 +60,35 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             finishThreadLoading(message);
     };
     switch (event.kind()) {
+        case HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_UPDATED: {
+            if (!event.hasModelCatalog()) {
+                finishModelCatalogLoading(tr("Ward Core returned a model update without a catalog."));
+                break;
+            }
+            auto models = event.modelCatalog().models();
+            modelCatalogModel_.replaceModels(std::move(models));
+            reconcileThreadInferenceSelections();
+            emit conversationReasoningEffortsChanged();
+            finishModelCatalogLoading({});
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_ERROR: {
+            const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
+            finishModelCatalogLoading(message.isEmpty() ? tr("The Codex model catalog could not be loaded.") : message);
+            break;
+        }
+        case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_MODEL_CHANGED: {
+            if (threadId.isEmpty() || !event.hasThreadModelState() ||
+                event.threadModelState().model().trimmed().isEmpty()) {
+                if (threadId.isEmpty() || threadId == selectedThreadId_)
+                    setConversationErrorMessage(tr("Ward Core returned a thread model update without a model."));
+                break;
+            }
+            const auto& state = event.threadModelState();
+            applyThreadInferenceOptions(
+              threadId, state.model(), state.hasReasoningEffort() ? state.reasoningEffort() : QString());
+            break;
+        }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED: {
             if (!event.hasArchived()) {
                 rejectThreadListEvent(tr("Ward Core returned a thread update without its history scope."));

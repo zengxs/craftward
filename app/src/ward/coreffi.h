@@ -89,6 +89,8 @@ extern "C"
     bool ward_core_codex_history_observer_start_turn(WardCodexHistoryObserver* observer,
                                                      const char* thread_id,
                                                      const char* prompt,
+                                                     const char* model,
+                                                     const char* reasoning_effort,
                                                      WardCodexTurnMode turn_mode,
                                                      WardCodexPermissionPreset permission_preset,
                                                      WardError** error);

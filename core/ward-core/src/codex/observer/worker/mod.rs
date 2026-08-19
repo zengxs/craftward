@@ -168,6 +168,7 @@ struct ObserverState {
     session: Option<CodexHistorySession>,
     writer: Option<CodexThreadWriter>,
     thread_list_scope: ThreadListScope,
+    model_catalog_health: PollHealth,
     thread_page_health: PollHealth,
     conversation_health: PollHealth,
     initial_conversation_reads: InitialConversationReads,
@@ -205,6 +206,7 @@ impl ObserverState {
             session: None,
             writer: None,
             thread_list_scope: ThreadListScope::Active,
+            model_catalog_health: PollHealth::default(),
             thread_page_health: PollHealth::default(),
             conversation_health: PollHealth::default(),
             initial_conversation_reads: InitialConversationReads::default(),
@@ -225,6 +227,16 @@ impl ObserverState {
         if let Some(session) = self.session.as_mut() {
             session.reset_thread_baseline();
         }
+    }
+
+    fn emit_writer_model_state(&self, thread_id: &str, sink: &HistoryEventSink) {
+        let Some(writer) = self.writer.as_ref() else {
+            return;
+        };
+        let Some(model) = writer.active_model() else {
+            return;
+        };
+        sink.emit_thread_model_changed(thread_id, model, writer.active_reasoning_effort());
     }
 
     fn set_thread_list_scope(&mut self, scope: ThreadListScope) -> bool {
@@ -275,6 +287,7 @@ impl ObserverState {
                     thread,
                     self.live.forkable_turn_ids().to_vec(),
                 );
+                self.emit_writer_model_state(&thread_id, sink);
                 sink.emit_pending_interactions(&thread_id, std::iter::empty());
                 sink.emit_thread_runtime_state(&thread_id, self.live.runtime());
                 sink.emit_thread_write_state(&thread_id, wire::ThreadWriteStatus::Writable, None);
@@ -302,6 +315,7 @@ impl ObserverState {
             .as_ref()
             .is_some_and(|writer| writer.thread_id() == thread_id)
         {
+            self.emit_writer_model_state(thread_id, sink);
             sink.emit_thread_runtime_state(thread_id, self.live.runtime());
             sink.emit_thread_write_state(thread_id, wire::ThreadWriteStatus::Writable, None);
             return true;
@@ -329,6 +343,7 @@ impl ObserverState {
                 sink.emit_pending_interactions(thread_id, std::iter::empty());
                 sink.emit_thread_runtime_state(thread_id, self.live.runtime());
                 self.writer = Some(writer);
+                self.emit_writer_model_state(thread_id, sink);
                 sink.emit_thread_write_state(thread_id, wire::ThreadWriteStatus::Writable, None);
                 true
             }
@@ -372,12 +387,43 @@ impl ObserverState {
         }
     }
 
+    fn refresh_model_catalog(&mut self) {
+        self.model_catalog_health.reset();
+    }
+
     fn refresh(&mut self) {
         self.refresh_thread_page();
         self.conversation_health.reset();
         if let Some(session) = self.session.as_mut() {
             session.reset_thread_baseline();
         }
+    }
+
+    async fn load_model_catalog(&mut self, sink: &HistoryEventSink) -> bool {
+        let result = match self.ensure_session().await {
+            Ok(()) => {
+                self.session
+                    .as_mut()
+                    .expect("the history session was initialized above")
+                    .load_model_catalog()
+                    .await
+            }
+            Err(error) => Err(error),
+        }
+        .map(PollSample::Updated);
+        let effect = self
+            .model_catalog_health
+            .observe(result, self.cancellation.is_cancelled());
+        let succeeded = effect.is_successful();
+        match effect {
+            PollEffect::Updated(catalog) => sink.emit_model_catalog_updated(catalog),
+            PollEffect::Error(message) => sink.emit_model_catalog_error(&message),
+            PollEffect::Recovered
+            | PollEffect::Unchanged
+            | PollEffect::RepeatedError
+            | PollEffect::Cancelled => {}
+        }
+        succeeded
     }
 
     async fn rename_thread(
@@ -512,6 +558,7 @@ impl ObserverState {
                     thread,
                     self.live.forkable_turn_ids().to_vec(),
                 );
+                self.emit_writer_model_state(&forked_thread_id, sink);
                 sink.emit_pending_interactions(&forked_thread_id, std::iter::empty());
                 sink.emit_thread_runtime_state(&forked_thread_id, self.live.runtime());
                 sink.emit_thread_write_state(
@@ -891,6 +938,7 @@ impl ObserverState {
             prompt,
             options,
         } = request;
+        let inference_override_requested = options.inference.is_some();
         if !self
             .writer
             .as_ref()
@@ -951,6 +999,9 @@ impl ObserverState {
                 };
             }
         };
+        if inference_override_requested {
+            self.emit_writer_model_state(&thread_id, sink);
+        }
         let turn_id = match &event {
             ThreadStreamEvent::TurnStarted { turn, .. } => turn.id.clone(),
             _ => unreachable!("beginning a turn always produces its started event"),
@@ -1120,6 +1171,7 @@ pub(super) async fn run_observer(
 ) {
     let mut state = ObserverState::new(source, cancellation.clone());
     let mut watched_thread: Option<String> = None;
+    let mut model_catalog_due = Some(TokioInstant::now());
     let mut threads_due = TokioInstant::now();
     let mut conversation_due: Option<TokioInstant> = None;
     let mut live_emit_due: Option<TokioInstant> = None;
@@ -1148,6 +1200,23 @@ pub(super) async fn run_observer(
                     } else {
                         HISTORY_ERROR_RETRY_INTERVAL
                     };
+                deferred_update = deferred;
+            }
+            if deferred_update.is_none() && model_catalog_due.is_some_and(|due| now >= due) {
+                let OperationDrive::Completed {
+                    output: succeeded,
+                    deferred,
+                } = drive_operation(
+                    state.load_model_catalog(&sink),
+                    &mut receiver,
+                    &cancellation,
+                )
+                .await
+                else {
+                    break;
+                };
+                model_catalog_due =
+                    (!succeeded).then(|| TokioInstant::now() + HISTORY_ERROR_RETRY_INTERVAL);
                 deferred_update = deferred;
             }
 
@@ -1183,11 +1252,16 @@ pub(super) async fn run_observer(
         let drained = if let Some(update) = deferred_update.take() {
             Some(DrainedCommands::Update(update))
         } else {
-            let next_due = [Some(threads_due), conversation_due, live_emit_due]
-                .into_iter()
-                .flatten()
-                .min()
-                .expect("the thread poll always has a deadline");
+            let next_due = [
+                model_catalog_due,
+                Some(threads_due),
+                conversation_due,
+                live_emit_due,
+            ]
+            .into_iter()
+            .flatten()
+            .min()
+            .expect("the thread poll always has a deadline");
             let sleep = tokio::time::sleep_until(next_due);
             tokio::pin!(sleep);
             let wake = tokio::select! {
@@ -1295,7 +1369,9 @@ pub(super) async fn run_observer(
                         live_emit_due = None;
                     }
                     if refresh {
+                        state.refresh_model_catalog();
                         state.refresh();
+                        model_catalog_due = Some(now);
                         threads_due = now;
                         if watched_thread.is_some() {
                             conversation_due = Some(now);
@@ -1468,7 +1544,7 @@ pub(super) async fn run_observer(
                             output: succeeded,
                             deferred,
                         } = state
-                            .run_turn(request, &sink, &mut receiver, controls)
+                            .run_turn(*request, &sink, &mut receiver, controls)
                             .await
                         else {
                             break 'observer;

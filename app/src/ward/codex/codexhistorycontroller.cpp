@@ -70,6 +70,7 @@ static_assert(static_cast<int>(CodexHistoryController::PermissionPreset::ReadOnl
 CodexHistoryController::CodexHistoryController(const WardRuntime* runtime, QObject* parent)
   : QObject(parent)
   , threadModel_(this)
+  , modelCatalogModel_(this)
   , timelineModel_(this)
   , interactionModel_(this)
 {
@@ -86,10 +87,12 @@ CodexHistoryController::CodexHistoryController(const WardRuntime* runtime, QObje
     if (historyObserver_ == nullptr) {
         callbackContext_.reset();
         loadingThreads_ = false;
+        loadingModelCatalog_ = false;
         QString message = copyError(rawError);
         if (message.isEmpty())
             message = tr("The Codex history observer could not be started.");
         setThreadErrorMessage(message);
+        modelCatalogErrorMessage_ = message;
     }
 }
 
@@ -105,6 +108,12 @@ CodexThreadModel*
 CodexHistoryController::threads()
 {
     return &threadModel_;
+}
+
+CodexModelCatalogModel*
+CodexHistoryController::modelCatalog()
+{
+    return &modelCatalogModel_;
 }
 
 CodexTimelineModel*
@@ -138,6 +147,24 @@ CodexHistoryController::selectedThreadTitle() const
 }
 
 QString
+CodexHistoryController::conversationModel() const
+{
+    return conversationModel_;
+}
+
+QString
+CodexHistoryController::conversationReasoningEffort() const
+{
+    return conversationReasoningEffort_;
+}
+
+QVariantList
+CodexHistoryController::conversationReasoningEfforts() const
+{
+    return modelCatalogModel_.reasoningEffortsForModel(conversationModel_);
+}
+
+QString
 CodexHistoryController::errorMessage() const
 {
     return errorMessage_;
@@ -147,6 +174,18 @@ bool
 CodexHistoryController::loadingThreads() const
 {
     return loadingThreads_;
+}
+
+bool
+CodexHistoryController::loadingModelCatalog() const
+{
+    return loadingModelCatalog_;
+}
+
+QString
+CodexHistoryController::modelCatalogErrorMessage() const
+{
+    return modelCatalogErrorMessage_;
 }
 
 bool
@@ -287,7 +326,9 @@ CodexHistoryController::refresh()
     if (threadCreationInFlight() || turnInFlight())
         return;
     if (historyObserver_ == nullptr) {
-        setThreadErrorMessage(tr("The Codex history observer is unavailable."));
+        const QString message = tr("The Codex history observer is unavailable.");
+        setThreadErrorMessage(message);
+        finishModelCatalogLoading(message);
         if (!selectedThreadId_.isEmpty())
             setConversationErrorMessage(tr("The Codex history observer is unavailable."));
         return;
@@ -300,6 +341,10 @@ CodexHistoryController::refresh()
         loadingChanged = true;
     if (loadingChanged)
         emit this->loadingChanged();
+    const bool catalogStateChanged = !std::exchange(loadingModelCatalog_, true) || !modelCatalogErrorMessage_.isEmpty();
+    modelCatalogErrorMessage_.clear();
+    if (catalogStateChanged)
+        emit this->modelCatalogStateChanged();
 
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_refresh(historyObserver_, &rawError)) {
@@ -307,6 +352,7 @@ CodexHistoryController::refresh()
         if (message.isEmpty())
             message = tr("The Codex history could not be refreshed.");
         finishThreadLoading(message);
+        finishModelCatalogLoading(message);
         if (!selectedThreadId_.isEmpty())
             finishConversationLoading(message);
     }
@@ -363,6 +409,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     const QByteArray encodedThreadId = threadId.toUtf8();
     selectedThreadId_ = threadId;
     selectedThreadTitle_ = title;
+    restoreConversationInferenceSelection();
     timelineModel_.clear();
     interactionModel_.clear();
     setActivityHistoryPartial(false);
@@ -601,11 +648,15 @@ CodexHistoryController::startTurn(const QString& prompt)
 
     const QByteArray threadId = selectedThreadId_.toUtf8();
     const QByteArray encodedPrompt = prompt.toUtf8();
+    const QByteArray encodedModel = conversationModelOverride().toUtf8();
+    const QByteArray encodedReasoningEffort = conversationReasoningEffortOverride().toUtf8();
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_start_turn(
           historyObserver_,
           threadId.constData(),
           encodedPrompt.constData(),
+          encodedModel.isEmpty() ? nullptr : encodedModel.constData(),
+          encodedReasoningEffort.isEmpty() ? nullptr : encodedReasoningEffort.constData(),
           static_cast<WardCodexTurnMode>(static_cast<int>(turnMode_)),
           static_cast<WardCodexPermissionPreset>(static_cast<int>(permissionPreset_)),
           &rawError)) {
@@ -620,6 +671,128 @@ CodexHistoryController::startTurn(const QString& prompt)
     setInterruptRequested(false);
     setTurnState(TurnState::Starting);
     return true;
+}
+
+bool
+CodexHistoryController::selectConversationModel(const QString& model)
+{
+    if (selectedThreadId_.isEmpty() || showingArchived_ || turnInFlight() || !modelCatalogModel_.containsModel(model))
+        return false;
+
+    ThreadInferenceSelection& selection = threadInferenceSelections_[selectedThreadId_];
+    selection.selected.model = model;
+    selection.selected.reasoningEffort =
+      modelCatalogModel_.resolveReasoningEffort(model, selection.selected.reasoningEffort);
+    setDisplayedConversationModel(model);
+    setDisplayedConversationReasoningEffort(selection.selected.reasoningEffort);
+    return true;
+}
+
+bool
+CodexHistoryController::selectConversationReasoningEffort(const QString& effort)
+{
+    if (selectedThreadId_.isEmpty() || showingArchived_ || turnInFlight() ||
+        !modelCatalogModel_.supportsReasoningEffort(conversationModel_, effort))
+        return false;
+
+    ThreadInferenceSelection& selection = threadInferenceSelections_[selectedThreadId_];
+    selection.selected.reasoningEffort = effort;
+    setDisplayedConversationReasoningEffort(effort);
+    return true;
+}
+
+void
+CodexHistoryController::applyThreadInferenceOptions(const QString& threadId,
+                                                    const QString& model,
+                                                    const QString& reasoningEffort)
+{
+    ThreadInferenceSelection& selection = threadInferenceSelections_[threadId];
+    const bool hasPendingModel =
+      !selection.selected.model.isEmpty() && selection.selected.model != selection.active.model;
+    const bool hasPendingReasoningEffort = !selection.selected.reasoningEffort.isEmpty() &&
+                                           selection.selected.reasoningEffort != selection.active.reasoningEffort;
+    const bool hasPendingOverride = hasPendingModel || hasPendingReasoningEffort;
+    const QString normalizedReasoningEffort =
+      reasoningEffort.isEmpty() ? modelCatalogModel_.resolveReasoningEffort(model, {}) : reasoningEffort;
+    selection.active = { model, normalizedReasoningEffort };
+    const bool pendingOverrideWasAccepted =
+      selection.selected.model == model && selection.selected.reasoningEffort == normalizedReasoningEffort;
+    if (!hasPendingOverride || pendingOverrideWasAccepted) {
+        selection.selected = selection.active;
+    }
+    if (threadId == selectedThreadId_) {
+        setDisplayedConversationModel(selection.selected.model);
+        setDisplayedConversationReasoningEffort(selection.selected.reasoningEffort);
+    }
+}
+
+void
+CodexHistoryController::restoreConversationInferenceSelection()
+{
+    const auto selection = threadInferenceSelections_.constFind(selectedThreadId_);
+    const bool missing = selection == threadInferenceSelections_.cend();
+    setDisplayedConversationModel(missing ? QString() : selection->selected.model);
+    setDisplayedConversationReasoningEffort(missing ? QString() : selection->selected.reasoningEffort);
+}
+
+void
+CodexHistoryController::reconcileThreadInferenceSelections()
+{
+    for (ThreadInferenceSelection& selection : threadInferenceSelections_) {
+        if (selection.active.reasoningEffort.isEmpty())
+            selection.active.reasoningEffort = modelCatalogModel_.resolveReasoningEffort(selection.active.model, {});
+        if (selection.selected.model.isEmpty())
+            selection.selected.model = selection.active.model;
+        if (selection.selected.reasoningEffort.isEmpty()) {
+            selection.selected.reasoningEffort =
+              selection.selected.model == selection.active.model
+                ? selection.active.reasoningEffort
+                : modelCatalogModel_.resolveReasoningEffort(selection.selected.model, {});
+        }
+    }
+    restoreConversationInferenceSelection();
+}
+
+void
+CodexHistoryController::setDisplayedConversationModel(const QString& model)
+{
+    if (conversationModel_ == model)
+        return;
+    conversationModel_ = model;
+    emit conversationModelChanged();
+    emit conversationReasoningEffortsChanged();
+}
+
+void
+CodexHistoryController::setDisplayedConversationReasoningEffort(const QString& effort)
+{
+    if (conversationReasoningEffort_ == effort)
+        return;
+    conversationReasoningEffort_ = effort;
+    emit conversationReasoningEffortChanged();
+}
+
+QString
+CodexHistoryController::conversationModelOverride() const
+{
+    const auto selection = threadInferenceSelections_.constFind(selectedThreadId_);
+    if (selection == threadInferenceSelections_.cend() || selection->selected.model.isEmpty() ||
+        selection->selected.model == selection->active.model)
+        return {};
+    return selection->selected.model;
+}
+
+QString
+CodexHistoryController::conversationReasoningEffortOverride() const
+{
+    const auto selection = threadInferenceSelections_.constFind(selectedThreadId_);
+    if (selection == threadInferenceSelections_.cend() || selection->selected.reasoningEffort.isEmpty())
+        return {};
+    const bool modelChanges =
+      !selection->selected.model.isEmpty() && selection->selected.model != selection->active.model;
+    if (!modelChanges && selection->selected.reasoningEffort == selection->active.reasoningEffort)
+        return {};
+    return selection->selected.reasoningEffort;
 }
 
 bool
@@ -809,6 +982,8 @@ CodexHistoryController::clearSelection()
     const bool wasLoading = std::exchange(loadingConversation_, false);
     selectedThreadId_.clear();
     selectedThreadTitle_.clear();
+    setDisplayedConversationModel({});
+    setDisplayedConversationReasoningEffort({});
     timelineModel_.clear();
     interactionModel_.clear();
     setActivityHistoryPartial(false);
@@ -961,6 +1136,15 @@ CodexHistoryController::finishThreadLoading(const QString& errorMessage)
     setThreadErrorMessage(errorMessage);
     if (wasLoading)
         emit loadingChanged();
+}
+
+void
+CodexHistoryController::finishModelCatalogLoading(const QString& errorMessage)
+{
+    const bool changed = std::exchange(loadingModelCatalog_, false) || modelCatalogErrorMessage_ != errorMessage;
+    modelCatalogErrorMessage_ = errorMessage;
+    if (changed)
+        emit modelCatalogStateChanged();
 }
 
 void

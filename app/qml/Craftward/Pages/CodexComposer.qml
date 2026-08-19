@@ -45,6 +45,54 @@ Pane {
             spacing: 6
 
             Label {
+                text: qsTr("Model")
+                color: root.palette.placeholderText
+                font.pixelSize: 11
+            }
+
+            CodexModelSelector {
+                Layout.preferredWidth: 220
+                catalogModel: root.controller.modelCatalog
+                selectedModel: root.controller.conversationModel
+                loading: root.controller.loadingModelCatalog
+                errorMessage: root.controller.modelCatalogErrorMessage
+                selectionEnabled: !root.controller.turnInFlight && !root.controller.showingArchived
+                onModelSelected: model => root.controller.selectConversationModel(model)
+            }
+
+            Item {
+                Layout.fillWidth: true
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            Label {
+                text: qsTr("Reasoning")
+                color: root.palette.placeholderText
+                font.pixelSize: 11
+            }
+
+            CodexReasoningEffortSelector {
+                Layout.preferredWidth: 160
+                efforts: root.controller.conversationReasoningEfforts
+                selectedEffort: root.controller.conversationReasoningEffort
+                selectionEnabled: !root.controller.turnInFlight && !root.controller.showingArchived
+                onEffortSelected: effort => root.controller.selectConversationReasoningEffort(effort)
+            }
+
+            Item {
+                Layout.fillWidth: true
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            Label {
                 text: qsTr("Mode")
                 color: root.palette.placeholderText
                 font.pixelSize: 11

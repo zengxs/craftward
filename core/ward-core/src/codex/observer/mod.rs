@@ -11,8 +11,8 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task::JoinHandle;
 use ward_codex::{
-    CodexAppServerSource, CodexHistoryCancellation, InteractionResponse, TurnMode, TurnOptions,
-    TurnPermissionPreset,
+    CodexAppServerSource, CodexHistoryCancellation, InferenceOverride, InteractionResponse,
+    ReasoningEffort, TurnMode, TurnOptions, TurnPermissionPreset,
 };
 
 use self::commands::{
@@ -102,7 +102,7 @@ impl Drop for WardCodexHistoryObserver {
     }
 }
 
-/// Starts a background observer for persisted Codex history.
+/// Starts a background observer for Codex model metadata and persisted history.
 ///
 /// The callback receives a borrowed serialized event buffer from the observer
 /// thread. Its context must remain valid until
@@ -555,14 +555,19 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_release_write(
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` and `prompt` must
-/// point to NUL-terminated strings. `turn_mode` and `permission_preset` must
-/// use values declared by the private C interface. `output_error`, when
-/// non-null, must be writable.
+/// point to NUL-terminated strings. `model` may be null to preserve the
+/// thread's active model; otherwise it must point to a non-empty NUL-terminated
+/// string. `reasoning_effort` follows the same convention for the thread's
+/// active reasoning effort. `turn_mode` and `permission_preset` must use values
+/// declared by the private C interface. `output_error`, when non-null, must be
+/// writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     prompt: *const c_char,
+    model: *const c_char,
+    reasoning_effort: *const c_char,
     turn_mode: c_int,
     permission_preset: c_int,
     output_error: *mut *mut WardError,
@@ -590,13 +595,56 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
         unsafe { write_error(output_error, "the Codex prompt is empty") };
         return false;
     }
-    let options = match decode_turn_options(turn_mode, permission_preset) {
+    let model = if model.is_null() {
+        None
+    } else {
+        // SAFETY: The private C interface requires a non-null model pointer to
+        // name a NUL-terminated string.
+        let Some(model) = (unsafe { required_string(model, "the Codex model", output_error) })
+        else {
+            return false;
+        };
+        if model.trim().is_empty() {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex model is empty") };
+            return false;
+        }
+        Some(model)
+    };
+    let reasoning_effort = if reasoning_effort.is_null() {
+        None
+    } else {
+        // SAFETY: The private C interface requires a non-null reasoning-effort
+        // pointer to name a NUL-terminated string.
+        let Some(reasoning_effort) = (unsafe {
+            required_string(reasoning_effort, "the Codex reasoning effort", output_error)
+        }) else {
+            return false;
+        };
+        if reasoning_effort.trim().is_empty() {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex reasoning effort is empty") };
+            return false;
+        }
+        ReasoningEffort::new(reasoning_effort)
+    };
+    let mut options = match decode_turn_options(turn_mode, permission_preset) {
         Ok(options) => options,
         Err(message) => {
             // SAFETY: The caller supplied the optional error output pointer.
             unsafe { write_error(output_error, message) };
             return false;
         }
+    };
+    options.inference = match (model, reasoning_effort) {
+        (Some(model), Some(reasoning_effort)) => {
+            Some(InferenceOverride::selection(model, reasoning_effort))
+        }
+        (Some(model), None) => Some(InferenceOverride::model(model)),
+        (None, Some(reasoning_effort)) => {
+            Some(InferenceOverride::reasoning_effort(reasoning_effort))
+        }
+        (None, None) => None,
     };
 
     send_exclusive_command(
@@ -738,6 +786,7 @@ fn decode_turn_options(
     Ok(TurnOptions {
         mode,
         permission_preset,
+        inference: None,
     })
 }
 

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
@@ -15,21 +15,22 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app_server::{AppServerReader, AppServerShutdown, AppServerWriter};
 use crate::protocol::{
-    Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, ServerMessage,
-    THREAD_ARCHIVE_METHOD, THREAD_FORK_METHOD, THREAD_LIST_METHOD, THREAD_READ_METHOD,
-    THREAD_RESUME_METHOD, THREAD_SET_NAME_METHOD, THREAD_START_METHOD, THREAD_UNARCHIVE_METHOD,
-    TURN_INTERRUPT_METHOD, TURN_START_METHOD, TURN_STEER_METHOD, ThreadArchiveParams,
-    ThreadArchiveResponse, ThreadForkParams, ThreadForkResponse, ThreadListParams,
-    ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
-    ThreadResumeResponse, ThreadSetNameParams, ThreadSetNameResponse, ThreadStartParams,
-    ThreadStartResponse, ThreadUnarchiveParams, ThreadUnarchiveResponse, TurnInterruptParams,
-    TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnSteerParams, TurnSteerResponse,
-    interaction_result, pending_interaction, resolved_server_request, turn_stream_event,
+    Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, MODEL_LIST_METHOD,
+    ModelListParams, ModelListResponse, ServerMessage, THREAD_ARCHIVE_METHOD, THREAD_FORK_METHOD,
+    THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, THREAD_SET_NAME_METHOD,
+    THREAD_START_METHOD, THREAD_UNARCHIVE_METHOD, TURN_INTERRUPT_METHOD, TURN_START_METHOD,
+    TURN_STEER_METHOD, ThreadArchiveParams, ThreadArchiveResponse, ThreadForkParams,
+    ThreadForkResponse, ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse,
+    ThreadResumeParams, ThreadResumeResponse, ThreadSetNameParams, ThreadSetNameResponse,
+    ThreadStartParams, ThreadStartResponse, ThreadUnarchiveParams, ThreadUnarchiveResponse,
+    TurnInterruptParams, TurnInterruptResponse, TurnStartParams, TurnStartResponse,
+    TurnSteerParams, TurnSteerResponse, interaction_result, pending_interaction,
+    resolved_server_request, turn_stream_event,
 };
 use crate::{
-    CodexAppServerSource, CodexError, InteractionId, InteractionResponse, PendingInteraction,
-    ServerInfo, Thread, ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
-    TurnOptions,
+    CodexAppServerSource, CodexError, InteractionId, InteractionResponse, ModelCatalog,
+    PendingInteraction, ServerInfo, Thread, ThreadInferenceState, ThreadPage, ThreadStartOptions,
+    ThreadStreamEvent, ThreadSubscription, TurnOptions,
 };
 
 type AppServerConnection = Connection<BufReader<AppServerReader>, BufWriter<AppServerWriter>>;
@@ -235,7 +236,7 @@ pub struct CodexClient {
     server_info: ServerInfo,
     cancellation: CancellationToken,
     subscription_state: SubscriptionState,
-    subscribed_thread_model: Option<String>,
+    subscribed_thread_inference: ThreadInferenceState,
 }
 
 impl CodexClient {
@@ -243,6 +244,11 @@ impl CodexClient {
     /// completes the initialization handshake.
     pub async fn spawn(executable: impl AsRef<OsStr>) -> Result<Self, CodexError> {
         Self::spawn_with_cancellation(executable, CancellationToken::new()).await
+    }
+
+    /// Opens an initialized client through a reusable app-server source.
+    pub async fn connect(source: CodexAppServerSource) -> Result<Self, CodexError> {
+        Self::connect_with_cancellation(&source, CancellationToken::new()).await
     }
 
     pub(crate) async fn spawn_with_cancellation(
@@ -286,7 +292,7 @@ impl CodexClient {
                 server_info,
                 cancellation,
                 subscription_state: SubscriptionState::default(),
-                subscribed_thread_model: None,
+                subscribed_thread_inference: ThreadInferenceState::default(),
             }),
             Err(error) => {
                 shutdown.shutdown().await;
@@ -298,6 +304,49 @@ impl CodexClient {
     #[must_use]
     pub fn server_info(&self) -> &ServerInfo {
         &self.server_info
+    }
+
+    /// Returns the active model reported for the subscribed thread.
+    #[must_use]
+    pub fn active_model(&self) -> Option<&str> {
+        self.subscribed_thread_inference.model()
+    }
+
+    /// Returns the active reasoning effort reported for the subscribed thread.
+    #[must_use]
+    pub fn active_reasoning_effort(&self) -> Option<&str> {
+        self.subscribed_thread_inference.reasoning_effort()
+    }
+
+    /// Lists the complete visible model catalog in app-server order.
+    ///
+    /// Protocol pagination is consumed internally so callers always receive
+    /// one authoritative catalog snapshot.
+    pub async fn list_models(&mut self) -> Result<ModelCatalog, CodexError> {
+        let mut models = Vec::new();
+        let mut cursor = None;
+        let mut requested_cursors = HashSet::new();
+
+        loop {
+            let params = ModelListParams::visible(cursor.as_deref());
+            let response: ModelListResponse = self.request(MODEL_LIST_METHOD, &params).await?;
+            let (mut page, next_cursor) = response.into_parts();
+            models.append(&mut page);
+
+            let Some(next_cursor) = next_cursor else {
+                break;
+            };
+            if !requested_cursors.insert(next_cursor.clone()) {
+                return Err(CodexError::UnexpectedMessage {
+                    method: MODEL_LIST_METHOD,
+                    description: "the app-server repeated a model-list pagination cursor"
+                        .to_owned(),
+                });
+            }
+            cursor = Some(next_cursor);
+        }
+
+        Ok(ModelCatalog { models })
     }
 
     /// Lists persisted threads without triggering rollout scan-and-repair.
@@ -369,7 +418,7 @@ impl CodexClient {
                 },
             )
             .await?;
-        let (subscription, model) =
+        let (subscription, inference) =
             response
                 .into_parts()
                 .map_err(|source| CodexError::InvalidResponse {
@@ -377,7 +426,7 @@ impl CodexClient {
                     source,
                 })?;
         self.subscription_state.reset();
-        self.subscribed_thread_model = Some(model);
+        self.subscribed_thread_inference = inference;
         Ok(subscription)
     }
 
@@ -423,9 +472,9 @@ impl CodexClient {
             self.connection.take();
             shutdown_app_server(&mut self.shutdown).await;
         }
-        let (subscription, model) = result?;
+        let (subscription, inference) = result?;
         self.subscription_state.reset();
-        self.subscribed_thread_model = Some(model);
+        self.subscribed_thread_inference = inference;
         Ok(subscription)
     }
 
@@ -436,7 +485,7 @@ impl CodexClient {
     ) -> Result<ThreadSubscription, CodexError> {
         let params = ThreadResumeParams { thread_id };
         let response: ThreadResumeResponse = self.request(THREAD_RESUME_METHOD, &params).await?;
-        let (subscription, model) =
+        let (subscription, inference) =
             response
                 .into_parts()
                 .map_err(|source| CodexError::InvalidResponse {
@@ -444,7 +493,7 @@ impl CodexClient {
                     source,
                 })?;
         self.subscription_state.reset();
-        self.subscribed_thread_model = model;
+        self.subscribed_thread_inference = inference;
         Ok(subscription)
     }
 
@@ -453,23 +502,65 @@ impl CodexClient {
         &mut self,
         thread_id: &str,
         text: &str,
-        options: TurnOptions,
+        mut options: TurnOptions,
     ) -> Result<ThreadStreamEvent, CodexError> {
+        if let Some(selected_model) = options
+            .inference
+            .as_ref()
+            .and_then(crate::InferenceOverride::model_override)
+            .map(str::to_owned)
+            && options
+                .inference
+                .as_ref()
+                .and_then(crate::InferenceOverride::reasoning_effort_override)
+                .is_none()
+        {
+            let active_reasoning_effort = self
+                .subscribed_thread_inference
+                .reasoning_effort()
+                .map(str::to_owned);
+            let model = self
+                .list_models()
+                .await?
+                .models
+                .into_iter()
+                .find(|model| model.model == selected_model)
+                .ok_or_else(|| CodexError::UnsupportedTurnControls {
+                    description: format!(
+                        "the selected model is not in the visible catalog: {selected_model}"
+                    ),
+                })?;
+            let resolved_reasoning_effort =
+                model.resolve_reasoning_effort(active_reasoning_effort.as_deref());
+            options
+                .inference
+                .as_mut()
+                .expect("the model override was inspected above")
+                .set_reasoning_effort(resolved_reasoning_effort);
+        }
+        let active_inference = self.subscribed_thread_inference.clone();
+        let selected_inference = options.inference.clone();
         let connection = self
             .connection
             .as_mut()
             .ok_or(CodexError::UnexpectedEof(TURN_START_METHOD))?;
-        tokio::select! {
+        let result = tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => Err(CodexError::Interrupted),
             result = begin_text_turn_on_connection(
                 connection,
                 thread_id,
                 text,
-                self.subscribed_thread_model.as_deref(),
+                &active_inference,
                 options,
             ) => result,
+        };
+        if result.is_ok()
+            && let Some(inference) = selected_inference.as_ref()
+        {
+            self.subscribed_thread_inference.apply(inference);
         }
+        result
     }
 
     /// Waits for the next event on a connection subscribed to a thread.
@@ -585,7 +676,7 @@ async fn start_thread_on_connection<R, W>(
     connection: &mut Connection<R, W>,
     working_directory: &Path,
     options: ThreadStartOptions,
-) -> Result<(ThreadSubscription, String), CodexError>
+) -> Result<(ThreadSubscription, ThreadInferenceState), CodexError>
 where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -596,7 +687,7 @@ where
             &ThreadStartParams::new(working_directory, options),
         )
         .await?;
-    let (subscription, model, ephemeral) =
+    let (subscription, inference, ephemeral) =
         response
             .into_parts()
             .map_err(|source| CodexError::InvalidResponse {
@@ -609,21 +700,21 @@ where
             description: "the app-server did not confirm an ephemeral thread".to_owned(),
         });
     }
-    Ok((subscription, model))
+    Ok((subscription, inference))
 }
 
 async fn begin_text_turn_on_connection<R, W>(
     connection: &mut Connection<R, W>,
     thread_id: &str,
     text: &str,
-    model: Option<&str>,
+    active_inference: &ThreadInferenceState,
     options: TurnOptions,
 ) -> Result<ThreadStreamEvent, CodexError>
 where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let params = TurnStartParams::text(thread_id, text, model, options)?;
+    let params = TurnStartParams::text(thread_id, text, active_inference, &options)?;
     let response: TurnStartResponse = connection.request(TURN_START_METHOD, &params).await?;
     let turn = response
         .into_turn()
@@ -693,6 +784,7 @@ mod tests {
         let input = concat!(
             "{\"id\":1,\"result\":{",
             "\"model\":\"gpt-5.6-sol\",",
+            "\"reasoningEffort\":\"high\",",
             "\"thread\":{",
             "\"id\":\"thread-new\",\"name\":null,\"preview\":\"\",",
             "\"cwd\":\"/workspace\",\"createdAt\":10,\"updatedAt\":10,",
@@ -701,7 +793,7 @@ mod tests {
         );
         let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
 
-        let (subscription, model) = start_thread_on_connection(
+        let (subscription, inference) = start_thread_on_connection(
             &mut connection,
             Path::new("/workspace"),
             ThreadStartOptions::default(),
@@ -714,7 +806,8 @@ mod tests {
             subscription.runtime_status,
             crate::ThreadRuntimeStatus::Idle
         );
-        assert_eq!(model, "gpt-5.6-sol");
+        assert_eq!(inference.model(), Some("gpt-5.6-sol"));
+        assert_eq!(inference.reasoning_effort(), Some("high"));
         assert_eq!(
             String::from_utf8(connection.writer().clone()).unwrap(),
             "{\"id\":1,\"method\":\"thread/start\",\"params\":{\"cwd\":\"/workspace\"}}\n"
@@ -744,13 +837,14 @@ mod tests {
         let mut connection = Connection::new(BufReader::new(Cursor::new(input)), Vec::new());
         let mut subscription_state = SubscriptionState::default();
         let mut events = Vec::new();
+        let active_inference = ThreadInferenceState::default();
 
         events.push(
             begin_text_turn_on_connection(
                 &mut connection,
                 "thread-1",
                 "Continue",
-                None,
+                &active_inference,
                 TurnOptions::default(),
             )
             .await

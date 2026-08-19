@@ -17,6 +17,66 @@ using ThreadPage = ward::codex::v1::ThreadPage;
 using ThreadSummary = ward::codex::v1::ThreadSummary;
 using TimelineItem = ward::codex::v1::TimelineItem;
 
+HistoryEvent
+modelCatalogEvent()
+{
+    ward::codex::v1::ReasoningEffortOption low;
+    low.setReasoningEffort(QStringLiteral("low"));
+    low.setDescription(QStringLiteral("Faster responses"));
+    ward::codex::v1::ReasoningEffortOption medium;
+    medium.setReasoningEffort(QStringLiteral("medium"));
+    medium.setDescription(QStringLiteral("Balanced reasoning"));
+    ward::codex::v1::ReasoningEffortOption high;
+    high.setReasoningEffort(QStringLiteral("high"));
+    high.setDescription(QStringLiteral("Deeper reasoning"));
+
+    ward::codex::v1::ModelInfo model;
+    model.setModelId(QStringLiteral("balanced"));
+    model.setModel(QStringLiteral("gpt-balanced"));
+    model.setDisplayName(QStringLiteral("Balanced"));
+    model.setDescription(QStringLiteral("Balances capability and speed."));
+    model.setIsDefault(true);
+    model.setDefaultReasoningEffort(QStringLiteral("medium"));
+    model.setSupportedReasoningEfforts({ std::move(low), std::move(medium), std::move(high) });
+
+    ward::codex::v1::ReasoningEffortOption fastLow;
+    fastLow.setReasoningEffort(QStringLiteral("low"));
+    fastLow.setDescription(QStringLiteral("Faster responses"));
+    ward::codex::v1::ReasoningEffortOption fastMedium;
+    fastMedium.setReasoningEffort(QStringLiteral("medium"));
+    fastMedium.setDescription(QStringLiteral("Balanced reasoning"));
+    ward::codex::v1::ModelInfo fast;
+    fast.setModelId(QStringLiteral("fast"));
+    fast.setModel(QStringLiteral("gpt-fast"));
+    fast.setDisplayName(QStringLiteral("Fast"));
+    fast.setDescription(QStringLiteral("Optimized for quick iteration."));
+    fast.setDefaultReasoningEffort(QStringLiteral("low"));
+    fast.setSupportedReasoningEfforts({ std::move(fastLow), std::move(fastMedium) });
+
+    ward::codex::v1::ModelCatalog catalog;
+    catalog.setModels({ std::move(model), std::move(fast) });
+    HistoryEvent event;
+    event.setKind(HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_UPDATED);
+    event.setModelCatalog(std::move(catalog));
+    return event;
+}
+
+HistoryEvent
+threadModelEvent(const QString& model,
+                 const QString& threadId = QStringLiteral("thread-new"),
+                 const QString& reasoningEffort = {})
+{
+    ward::codex::v1::ThreadModelState state;
+    state.setModel(model);
+    if (!reasoningEffort.isEmpty())
+        state.setReasoningEffort(reasoningEffort);
+    HistoryEvent event;
+    event.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_MODEL_CHANGED);
+    event.setThreadId(threadId);
+    event.setThreadModelState(std::move(state));
+    return event;
+}
+
 TimelineItem
 messageItem(const QString& turnId, const QString& messageId, MessageRole role, MessagePhase phase, const QString& text)
 {
@@ -111,7 +171,112 @@ class CodexHistoryControllerTest : public QObject
     void rejectsUnscopedThreadRecoveryAndErrorEvents();
     void reportsDedicatedThreadLifecycleErrors();
     void keepsArchivedConversationsReadOnly();
+    void appliesModelCatalogUpdatesAndErrors();
+    void keepsInferenceSelectionScopedToTheConversationUntilAccepted();
 };
+
+void
+CodexHistoryControllerTest::appliesModelCatalogUpdatesAndErrors()
+{
+    CodexHistoryController controller(nullptr);
+
+    HistoryEvent error;
+    error.setKind(HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_ERROR);
+    error.setErrorMessage(QStringLiteral("Catalog unavailable"));
+    controller.applyHistoryEvent(std::move(error), {});
+
+    QVERIFY(!controller.loadingModelCatalog());
+    QCOMPARE(controller.modelCatalogErrorMessage(), QStringLiteral("Catalog unavailable"));
+
+    controller.applyHistoryEvent(modelCatalogEvent(), {});
+
+    QVERIFY(!controller.loadingModelCatalog());
+    QVERIFY(controller.modelCatalogErrorMessage().isEmpty());
+    CodexModelCatalogModel* catalog = controller.modelCatalog();
+    QCOMPARE(catalog->rowCount(), 2);
+    const QModelIndex index = catalog->index(0);
+    QCOMPARE(catalog->data(index, CodexModelCatalogModel::ModelIdRole).toString(), QStringLiteral("balanced"));
+    QCOMPARE(catalog->data(index, CodexModelCatalogModel::ModelRole).toString(), QStringLiteral("gpt-balanced"));
+    QCOMPARE(catalog->data(index, CodexModelCatalogModel::DisplayNameRole).toString(), QStringLiteral("Balanced"));
+    QCOMPARE(catalog->data(index, CodexModelCatalogModel::DescriptionRole).toString(),
+             QStringLiteral("Balances capability and speed."));
+    QVERIFY(catalog->data(index, CodexModelCatalogModel::DefaultRole).toBool());
+    QCOMPARE(catalog->data(index, CodexModelCatalogModel::DefaultReasoningEffortRole).toString(),
+             QStringLiteral("medium"));
+    const QVariantList efforts = catalog->data(index, CodexModelCatalogModel::SupportedReasoningEffortsRole).toList();
+    QCOMPARE(efforts.size(), 3);
+    QCOMPARE(efforts[0].toMap().value(QStringLiteral("reasoningEffort")).toString(), QStringLiteral("low"));
+    QCOMPARE(efforts[0].toMap().value(QStringLiteral("description")).toString(), QStringLiteral("Faster responses"));
+}
+
+void
+CodexHistoryControllerTest::keepsInferenceSelectionScopedToTheConversationUntilAccepted()
+{
+    CodexHistoryController controller(nullptr);
+    controller.applyHistoryEvent(modelCatalogEvent(), {});
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    QSignalSpy modelSpy(&controller, &CodexHistoryController::conversationModelChanged);
+    QSignalSpy effortSpy(&controller, &CodexHistoryController::conversationReasoningEffortChanged);
+
+    controller.applyHistoryEvent(threadModelEvent(QStringLiteral("gpt-balanced")), {});
+    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-balanced"));
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("medium"));
+    QCOMPARE(controller.conversationReasoningEfforts().size(), 3);
+    QCOMPARE(modelSpy.count(), 1);
+    QCOMPARE(effortSpy.count(), 1);
+
+    QVERIFY(controller.selectConversationReasoningEffort(QStringLiteral("high")));
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("high"));
+    QVERIFY(controller.selectConversationModel(QStringLiteral("gpt-fast")));
+    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
+    QCOMPARE(controller.conversationReasoningEfforts().size(), 2);
+    QCOMPARE(controller.conversationModelOverride(), QStringLiteral("gpt-fast"));
+    QCOMPARE(controller.conversationReasoningEffortOverride(), QStringLiteral("low"));
+    QCOMPARE(modelSpy.count(), 2);
+    QVERIFY(!controller.selectConversationModel(QStringLiteral("gpt-missing")));
+    QVERIFY(!controller.selectConversationReasoningEffort(QStringLiteral("high")));
+
+    controller.applyHistoryEvent(
+      threadModelEvent(QStringLiteral("gpt-balanced"), QStringLiteral("thread-new"), QStringLiteral("medium")), {});
+    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
+    QCOMPARE(modelSpy.count(), 2);
+
+    controller.applyHistoryEvent(
+      threadModelEvent(QStringLiteral("gpt-fast"), QStringLiteral("thread-new"), QStringLiteral("low")), {});
+    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
+    QCOMPARE(controller.conversationModelOverride(), QString());
+    QCOMPARE(controller.conversationReasoningEffortOverride(), QString());
+    QCOMPARE(modelSpy.count(), 2);
+
+    controller.applyHistoryEvent(
+      threadModelEvent(QStringLiteral("gpt-balanced"), QStringLiteral("thread-other"), QStringLiteral("low")), {});
+    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
+    controller.selectThread(QStringLiteral("thread-other"), QStringLiteral("Other conversation"));
+    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-balanced"));
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
+    QVERIFY(controller.selectConversationReasoningEffort(QStringLiteral("medium")));
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("medium"));
+    QCOMPARE(controller.conversationReasoningEffortOverride(), QStringLiteral("medium"));
+    controller.applyHistoryEvent(
+      threadModelEvent(QStringLiteral("gpt-balanced"), QStringLiteral("thread-other"), QStringLiteral("low")), {});
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("medium"));
+    controller.applyHistoryEvent(
+      threadModelEvent(QStringLiteral("gpt-balanced"), QStringLiteral("thread-other"), QStringLiteral("medium")), {});
+    QCOMPARE(controller.conversationReasoningEffortOverride(), QString());
+
+    controller.selectThread(QStringLiteral("thread-new"), QStringLiteral("New conversation"));
+    QCOMPARE(controller.conversationModel(), QStringLiteral("gpt-fast"));
+    QCOMPARE(controller.conversationReasoningEffort(), QStringLiteral("low"));
+
+    controller.clearSelection();
+    QVERIFY(controller.conversationModel().isEmpty());
+    QVERIFY(controller.conversationReasoningEffort().isEmpty());
+    QVERIFY(modelSpy.count() >= 4);
+    QVERIFY(effortSpy.count() >= 4);
+}
 
 void
 CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()

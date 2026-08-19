@@ -21,6 +21,28 @@ message ThreadSummary {
   int64 updated_at_unix_seconds = 6;
 }
 
+// The complete visible model catalog advertised by Codex.
+message ModelCatalog {
+  repeated ModelInfo models = 1;
+}
+
+// One model available for Codex conversations and turns.
+message ModelInfo {
+  string model_id = 1;
+  string model = 2;
+  string display_name = 3;
+  string description = 4;
+  bool is_default = 5;
+  string default_reasoning_effort = 6;
+  repeated ReasoningEffortOption supported_reasoning_efforts = 7;
+}
+
+// One reasoning-effort choice supported by a model.
+message ReasoningEffortOption {
+  string reasoning_effort = 1;
+  string description = 2;
+}
+
 // The displayable content of one persisted Codex thread.
 message Conversation {
   string title = 1;
@@ -65,6 +87,12 @@ enum HistoryEventKind {
   HISTORY_EVENT_KIND_THREAD_FORKED = 19;
   // Carries an error_message for the source thread when it could not be forked.
   HISTORY_EVENT_KIND_THREAD_FORK_ERROR = 20;
+  // Carries the complete visible model catalog.
+  HISTORY_EVENT_KIND_MODEL_CATALOG_UPDATED = 21;
+  // Carries an error_message when the model catalog could not be loaded.
+  HISTORY_EVENT_KIND_MODEL_CATALOG_ERROR = 22;
+  // Carries the active inference options reported for one writable thread.
+  HISTORY_EVENT_KIND_THREAD_MODEL_CHANGED = 23;
 }
 
 // The selected thread's writer availability for this Craftward observer.
@@ -106,7 +134,13 @@ message ThreadRuntimeState {
   repeated ThreadActiveFlag active_flags = 3;
 }
 
-// One event emitted by a Codex history and live-turn observer.
+// The inference options currently associated with one Codex thread writer.
+message ThreadModelState {
+  string model = 1;
+  optional string reasoning_effort = 2;
+}
+
+// One event emitted by a Codex app-server observer.
 message HistoryEvent {
   HistoryEventKind kind = 1;
   optional string thread_id = 2;
@@ -120,6 +154,8 @@ message HistoryEvent {
     ThreadWriteState thread_write_state = 6;
     ThreadRuntimeState thread_runtime_state = 7;
     PendingInteractionPage pending_interactions = 8;
+    ModelCatalog model_catalog = 10;
+    ThreadModelState thread_model_state = 11;
   }
 }
 

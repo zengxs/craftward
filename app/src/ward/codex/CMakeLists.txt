@@ -7,6 +7,8 @@ qt_add_qml_module(CraftwardCodex
         codexhistorycontroller.h
         codexinteractionmodel.cpp
         codexinteractionmodel.h
+        codexmodelcatalogmodel.cpp
+        codexmodelcatalogmodel.h
         codexthreadmodel.cpp
         codexthreadmodel.h
         codextimelinemodel.cpp

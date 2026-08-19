@@ -4,12 +4,15 @@
 #pragma once
 
 #include "codexinteractionmodel.h"
+#include "codexmodelcatalogmodel.h"
 #include "codexthreadmodel.h"
 #include "codextimelinemodel.h"
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QUrl>
+#include <QVariantList>
 #include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
 
@@ -32,13 +35,21 @@ class CodexHistoryController : public QObject
     QML_ELEMENT
     QML_UNCREATABLE("CodexHistoryController is provided by the application.")
     Q_PROPERTY(CodexThreadModel* threads READ threads CONSTANT)
+    Q_PROPERTY(CodexModelCatalogModel* modelCatalog READ modelCatalog CONSTANT)
     Q_PROPERTY(CodexTimelineModel* timeline READ timeline CONSTANT)
     Q_PROPERTY(CodexInteractionModel* interactions READ interactions CONSTANT)
     Q_PROPERTY(bool showingArchived READ showingArchived NOTIFY historyScopeChanged)
     Q_PROPERTY(QString selectedThreadId READ selectedThreadId NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedThreadTitle READ selectedThreadTitle NOTIFY selectionChanged)
+    Q_PROPERTY(QString conversationModel READ conversationModel NOTIFY conversationModelChanged)
+    Q_PROPERTY(
+      QString conversationReasoningEffort READ conversationReasoningEffort NOTIFY conversationReasoningEffortChanged)
+    Q_PROPERTY(QVariantList conversationReasoningEfforts READ conversationReasoningEfforts NOTIFY
+                 conversationReasoningEffortsChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool loadingThreads READ loadingThreads NOTIFY loadingChanged)
+    Q_PROPERTY(bool loadingModelCatalog READ loadingModelCatalog NOTIFY modelCatalogStateChanged)
+    Q_PROPERTY(QString modelCatalogErrorMessage READ modelCatalogErrorMessage NOTIFY modelCatalogStateChanged)
     Q_PROPERTY(bool loadingConversation READ loadingConversation NOTIFY loadingChanged)
     Q_PROPERTY(bool startingThread READ startingThread NOTIFY startingThreadChanged)
     Q_PROPERTY(bool forkingThread READ forkingThread NOTIFY forkingThreadChanged)
@@ -124,13 +135,19 @@ class CodexHistoryController : public QObject
     ~CodexHistoryController() override;
 
     [[nodiscard]] CodexThreadModel* threads();
+    [[nodiscard]] CodexModelCatalogModel* modelCatalog();
     [[nodiscard]] CodexTimelineModel* timeline();
     [[nodiscard]] CodexInteractionModel* interactions();
     [[nodiscard]] bool showingArchived() const;
     [[nodiscard]] QString selectedThreadId() const;
     [[nodiscard]] QString selectedThreadTitle() const;
+    [[nodiscard]] QString conversationModel() const;
+    [[nodiscard]] QString conversationReasoningEffort() const;
+    [[nodiscard]] QVariantList conversationReasoningEfforts() const;
     [[nodiscard]] QString errorMessage() const;
     [[nodiscard]] bool loadingThreads() const;
+    [[nodiscard]] bool loadingModelCatalog() const;
+    [[nodiscard]] QString modelCatalogErrorMessage() const;
     [[nodiscard]] bool loadingConversation() const;
     [[nodiscard]] bool startingThread() const;
     [[nodiscard]] bool forkingThread() const;
@@ -162,6 +179,8 @@ class CodexHistoryController : public QObject
     Q_INVOKABLE void acquireWriteAccess();
     Q_INVOKABLE void releaseWriteAccess();
     Q_INVOKABLE bool startTurn(const QString& prompt);
+    Q_INVOKABLE bool selectConversationModel(const QString& model);
+    Q_INVOKABLE bool selectConversationReasoningEffort(const QString& effort);
     Q_INVOKABLE bool steerTurn(const QString& prompt);
     Q_INVOKABLE bool interruptTurn();
     Q_INVOKABLE bool respondToApproval(const QString& interactionId, InteractionDecision decision);
@@ -171,8 +190,12 @@ class CodexHistoryController : public QObject
   signals:
     void historyScopeChanged();
     void selectionChanged();
+    void conversationModelChanged();
+    void conversationReasoningEffortChanged();
+    void conversationReasoningEffortsChanged();
     void errorMessageChanged();
     void loadingChanged();
+    void modelCatalogStateChanged();
     void startingThreadChanged();
     void forkingThreadChanged();
     void changingThreadLifecycleChanged();
@@ -202,6 +225,18 @@ class CodexHistoryController : public QObject
         bool waitingOnUserInput = false;
     };
 
+    struct InferenceState
+    {
+        QString model;
+        QString reasoningEffort;
+    };
+
+    struct ThreadInferenceSelection
+    {
+        InferenceState active;
+        InferenceState selected;
+    };
+
     static void handleHistoryEvent(void* context, const WardBuffer* event);
 
     void setErrorMessage(const QString& message);
@@ -222,16 +257,25 @@ class CodexHistoryController : public QObject
     void setSteeringTurn(bool steering);
     void setWriteAvailability(WriteAvailability availability, const QString& message = {});
     void setInterruptRequested(bool requested);
+    void applyThreadInferenceOptions(const QString& threadId, const QString& model, const QString& reasoningEffort);
+    void restoreConversationInferenceSelection();
+    void reconcileThreadInferenceSelections();
+    void setDisplayedConversationModel(const QString& model);
+    void setDisplayedConversationReasoningEffort(const QString& effort);
+    [[nodiscard]] QString conversationModelOverride() const;
+    [[nodiscard]] QString conversationReasoningEffortOverride() const;
     [[nodiscard]] bool threadCreationInFlight() const;
     [[nodiscard]] bool conversationMutationInFlight() const;
     bool sendInteractionResponse(const QString& interactionId,
                                  const ward::codex::v1::PendingInteractionResponse& response);
     void updateErrorMessage();
     void finishThreadLoading(const QString& errorMessage);
+    void finishModelCatalogLoading(const QString& errorMessage);
     void finishConversationLoading(const QString& errorMessage);
     void applyHistoryEvent(ward::codex::v1::HistoryEvent event, const QString& decodingError);
 
     CodexThreadModel threadModel_;
+    CodexModelCatalogModel modelCatalogModel_;
     CodexTimelineModel timelineModel_;
     CodexInteractionModel interactionModel_;
     WardCodexHistoryObserver* historyObserver_ = nullptr;
@@ -239,12 +283,17 @@ class CodexHistoryController : public QObject
     bool showingArchived_ = false;
     QString selectedThreadId_;
     QString selectedThreadTitle_;
+    QHash<QString, ThreadInferenceSelection> threadInferenceSelections_;
+    QString conversationModel_;
+    QString conversationReasoningEffort_;
     QString errorMessage_;
     QString threadErrorMessage_;
     QString threadStartErrorMessage_;
     QString conversationErrorMessage_;
     std::uint64_t observerGeneration_ = 0;
     bool loadingThreads_ = true;
+    bool loadingModelCatalog_ = true;
+    QString modelCatalogErrorMessage_;
     bool loadingConversation_ = false;
     bool startingThread_ = false;
     bool forkingThread_ = false;
