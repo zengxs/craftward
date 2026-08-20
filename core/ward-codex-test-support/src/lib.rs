@@ -50,6 +50,14 @@ pub struct FakeCodexAppServerOptions {
     pub lose_first_fork_response: bool,
     /// Number of initial model-list requests that return a temporary error.
     pub model_list_failures: usize,
+    /// Maximum number of thread summaries returned by one list request.
+    pub thread_list_page_size: Option<usize>,
+    /// Whether later thread-list pages repeat the previous boundary item.
+    pub overlap_thread_list_pages: bool,
+    /// Whether the first paginated thread-list response loses its connection.
+    pub lose_first_thread_list_continuation_response: bool,
+    /// Whether every thread-list page reports the same continuation cursor.
+    pub repeat_thread_list_cursor: bool,
     /// Behavior exercised by each started turn.
     pub turn_scenario: FakeTurnScenario,
 }
@@ -62,14 +70,28 @@ impl Default for FakeCodexAppServerOptions {
             renumber_persisted_first_turn: false,
             lose_first_fork_response: false,
             model_list_failures: 0,
+            thread_list_page_size: None,
+            overlap_thread_list_pages: false,
+            lose_first_thread_list_continuation_response: false,
+            repeat_thread_list_cursor: false,
             turn_scenario: FakeTurnScenario::default(),
         }
     }
 }
 
+/// One thread-list request observed by the fake app-server.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FakeThreadListRequest {
+    pub connection_id: u64,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+    pub archived: Option<bool>,
+}
+
 /// A stateful in-memory Codex app-server shared by independent connections.
 pub struct FakeCodexAppServer {
     source: CodexAppServerSource,
+    state: Arc<Mutex<FakeState>>,
 }
 
 impl FakeCodexAppServer {
@@ -77,13 +99,20 @@ impl FakeCodexAppServer {
     pub fn new(options: FakeCodexAppServerOptions) -> Self {
         let state = Arc::new(Mutex::new(FakeState::new(options)));
         Self {
-            source: CodexAppServerSource::with_connector(FakeConnector::new(state)),
+            source: CodexAppServerSource::with_connector(FakeConnector::new(Arc::clone(&state))),
+            state,
         }
     }
 
     #[must_use]
     pub fn source(&self) -> CodexAppServerSource {
         self.source.clone()
+    }
+
+    /// Returns the thread-list requests observed so far in arrival order.
+    #[must_use]
+    pub fn thread_list_requests(&self) -> Vec<FakeThreadListRequest> {
+        self.state.lock().unwrap().thread_list_requests.clone()
     }
 }
 

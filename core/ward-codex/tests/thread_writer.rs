@@ -424,6 +424,183 @@ async fn archives_and_restores_a_persisted_thread_through_the_public_history_ses
 }
 
 #[tokio::test]
+async fn polls_all_thread_pages_as_one_deduplicated_history_snapshot() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        thread_list_page_size: Some(2),
+        overlap_thread_list_pages: true,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let source = fake_app_server.source();
+    let (writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the source thread should start");
+    writer.shutdown().await;
+    for expected_id in ["thread-fork-1", "thread-fork-2"] {
+        let (writer, subscription) = CodexThreadWriter::fork_on(
+            &source,
+            CodexHistoryCancellation::new(),
+            "thread-new",
+            None,
+        )
+        .await
+        .expect("the source thread should fork");
+        assert_eq!(subscription.thread.summary.id, expected_id);
+        writer.shutdown().await;
+    }
+
+    let mut history = CodexHistorySession::connect(source)
+        .await
+        .expect("the public history session should connect");
+    let ThreadPagePoll::Baseline(page) = history
+        .poll_all_threads(&ThreadListOptions {
+            archived: Some(false),
+            ..ThreadListOptions::default()
+        })
+        .await
+        .expect("all active thread pages should load")
+    else {
+        panic!("the first complete history poll should establish a baseline");
+    };
+
+    assert_eq!(
+        page.threads
+            .iter()
+            .map(|thread| thread.id.as_str())
+            .collect::<Vec<_>>(),
+        ["thread-new", "thread-fork-1", "thread-fork-2"]
+    );
+    assert_eq!(page.next_cursor, None);
+    history.shutdown().await;
+}
+
+#[tokio::test]
+async fn rejects_a_repeated_thread_list_cursor_while_polling_complete_history() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        thread_list_page_size: Some(1),
+        repeat_thread_list_cursor: true,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let source = fake_app_server.source();
+    let (writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the source thread should start");
+    writer.shutdown().await;
+
+    let mut history = CodexHistorySession::connect(source)
+        .await
+        .expect("the public history session should connect");
+    let error = history
+        .poll_all_threads(&ThreadListOptions::default())
+        .await
+        .expect_err("a repeated continuation cursor must be rejected");
+
+    assert!(matches!(
+        error,
+        ward_codex::CodexError::UnexpectedMessage {
+            method: "thread/list",
+            description,
+        } if description == "the app-server repeated a thread-list pagination cursor"
+    ));
+    history.shutdown().await;
+}
+
+#[tokio::test]
+async fn retries_complete_history_from_the_first_page_after_a_lost_connection() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        thread_list_page_size: Some(1),
+        lose_first_thread_list_continuation_response: true,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let source = fake_app_server.source();
+    let (writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the source thread should start");
+    writer.shutdown().await;
+    let (writer, subscription) =
+        CodexThreadWriter::fork_on(&source, CodexHistoryCancellation::new(), "thread-new", None)
+            .await
+            .expect("the source thread should fork");
+    assert_eq!(subscription.thread.summary.id, "thread-fork-1");
+    writer.shutdown().await;
+
+    let mut history = CodexHistorySession::connect(source)
+        .await
+        .expect("the public history session should connect");
+    let original_options = ThreadListOptions {
+        cursor: Some("thread-list-offset-0".to_owned()),
+        limit: Some(1),
+        archived: Some(false),
+    };
+    let ThreadPagePoll::Baseline(page) = history
+        .poll_all_threads(&original_options)
+        .await
+        .expect("the complete history should reconnect and retry")
+    else {
+        panic!("the retried complete history should establish a baseline");
+    };
+
+    assert_eq!(
+        page.threads
+            .iter()
+            .map(|thread| thread.id.as_str())
+            .collect::<Vec<_>>(),
+        ["thread-new", "thread-fork-1"]
+    );
+    assert_eq!(page.next_cursor, None);
+    history.shutdown().await;
+
+    let requests = fake_app_server.thread_list_requests();
+    let [
+        first_page,
+        lost_continuation,
+        retried_first_page,
+        retried_continuation,
+    ] = requests.as_slice()
+    else {
+        panic!("the complete history retry should issue two requests per connection");
+    };
+    assert_eq!(first_page.connection_id, lost_continuation.connection_id);
+    assert_ne!(first_page.connection_id, retried_first_page.connection_id);
+    assert_eq!(
+        retried_first_page.connection_id,
+        retried_continuation.connection_id
+    );
+    assert_eq!(
+        [
+            first_page.cursor.as_deref(),
+            lost_continuation.cursor.as_deref(),
+            retried_first_page.cursor.as_deref(),
+            retried_continuation.cursor.as_deref(),
+        ],
+        [
+            Some("thread-list-offset-0"),
+            Some("thread-list-offset-1"),
+            Some("thread-list-offset-0"),
+            Some("thread-list-offset-1"),
+        ]
+    );
+    for request in requests {
+        assert_eq!(request.limit, original_options.limit);
+        assert_eq!(request.archived, original_options.archived);
+    }
+}
+
+#[tokio::test]
 async fn forks_through_a_completed_turn_and_continues_the_branch() {
     let fake_app_server = FakeCodexAppServer::default();
     let source = fake_app_server.source();

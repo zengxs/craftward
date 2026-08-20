@@ -19,7 +19,7 @@ use super::operation::OperationDrive;
 use super::polling::{InitialConversationReads, PollEffect, PollHealth, PollSample};
 use super::writer::{WriterRuntime, WriterStreamUpdate};
 
-const THREAD_PAGE_LIMIT: u32 = 100;
+const THREAD_LIST_PAGE_LIMIT: u32 = 100;
 
 pub(super) struct ObserverState {
     source: CodexAppServerSource,
@@ -464,7 +464,7 @@ impl ObserverState {
     }
 
     pub(super) async fn poll_threads(&mut self, sink: &HistoryEventSink) -> bool {
-        let result = self.poll_thread_page().await.map(|poll| match poll {
+        let result = self.poll_all_threads().await.map(|poll| match poll {
             ThreadPagePoll::Baseline(page) | ThreadPagePoll::Changed(page) => {
                 PollSample::Updated(page)
             }
@@ -576,13 +576,13 @@ impl ObserverState {
             .await
     }
 
-    pub(super) async fn poll_thread_page(&mut self) -> Result<ThreadPagePoll, CodexError> {
+    pub(super) async fn poll_all_threads(&mut self) -> Result<ThreadPagePoll, CodexError> {
         self.ensure_session().await?;
         self.session
             .as_mut()
             .expect("the history session was initialized above")
-            .poll_thread_page(&ThreadListOptions {
-                limit: Some(THREAD_PAGE_LIMIT),
+            .poll_all_threads(&ThreadListOptions {
+                limit: Some(THREAD_LIST_PAGE_LIMIT),
                 archived: Some(self.thread_list_scope.is_archived()),
                 ..ThreadListOptions::default()
             })

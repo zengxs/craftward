@@ -8,10 +8,10 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use ward_codex::{
     Activity, ActivityKind, ActivityStatus, CodexError, CodexHistoryCancellation,
-    CodexThreadWriter, InferenceOverride, InteractionDecision, InteractionId, InteractionResponse,
-    InteractionResponseBody, PendingInteraction, PendingInteractionKind, ReasoningEffort,
-    ThreadActiveFlag, ThreadItem, ThreadPoll, ThreadStartOptions, ThreadStreamEvent,
-    ThreadSubscription, Turn, TurnInput, TurnOptions, TurnStatus,
+    CodexHistorySession, CodexThreadWriter, InferenceOverride, InteractionDecision, InteractionId,
+    InteractionResponse, InteractionResponseBody, PendingInteraction, PendingInteractionKind,
+    ReasoningEffort, ThreadActiveFlag, ThreadItem, ThreadPoll, ThreadStartOptions,
+    ThreadStreamEvent, ThreadSubscription, Turn, TurnInput, TurnOptions, TurnStatus,
 };
 use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions, FakeTurnScenario};
 

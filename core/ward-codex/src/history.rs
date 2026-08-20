@@ -222,6 +222,30 @@ impl CodexHistorySession {
         Ok(self.page_tracker.record(page))
     }
 
+    /// Lists all matching persisted threads and reports whether the complete
+    /// history snapshot changed.
+    ///
+    /// Protocol pagination is consumed internally. If the connection is lost
+    /// while loading a later page, the complete snapshot is retried from the
+    /// original cursor through a newly initialized connection.
+    pub async fn poll_all_threads(
+        &mut self,
+        options: &ThreadListOptions,
+    ) -> Result<ThreadPagePoll, CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        let result = self.client.list_all_threads(options).await;
+        let page = match result {
+            Err(error) if error.is_connection_lost() && !self.cancellation.is_cancelled() => {
+                self.reconnect().await?;
+                self.client.list_all_threads(options).await?
+            }
+            result => result?,
+        };
+        Ok(self.page_tracker.record(page))
+    }
+
     /// Reads one thread and reports whether its complete snapshot changed.
     ///
     /// Polling a different thread establishes a new baseline. Failed polls do

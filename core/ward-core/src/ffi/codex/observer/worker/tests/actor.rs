@@ -70,6 +70,83 @@ async fn applies_history_scope_and_lifecycle_commands_through_the_observer_actor
 }
 
 #[tokio::test]
+async fn publishes_all_paginated_threads_for_active_and_archived_scopes() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        thread_list_page_size: Some(1),
+        ..FakeCodexAppServerOptions::default()
+    });
+    let source = fake_app_server.source();
+    let cancellation = CodexHistoryCancellation::new();
+    let working_directory = PathBuf::from("/workspace");
+    let (writer, _) = CodexThreadWriter::start_on(
+        &source,
+        cancellation.clone(),
+        &working_directory,
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the fake app-server should seed persisted history");
+    writer.shutdown().await;
+    for expected_id in ["thread-fork-1", "thread-fork-2", "thread-fork-3"] {
+        let (writer, subscription) =
+            CodexThreadWriter::fork_on(&source, cancellation.clone(), "thread-new", None)
+                .await
+                .expect("the seeded thread should fork");
+        assert_eq!(subscription.thread.summary.id, expected_id);
+        writer.shutdown().await;
+    }
+    let mut history = CodexHistorySession::connect(source.clone())
+        .await
+        .expect("the history session should connect");
+    for thread_id in ["thread-fork-2", "thread-fork-3"] {
+        history
+            .archive_thread(thread_id)
+            .await
+            .expect("the seeded thread should be archived");
+    }
+    history.shutdown().await;
+
+    let captured = Arc::new(Mutex::new(CapturedEvent::default()));
+    let sink = event_sink(&captured);
+    let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let worker = tokio::spawn(run_observer(
+        source,
+        receiver,
+        sink,
+        cancellation,
+        Arc::new(ObserverOperationGate::new()),
+    ));
+    let mut event_cursor = 0;
+
+    wait_for_thread_page(
+        &captured,
+        &mut event_cursor,
+        false,
+        &["thread-new", "thread-fork-1"],
+    )
+    .await;
+    sender
+        .send(ObserverCommand::SetThreadListScope(
+            ThreadListScope::Archived,
+        ))
+        .await
+        .unwrap();
+    wait_for_thread_page(
+        &captured,
+        &mut event_cursor,
+        true,
+        &["thread-fork-2", "thread-fork-3"],
+    )
+    .await;
+
+    sender.send(ObserverCommand::Stop).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .expect("the observer should stop after its stop command")
+        .expect("the observer task should not panic");
+}
+
+#[tokio::test]
 async fn publishes_the_complete_model_catalog_when_the_observer_starts() {
     let fake_app_server = FakeCodexAppServer::default();
     let cancellation = CodexHistoryCancellation::new();

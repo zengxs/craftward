@@ -155,7 +155,10 @@ fn handle_client_message(
             return thread_fork_response(id, &params, state, connection_id)
                 .map(|response| vec![response]);
         }
-        "thread/list" => vec![thread_list_response(id, &params, state)],
+        "thread/list" => {
+            return thread_list_response(id, &params, state, connection_id)
+                .map(|response| vec![response]);
+        }
         "thread/read" => vec![thread_read_response(id, &params, state)],
         "thread/start" => vec![thread_start_response(id, &params, state, connection_id)],
         "thread/resume" => vec![thread_resume_response(id, &params, state, connection_id)],

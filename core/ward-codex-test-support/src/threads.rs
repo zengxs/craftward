@@ -5,12 +5,14 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-use super::FakeCodexAppServerOptions;
 use super::catalog::{default_fake_model, fake_model};
 use super::state::{FakeState, FakeThread};
 use super::turns::{persisted_turn_id, turn_json};
+use super::{FakeCodexAppServerOptions, FakeThreadListRequest};
 
 const THREAD_ID: &str = "thread-new";
+const THREAD_LIST_CURSOR_PREFIX: &str = "thread-list-offset-";
+const REPEATED_THREAD_LIST_CURSOR: &str = "thread-list-repeated";
 
 fn requested_thread_mut<'a>(
     response_id: &Value,
@@ -107,19 +109,90 @@ pub(super) fn thread_list_response(
     id: Value,
     params: &Value,
     state: &Arc<Mutex<FakeState>>,
-) -> Value {
-    let state = state.lock().unwrap();
-    let archived = params
-        .get("archived")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let data = state
+    connection_id: u64,
+) -> Option<Value> {
+    let mut state = state.lock().unwrap();
+    let requested_archived = params.get("archived").and_then(Value::as_bool);
+    let requested_cursor = params
+        .get("cursor")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let requested_limit = params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|limit| u32::try_from(limit).ok());
+    let follows_request_on_same_connection = state
+        .thread_list_requests
+        .iter()
+        .any(|request| request.connection_id == connection_id);
+    state.thread_list_requests.push(FakeThreadListRequest {
+        connection_id,
+        cursor: requested_cursor.clone(),
+        limit: requested_limit,
+        archived: requested_archived,
+    });
+
+    let archived = requested_archived.unwrap_or(false);
+    let matching_threads = state
         .threads
         .iter()
         .filter(|thread| !thread.ephemeral && thread.archived == archived)
+        .collect::<Vec<_>>();
+    if follows_request_on_same_connection
+        && state.options.lose_first_thread_list_continuation_response
+    {
+        state.options.lose_first_thread_list_continuation_response = false;
+        return None;
+    }
+    let offset = match requested_cursor.as_deref() {
+        None => 0,
+        Some(REPEATED_THREAD_LIST_CURSOR) if state.options.repeat_thread_list_cursor => state
+            .options
+            .thread_list_page_size
+            .unwrap_or(matching_threads.len().max(1)),
+        Some(cursor) => {
+            let Some(offset) = cursor
+                .strip_prefix(THREAD_LIST_CURSOR_PREFIX)
+                .and_then(|offset| offset.parse::<usize>().ok())
+            else {
+                return Some(json!({
+                    "id": id,
+                    "error": {
+                        "code": -32600,
+                        "message": format!("unknown thread-list cursor: {cursor}")
+                    }
+                }));
+            };
+            offset
+        }
+    };
+    let requested_limit = requested_limit.and_then(|limit| usize::try_from(limit).ok());
+    let page_size = state
+        .options
+        .thread_list_page_size
+        .map(|page_size| requested_limit.map_or(page_size, |limit| limit.min(page_size)))
+        .or(requested_limit)
+        .unwrap_or(matching_threads.len().max(1))
+        .max(1);
+    let start = offset.min(matching_threads.len());
+    let end = start.saturating_add(page_size).min(matching_threads.len());
+    let data = matching_threads[start..end]
+        .iter()
         .map(|thread| thread_json(thread, state.options, true))
         .collect::<Vec<_>>();
-    json!({ "id": id, "result": { "data": data, "nextCursor": null } })
+    let next_cursor = if state.options.repeat_thread_list_cursor {
+        Some(REPEATED_THREAD_LIST_CURSOR.to_owned())
+    } else if end < matching_threads.len() {
+        let next_offset = if state.options.overlap_thread_list_pages && page_size > 1 {
+            end - 1
+        } else {
+            end
+        };
+        Some(format!("{THREAD_LIST_CURSOR_PREFIX}{next_offset}"))
+    } else {
+        None
+    };
+    Some(json!({ "id": id, "result": { "data": data, "nextCursor": next_cursor } }))
 }
 
 pub(super) fn thread_read_response(

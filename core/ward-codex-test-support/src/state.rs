@@ -3,13 +3,14 @@
 
 use serde_json::Value;
 
-use super::FakeCodexAppServerOptions;
+use super::{FakeCodexAppServerOptions, FakeThreadListRequest};
 
 pub(super) struct FakeState {
     pub(super) options: FakeCodexAppServerOptions,
     pub(super) threads: Vec<FakeThread>,
     pub(super) next_fork_number: usize,
     pub(super) next_connection_id: u64,
+    pub(super) thread_list_requests: Vec<FakeThreadListRequest>,
 }
 
 impl FakeState {
@@ -19,6 +20,7 @@ impl FakeState {
             threads: vec![],
             next_fork_number: 1,
             next_connection_id: 1,
+            thread_list_requests: vec![],
         }
     }
 }

@@ -367,6 +367,47 @@ impl CodexClient {
         })
     }
 
+    /// Lists all matching persisted threads in app-server order.
+    ///
+    /// Protocol pagination is consumed internally. Thread identifiers that
+    /// overlap adjacent pages are retained only at their first position, and
+    /// the returned snapshot has no continuation cursor.
+    pub async fn list_all_threads(
+        &mut self,
+        options: &ThreadListOptions,
+    ) -> Result<ThreadPage, CodexError> {
+        let mut page_options = options.clone();
+        let mut requested_cursors = page_options.cursor.iter().cloned().collect::<HashSet<_>>();
+        let mut seen_thread_ids = HashSet::new();
+        let mut threads = Vec::new();
+
+        loop {
+            let page = self.list_threads(&page_options).await?;
+            threads.extend(
+                page.threads
+                    .into_iter()
+                    .filter(|thread| seen_thread_ids.insert(thread.id.clone())),
+            );
+
+            let Some(next_cursor) = page.next_cursor else {
+                break;
+            };
+            if !requested_cursors.insert(next_cursor.clone()) {
+                return Err(CodexError::UnexpectedMessage {
+                    method: THREAD_LIST_METHOD,
+                    description: "the app-server repeated a thread-list pagination cursor"
+                        .to_owned(),
+                });
+            }
+            page_options.cursor = Some(next_cursor);
+        }
+
+        Ok(ThreadPage {
+            threads,
+            next_cursor: None,
+        })
+    }
+
     /// Reads one persisted thread, including its available turns and items.
     pub async fn read_thread(&mut self, thread_id: &str) -> Result<Thread, CodexError> {
         let params = ThreadReadParams {
