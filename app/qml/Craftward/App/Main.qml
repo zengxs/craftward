@@ -30,10 +30,13 @@ MainWindow {
         transientParent: null
     }
 
+    onBringAllWindowsToFrontRequested: root.applicationController.requestBringAllWindowsToFront()
     onCloseWindowRequested: root.applicationController.requestCloseActiveWindow()
+    onMinimizeActiveWindowRequested: root.applicationController.requestMinimizeActiveWindow()
     onQuitRequested: root.applicationController.requestQuit()
     onRealmManagerRequested: root.realmManagerWindow.present()
     onSettingsRequested: pageIndex => root.settingsWindow.present(pageIndex)
+    onZoomActiveWindowRequested: root.applicationController.requestZoomActiveWindow()
 
     Connections {
         target: root.applicationController

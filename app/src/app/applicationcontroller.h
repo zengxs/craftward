@@ -19,8 +19,11 @@ class ApplicationController : public QObject
   public:
     ApplicationController(QGuiApplication& application, RealmController& realmController, QObject* parent = nullptr);
 
+    Q_INVOKABLE void requestBringAllWindowsToFront();
     Q_INVOKABLE void requestCloseActiveWindow();
+    Q_INVOKABLE void requestMinimizeActiveWindow();
     Q_INVOKABLE void requestQuit();
+    Q_INVOKABLE void requestZoomActiveWindow();
 
   signals:
     void quitBlocked();

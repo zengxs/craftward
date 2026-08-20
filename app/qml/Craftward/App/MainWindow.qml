@@ -11,10 +11,13 @@ ApplicationWindow {
 
     required property CodexHistoryController codexHistoryController
 
+    signal bringAllWindowsToFrontRequested
     signal closeWindowRequested
+    signal minimizeActiveWindowRequested
     signal quitRequested
     signal realmManagerRequested
     signal settingsRequested(int pageIndex)
+    signal zoomActiveWindowRequested
 
     function present() {
         window.show();
@@ -67,7 +70,41 @@ ApplicationWindow {
         }
 
         Menu {
+            title: qsTr("Window")
+
+            Action {
+                text: qsTr("Minimize")
+                shortcut: "Ctrl+M"
+                onTriggered: window.minimizeActiveWindowRequested()
+            }
+
+            Action {
+                text: qsTr("Zoom")
+                onTriggered: window.zoomActiveWindowRequested()
+            }
+
+            MenuSeparator {}
+
+            Action {
+                text: qsTr("Bring All to Front")
+                onTriggered: window.bringAllWindowsToFrontRequested()
+            }
+        }
+
+        Menu {
             title: qsTr("Help")
+
+            Action {
+                text: qsTr("Craftward on GitHub")
+                onTriggered: Qt.openUrlExternally("https://github.com/zengxs/craftward")
+            }
+
+            Action {
+                text: qsTr("Report an Issue…")
+                onTriggered: Qt.openUrlExternally("https://github.com/zengxs/craftward/issues/new")
+            }
+
+            MenuSeparator {}
 
             Action {
                 text: qsTr("About Craftward")

@@ -3,6 +3,7 @@
 
 #include "applicationcontroller.h"
 #include "applicationiconprovider.h"
+#include "applicationmenus.h"
 #include "ward/codex/codexhistorycontroller.h"
 #include "ward/coreffierror.h"
 #include "ward/realm/realmcontroller.h"
@@ -116,6 +117,7 @@ main(int argc, char* argv[])
       Qt::QueuedConnection);
 
     engine.loadFromModule("Craftward.App", "Main");
+    registerNativeApplicationMenus();
 
     return app.exec();
 }

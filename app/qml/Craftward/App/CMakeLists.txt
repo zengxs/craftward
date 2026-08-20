@@ -1,6 +1,9 @@
 qt_add_executable(Craftward
     "${PROJECT_SOURCE_DIR}/src/app/applicationiconprovider.h"
+    "${PROJECT_SOURCE_DIR}/src/app/applicationmenus.h"
+    "${PROJECT_SOURCE_DIR}/src/app/macos/applicationcontroller.mm"
     "${PROJECT_SOURCE_DIR}/src/app/macos/applicationiconprovider.mm"
+    "${PROJECT_SOURCE_DIR}/src/app/macos/applicationmenus.mm"
     "${PROJECT_SOURCE_DIR}/src/app/main.cpp"
 )
 
