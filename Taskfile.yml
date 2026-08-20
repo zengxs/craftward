@@ -36,6 +36,7 @@ tasks:
     desc: Format source code
     cmds:
       - task: xtask:version:sync
+      - task: xtask:bindings:generate
       - task: format:clang
       - task: core:format:cargo
       - task: app:format:qml

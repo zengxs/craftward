@@ -16,12 +16,14 @@ use super::commands::{
     ThreadListScope, ThreadRenameRequest, TurnRequest,
 };
 use super::{
-    COMMAND_QUEUE_CAPACITY, ObserverOperation, ObserverOperationGate, TURN_ATTACHMENT_LOCAL_AUDIO,
-    TURN_ATTACHMENT_LOCAL_IMAGE, TURN_ATTACHMENT_MENTION, WardCodexHistoryObserver,
-    WardCodexTurnAttachment, decode_turn_options, ward_core_codex_history_observer_archive_thread,
-    ward_core_codex_history_observer_fork_thread, ward_core_codex_history_observer_rename_thread,
-    ward_core_codex_history_observer_restore_thread,
-    ward_core_codex_history_observer_show_archived, ward_core_codex_history_observer_start_turn,
+    COMMAND_QUEUE_CAPACITY, ObserverOperation, ObserverOperationGate, WardCodexHistoryObserver,
+    WardCodexPermissionPreset, WardCodexTurnAttachment, WardCodexTurnAttachmentKind,
+    WardCodexTurnMode, decode_turn_options, ward_core_codex_history_observer_archive_thread_async,
+    ward_core_codex_history_observer_fork_thread_async,
+    ward_core_codex_history_observer_rename_thread_async,
+    ward_core_codex_history_observer_restore_thread_async,
+    ward_core_codex_history_observer_show_archived_async,
+    ward_core_codex_history_observer_start_turn_async,
 };
 
 #[tokio::test]
@@ -41,7 +43,7 @@ async fn queues_a_thread_fork_through_the_private_c_interface() {
     // SAFETY: The observer, thread ID, and turn ID remain live for the duration
     // of the private C interface call, and the error output pointer is writable.
     assert!(unsafe {
-        ward_core_codex_history_observer_fork_thread(
+        ward_core_codex_history_observer_fork_thread_async(
             std::ptr::from_ref(&observer).cast_mut(),
             thread_id.as_ptr(),
             last_turn_id.as_ptr(),
@@ -77,7 +79,7 @@ async fn queues_conversation_inference_overrides_through_the_private_c_interface
     // SAFETY: The observer and strings remain live for the duration of the
     // private C interface call, and the error output pointer is writable.
     assert!(unsafe {
-        ward_core_codex_history_observer_start_turn(
+        ward_core_codex_history_observer_start_turn_async(
             std::ptr::from_ref(&observer).cast_mut(),
             thread_id.as_ptr(),
             prompt.as_ptr(),
@@ -85,8 +87,8 @@ async fn queues_conversation_inference_overrides_through_the_private_c_interface
             0,
             model.as_ptr(),
             reasoning_effort.as_ptr(),
-            0,
-            0,
+            WardCodexTurnMode::Default,
+            WardCodexPermissionPreset::Inherit,
             &mut error,
         )
     });
@@ -125,17 +127,17 @@ async fn queues_typed_attachments_through_the_private_c_interface() {
     let file_path = CString::new("/workspace/requirements.pdf").expect("the file path is valid");
     let attachments = [
         WardCodexTurnAttachment {
-            kind: TURN_ATTACHMENT_LOCAL_IMAGE,
+            kind: WardCodexTurnAttachmentKind::LocalImage,
             name: image_name.as_ptr(),
             path: image_path.as_ptr(),
         },
         WardCodexTurnAttachment {
-            kind: TURN_ATTACHMENT_LOCAL_AUDIO,
+            kind: WardCodexTurnAttachmentKind::LocalAudio,
             name: audio_name.as_ptr(),
             path: audio_path.as_ptr(),
         },
         WardCodexTurnAttachment {
-            kind: TURN_ATTACHMENT_MENTION,
+            kind: WardCodexTurnAttachmentKind::Mention,
             name: file_name.as_ptr(),
             path: file_path.as_ptr(),
         },
@@ -146,7 +148,7 @@ async fn queues_typed_attachments_through_the_private_c_interface() {
     // duration of the private C interface call, and the error output pointer
     // is writable.
     assert!(unsafe {
-        ward_core_codex_history_observer_start_turn(
+        ward_core_codex_history_observer_start_turn_async(
             std::ptr::from_ref(&observer).cast_mut(),
             thread_id.as_ptr(),
             prompt.as_ptr(),
@@ -154,8 +156,8 @@ async fn queues_typed_attachments_through_the_private_c_interface() {
             attachments.len(),
             std::ptr::null(),
             std::ptr::null(),
-            0,
-            0,
+            WardCodexTurnMode::Default,
+            WardCodexPermissionPreset::Inherit,
             &mut error,
         )
     });
@@ -203,28 +205,26 @@ fn reserves_only_one_observer_operation_at_a_time() {
 #[test]
 fn decodes_the_private_turn_control_values() {
     assert_eq!(
-        decode_turn_options(1, 1),
-        Ok(TurnOptions {
+        decode_turn_options(
+            WardCodexTurnMode::Plan,
+            WardCodexPermissionPreset::RequestApproval,
+        ),
+        TurnOptions {
             mode: TurnMode::Plan,
             permission_preset: TurnPermissionPreset::RequestApproval,
             inference: None,
-        })
+        }
     );
     assert_eq!(
-        decode_turn_options(0, 2),
-        Ok(TurnOptions {
+        decode_turn_options(
+            WardCodexTurnMode::Default,
+            WardCodexPermissionPreset::ReadOnly,
+        ),
+        TurnOptions {
             mode: TurnMode::Default,
             permission_preset: TurnPermissionPreset::ReadOnly,
             inference: None,
-        })
-    );
-    assert_eq!(
-        decode_turn_options(7, 0),
-        Err("the Codex turn mode is invalid")
-    );
-    assert_eq!(
-        decode_turn_options(0, 7),
-        Err("the Codex permission preset is invalid")
+        }
     );
 }
 
@@ -245,7 +245,7 @@ async fn queues_a_thread_rename_through_the_private_c_interface() {
     // SAFETY: The observer and strings remain live for the duration of the
     // private C interface call, and the error output pointer is writable.
     assert!(unsafe {
-        ward_core_codex_history_observer_rename_thread(
+        ward_core_codex_history_observer_rename_thread_async(
             std::ptr::from_ref(&observer).cast_mut(),
             thread_id.as_ptr(),
             name.as_ptr(),
@@ -282,21 +282,21 @@ async fn queues_history_scope_and_lifecycle_changes_through_the_private_c_interf
     // SAFETY: The observer and thread ID remain live for all private C
     // interface calls, and the error output pointer is writable.
     assert!(unsafe {
-        ward_core_codex_history_observer_show_archived(
+        ward_core_codex_history_observer_show_archived_async(
             std::ptr::from_ref(&observer).cast_mut(),
             true,
             &mut error,
         )
     });
     assert!(unsafe {
-        ward_core_codex_history_observer_archive_thread(
+        ward_core_codex_history_observer_archive_thread_async(
             std::ptr::from_ref(&observer).cast_mut(),
             thread_id.as_ptr(),
             &mut error,
         )
     });
     assert!(unsafe {
-        ward_core_codex_history_observer_restore_thread(
+        ward_core_codex_history_observer_restore_thread_async(
             std::ptr::from_ref(&observer).cast_mut(),
             thread_id.as_ptr(),
             &mut error,

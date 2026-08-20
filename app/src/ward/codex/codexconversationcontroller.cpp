@@ -5,8 +5,9 @@
 
 #include "ward/codex/codexattachmentinput.h"
 #include "ward/codex/codexhistorycontroller.h"
-#include "ward/coreffi.h"
 #include "ward/coreffierror.h"
+
+#include <ward_core.h>
 
 #include <QByteArray>
 #include <QtProtobuf/QProtobufSerializer>
@@ -325,7 +326,7 @@ CodexConversationController::acquireWriteAccess()
 
     const QByteArray threadId = threadId_.toUtf8();
     WardError* rawError = nullptr;
-    if (!ward_core_codex_history_observer_acquire_write(observer_, threadId.constData(), &rawError)) {
+    if (!ward_core_codex_history_observer_acquire_write_async(observer_, threadId.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("Writing access could not be checked for this conversation.");
@@ -349,7 +350,7 @@ CodexConversationController::releaseWriteAccess()
 
     const QByteArray threadId = threadId_.toUtf8();
     WardError* rawError = nullptr;
-    if (!ward_core_codex_history_observer_release_write(observer_, threadId.constData(), &rawError)) {
+    if (!ward_core_codex_history_observer_release_write_async(observer_, threadId.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("Writing access could not be released for this conversation.");
@@ -391,7 +392,7 @@ CodexConversationController::startTurn(const QString& prompt, const QList<QUrl>&
     const QByteArray encodedModel = modelOverride().toUtf8();
     const QByteArray encodedReasoningEffort = reasoningEffortOverride().toUtf8();
     WardError* rawError = nullptr;
-    if (!ward_core_codex_history_observer_start_turn(
+    if (!ward_core_codex_history_observer_start_turn_async(
           observer_,
           threadId.constData(),
           encodedPrompt.constData(),
@@ -581,7 +582,7 @@ CodexConversationController::steerTurn(const QString& prompt)
     const QByteArray turnId = activeTurnId().toUtf8();
     const QByteArray encodedPrompt = prompt.toUtf8();
     WardError* rawError = nullptr;
-    if (!ward_core_codex_history_observer_steer_turn(
+    if (!ward_core_codex_history_observer_steer_turn_async(
           observer_, threadId.constData(), turnId.constData(), encodedPrompt.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
@@ -604,7 +605,7 @@ CodexConversationController::interruptTurn()
 
     const QByteArray threadId = threadId_.toUtf8();
     WardError* rawError = nullptr;
-    if (!ward_core_codex_history_observer_interrupt_turn(observer_, threadId.constData(), &rawError)) {
+    if (!ward_core_codex_history_observer_interrupt_turn_async(observer_, threadId.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex turn could not be stopped.");
@@ -791,7 +792,7 @@ CodexConversationController::sendInteractionResponse(const QString& interactionI
     }
 
     WardError* rawError = nullptr;
-    if (!ward_core_codex_history_observer_resolve_interaction(
+    if (!ward_core_codex_history_observer_resolve_interaction_async(
           observer_,
           reinterpret_cast<const std::uint8_t*>(encoded.constData()),
           static_cast<std::size_t>(encoded.size()),

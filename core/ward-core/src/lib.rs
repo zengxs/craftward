@@ -23,30 +23,46 @@ use ward_realm_vz::{
 
 pub use runtime::WardRuntime;
 
-const WARD_REALM_STATE_STOPPED: i32 = 0;
-const WARD_REALM_STATE_RUNNING: i32 = 1;
-const WARD_REALM_STATE_PAUSED: i32 = 2;
-const WARD_REALM_STATE_ERROR: i32 = 3;
-const WARD_REALM_STATE_STARTING: i32 = 4;
-const WARD_REALM_STATE_PAUSING: i32 = 5;
-const WARD_REALM_STATE_RESUMING: i32 = 6;
-const WARD_REALM_STATE_STOPPING: i32 = 7;
-const WARD_REALM_STATE_SAVING: i32 = 8;
-const WARD_REALM_STATE_RESTORING: i32 = 9;
-const WARD_REALM_STATE_SUSPENDED: i32 = 10;
+/// A Realm lifecycle state passed through Ward Core's private C interface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub enum WardRealmState {
+    Stopped = 0,
+    Running = 1,
+    Paused = 2,
+    Error = 3,
+    Starting = 4,
+    Pausing = 5,
+    Resuming = 6,
+    Stopping = 7,
+    Saving = 8,
+    Restoring = 9,
+    Suspended = 10,
+}
 
 /// A lifecycle snapshot passed through Ward Core's private C interface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct WardRealmStatus {
-    state: i32,
-    can_start: bool,
-    can_pause: bool,
-    can_resume: bool,
-    can_request_stop: bool,
-    can_force_stop: bool,
-    can_suspend: bool,
-    can_restore: bool,
-    can_discard_saved_state: bool,
+    pub state: WardRealmState,
+    pub can_start: bool,
+    pub can_pause: bool,
+    pub can_resume: bool,
+    pub can_request_stop: bool,
+    pub can_force_stop: bool,
+    pub can_suspend: bool,
+    pub can_restore: bool,
+    pub can_discard_saved_state: bool,
+}
+
+/// A borrowed Realm lifecycle event passed to a Realm callback.
+///
+/// The event and optional error message remain valid only until the callback
+/// returns. The callback must copy anything it needs to retain.
+#[repr(C)]
+pub struct WardRealmEvent {
+    pub status: WardRealmStatus,
+    pub error_message: *const c_char,
 }
 
 /// An opaque realm handle passed through Ward Core's private C interface.
@@ -55,19 +71,29 @@ pub struct WardRealm {
     virtual_machine: MacOsVirtualMachine,
 }
 
-/// An owned error passed through Ward Core's private C interface.
+/// An owned immediate-call error passed through Ward Core's private C
+/// interface.
+///
+/// A caller that receives a non-null error owns it and must destroy it with
+/// [`ward_core_error_destroy`]. Final failures for accepted asynchronous
+/// operations are delivered through their event callback instead of this type.
 pub struct WardError {
     message: CString,
 }
 
-type WardRealmEvent = unsafe extern "C" fn(
-    context: *mut c_void,
-    status: *const WardRealmStatus,
-    error_message: *const c_char,
-);
+/// Receives borrowed Realm lifecycle events.
+///
+/// The callback may run on any thread and may run before
+/// [`ward_core_realm_open`] returns. `context` must remain valid until
+/// [`ward_core_realm_destroy`] returns. The callback must not destroy its Realm
+/// handle and must not unwind across the C interface.
+pub type WardRealmEventCallback =
+    Option<unsafe extern "C" fn(context: *mut c_void, event: *const WardRealmEvent)>;
+
+type WardRealmEventFn = unsafe extern "C" fn(context: *mut c_void, event: *const WardRealmEvent);
 
 struct RealmEventSink {
-    event: WardRealmEvent,
+    callback: WardRealmEventFn,
     context: *mut c_void,
 }
 
@@ -79,37 +105,34 @@ unsafe impl Send for RealmEventSink {}
 impl RealmEventSink {
     fn emit(&self, event: MacOsVirtualMachineEvent) {
         let status = ward_realm_status(event.status);
-        let error_message = event
-            .error
-            .map(|error| c_string(error.to_string()))
-            .map_or(std::ptr::null(), |message| message.into_raw().cast_const());
+        let error_message = event.error.map(|error| c_string(error.to_string()));
+        let event = WardRealmEvent {
+            status,
+            error_message: error_message
+                .as_ref()
+                .map_or(std::ptr::null(), |message| message.as_ptr()),
+        };
 
-        // SAFETY: The status and optional error string remain valid for this
-        // callback. The C consumer owns its context for the realm's lifetime.
-        unsafe { (self.event)(self.context, &raw const status, error_message) };
-
-        if !error_message.is_null() {
-            // SAFETY: `error_message` was allocated with `CString::into_raw`
-            // immediately above and the callback has returned.
-            drop(unsafe { CString::from_raw(error_message.cast_mut()) });
-        }
+        // SAFETY: The event and optional error string remain valid for this
+        // callback. The C consumer owns its context for the Realm's lifetime.
+        unsafe { (self.callback)(self.context, &raw const event) };
     }
 }
 
 fn ward_realm_status(status: MacOsVirtualMachineStatus) -> WardRealmStatus {
     let state = match status.state {
-        MacOsVirtualMachineState::Stopped => WARD_REALM_STATE_STOPPED,
-        MacOsVirtualMachineState::Running => WARD_REALM_STATE_RUNNING,
-        MacOsVirtualMachineState::Paused => WARD_REALM_STATE_PAUSED,
-        MacOsVirtualMachineState::Error => WARD_REALM_STATE_ERROR,
-        MacOsVirtualMachineState::Starting => WARD_REALM_STATE_STARTING,
-        MacOsVirtualMachineState::Pausing => WARD_REALM_STATE_PAUSING,
-        MacOsVirtualMachineState::Resuming => WARD_REALM_STATE_RESUMING,
-        MacOsVirtualMachineState::Stopping => WARD_REALM_STATE_STOPPING,
-        MacOsVirtualMachineState::Saving => WARD_REALM_STATE_SAVING,
-        MacOsVirtualMachineState::Restoring => WARD_REALM_STATE_RESTORING,
-        MacOsVirtualMachineState::Suspended => WARD_REALM_STATE_SUSPENDED,
-        _ => WARD_REALM_STATE_ERROR,
+        MacOsVirtualMachineState::Stopped => WardRealmState::Stopped,
+        MacOsVirtualMachineState::Running => WardRealmState::Running,
+        MacOsVirtualMachineState::Paused => WardRealmState::Paused,
+        MacOsVirtualMachineState::Error => WardRealmState::Error,
+        MacOsVirtualMachineState::Starting => WardRealmState::Starting,
+        MacOsVirtualMachineState::Pausing => WardRealmState::Pausing,
+        MacOsVirtualMachineState::Resuming => WardRealmState::Resuming,
+        MacOsVirtualMachineState::Stopping => WardRealmState::Stopping,
+        MacOsVirtualMachineState::Saving => WardRealmState::Saving,
+        MacOsVirtualMachineState::Restoring => WardRealmState::Restoring,
+        MacOsVirtualMachineState::Suspended => WardRealmState::Suspended,
+        _ => WardRealmState::Error,
     };
 
     WardRealmStatus {
@@ -143,12 +166,20 @@ unsafe fn write_error(output: *mut *mut WardError, message: impl AsRef<str>) {
     unsafe { *output = Box::into_raw(error) };
 }
 
+unsafe fn clear_error(output: *mut *mut WardError) {
+    if !output.is_null() {
+        // SAFETY: The C caller supplied a writable error output pointer.
+        unsafe { *output = std::ptr::null_mut() };
+    }
+}
+
 /// Opens an installed realm bundle without starting it.
 ///
 /// The event callback may run on any thread and may run before this function
-/// returns. Its string arguments are only valid for the duration of each call.
-/// The callback context must remain valid until [`ward_core_realm_destroy`]
-/// returns.
+/// returns. Its borrowed event remains valid only for the duration of each
+/// call. The callback context must remain valid until
+/// [`ward_core_realm_destroy`] returns, after which no more callbacks occur. If
+/// this function returns null, no callback occurs after the function returns.
 ///
 /// # Safety
 ///
@@ -158,15 +189,13 @@ unsafe fn write_error(output: *mut *mut WardError, message: impl AsRef<str>) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_realm_open(
     bundle_path: *const c_char,
-    event: Option<WardRealmEvent>,
-    event_context: *mut c_void,
+    callback: WardRealmEventCallback,
+    callback_context: *mut c_void,
     output_error: *mut *mut WardError,
 ) -> *mut WardRealm {
-    if !output_error.is_null() {
-        // SAFETY: The non-null pointer is writable by the C caller.
-        unsafe { *output_error = std::ptr::null_mut() };
-    }
-    let Some(event) = event else {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(callback) = callback else {
         // SAFETY: The caller supplied the optional output pointer.
         unsafe { write_error(output_error, "the realm event callback is missing") };
         return std::ptr::null_mut();
@@ -181,8 +210,8 @@ pub unsafe extern "C" fn ward_core_realm_open(
     let bundle_path = unsafe { CStr::from_ptr(bundle_path) };
     let bundle_path = PathBuf::from(bundle_path.to_string_lossy().into_owned());
     let sink = RealmEventSink {
-        event,
-        context: event_context,
+        callback,
+        context: callback_context,
     };
     match open_macos_realm(bundle_path, move |event| sink.emit(event)) {
         Ok(virtual_machine) => Box::into_raw(Box::new(WardRealm {
@@ -212,115 +241,178 @@ pub unsafe extern "C" fn ward_core_realm_destroy(realm: *mut WardRealm) {
     }
 }
 
-/// Enqueues a start command for a realm.
-///
-/// # Safety
-///
-/// `realm` must be null or a live handle returned by
-/// [`ward_core_realm_open`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_realm_start(realm: *mut WardRealm) {
+unsafe fn enqueue_realm_command(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+    command: fn(&MacOsVirtualMachine),
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
     // SAFETY: A non-null pointer names a live handle owned by the caller.
-    if let Some(realm) = unsafe { realm.as_ref() } {
-        realm.virtual_machine.start();
-    }
+    let Some(realm) = (unsafe { realm.as_ref() }) else {
+        // SAFETY: The caller supplied the optional output pointer.
+        unsafe { write_error(output_error, "the realm handle is missing") };
+        return false;
+    };
+    command(&realm.virtual_machine);
+    true
 }
 
-/// Enqueues a pause command for a realm.
+/// Queues a start command for a Realm.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Realm callback. A `false` return means immediate
+/// rejection, and `output_error` receives an owned error when non-null.
 ///
 /// # Safety
 ///
 /// `realm` must be null or a live handle returned by
-/// [`ward_core_realm_open`].
+/// [`ward_core_realm_open`]. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_realm_pause(realm: *mut WardRealm) {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
-    if let Some(realm) = unsafe { realm.as_ref() } {
-        realm.virtual_machine.pause();
-    }
+pub unsafe extern "C" fn ward_core_realm_start_async(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller satisfies the documented handle and output contract.
+    unsafe { enqueue_realm_command(realm, output_error, MacOsVirtualMachine::start) }
 }
 
-/// Enqueues a resume command for a realm.
+/// Queues a pause command for a Realm.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Realm callback. A `false` return means immediate
+/// rejection, and `output_error` receives an owned error when non-null.
 ///
 /// # Safety
 ///
 /// `realm` must be null or a live handle returned by
-/// [`ward_core_realm_open`].
+/// [`ward_core_realm_open`]. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_realm_resume(realm: *mut WardRealm) {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
-    if let Some(realm) = unsafe { realm.as_ref() } {
-        realm.virtual_machine.resume();
-    }
+pub unsafe extern "C" fn ward_core_realm_pause_async(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller satisfies the documented handle and output contract.
+    unsafe { enqueue_realm_command(realm, output_error, MacOsVirtualMachine::pause) }
 }
 
-/// Requests an orderly shutdown from a realm's guest.
+/// Queues a resume command for a Realm.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Realm callback. A `false` return means immediate
+/// rejection, and `output_error` receives an owned error when non-null.
 ///
 /// # Safety
 ///
 /// `realm` must be null or a live handle returned by
-/// [`ward_core_realm_open`].
+/// [`ward_core_realm_open`]. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_realm_request_stop(realm: *mut WardRealm) {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
-    if let Some(realm) = unsafe { realm.as_ref() } {
-        realm.virtual_machine.request_stop();
-    }
+pub unsafe extern "C" fn ward_core_realm_resume_async(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller satisfies the documented handle and output contract.
+    unsafe { enqueue_realm_command(realm, output_error, MacOsVirtualMachine::resume) }
 }
 
-/// Enqueues a destructive stop command for a realm.
+/// Queues an orderly shutdown request for a Realm guest.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Realm callback. A `false` return means immediate
+/// rejection, and `output_error` receives an owned error when non-null.
 ///
 /// # Safety
 ///
 /// `realm` must be null or a live handle returned by
-/// [`ward_core_realm_open`].
+/// [`ward_core_realm_open`]. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_realm_force_stop(realm: *mut WardRealm) {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
-    if let Some(realm) = unsafe { realm.as_ref() } {
-        realm.virtual_machine.force_stop();
-    }
+pub unsafe extern "C" fn ward_core_realm_request_stop_async(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller satisfies the documented handle and output contract.
+    unsafe { enqueue_realm_command(realm, output_error, MacOsVirtualMachine::request_stop) }
 }
 
-/// Saves a realm's runtime state and releases its virtual-machine resources.
+/// Queues a destructive stop command for a Realm.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Realm callback. A `false` return means immediate
+/// rejection, and `output_error` receives an owned error when non-null.
 ///
 /// # Safety
 ///
 /// `realm` must be null or a live handle returned by
-/// [`ward_core_realm_open`].
+/// [`ward_core_realm_open`]. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_realm_suspend(realm: *mut WardRealm) {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
-    if let Some(realm) = unsafe { realm.as_ref() } {
-        realm.virtual_machine.suspend();
-    }
+pub unsafe extern "C" fn ward_core_realm_force_stop_async(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller satisfies the documented handle and output contract.
+    unsafe { enqueue_realm_command(realm, output_error, MacOsVirtualMachine::force_stop) }
 }
 
-/// Restores and resumes a realm from its saved runtime state.
+/// Queues a command to save a Realm's runtime state and release its resources.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Realm callback. A `false` return means immediate
+/// rejection, and `output_error` receives an owned error when non-null.
 ///
 /// # Safety
 ///
 /// `realm` must be null or a live handle returned by
-/// [`ward_core_realm_open`].
+/// [`ward_core_realm_open`]. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_realm_restore(realm: *mut WardRealm) {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
-    if let Some(realm) = unsafe { realm.as_ref() } {
-        realm.virtual_machine.restore();
-    }
+pub unsafe extern "C" fn ward_core_realm_suspend_async(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller satisfies the documented handle and output contract.
+    unsafe { enqueue_realm_command(realm, output_error, MacOsVirtualMachine::suspend) }
 }
 
-/// Discards a stopped realm's saved runtime state.
+/// Queues a command to restore and resume a Realm from saved runtime state.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Realm callback. A `false` return means immediate
+/// rejection, and `output_error` receives an owned error when non-null.
 ///
 /// # Safety
 ///
 /// `realm` must be null or a live handle returned by
-/// [`ward_core_realm_open`].
+/// [`ward_core_realm_open`]. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_realm_discard_saved_state(realm: *mut WardRealm) {
-    // SAFETY: A non-null pointer names a live handle owned by the caller.
-    if let Some(realm) = unsafe { realm.as_ref() } {
-        realm.virtual_machine.discard_saved_state();
+pub unsafe extern "C" fn ward_core_realm_restore_async(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller satisfies the documented handle and output contract.
+    unsafe { enqueue_realm_command(realm, output_error, MacOsVirtualMachine::restore) }
+}
+
+/// Queues a command to discard a stopped Realm's saved runtime state.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Realm callback. A `false` return means immediate
+/// rejection, and `output_error` receives an owned error when non-null.
+///
+/// # Safety
+///
+/// `realm` must be null or a live handle returned by
+/// [`ward_core_realm_open`]. `output_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_realm_discard_saved_state_async(
+    realm: *mut WardRealm,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller satisfies the documented handle and output contract.
+    unsafe {
+        enqueue_realm_command(
+            realm,
+            output_error,
+            MacOsVirtualMachine::discard_saved_state,
+        )
     }
 }
 
@@ -339,10 +431,8 @@ pub unsafe extern "C" fn ward_core_realm_attach_display(
     realm: *mut WardRealm,
     output_error: *mut *mut WardError,
 ) -> *mut c_void {
-    if !output_error.is_null() {
-        // SAFETY: The non-null pointer is writable by the C caller.
-        unsafe { *output_error = std::ptr::null_mut() };
-    }
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
     // SAFETY: A non-null pointer names a live handle owned by the caller.
     let Some(realm) = (unsafe { realm.as_mut() }) else {
         // SAFETY: The caller supplied the optional output pointer.
@@ -407,5 +497,116 @@ pub unsafe extern "C" fn ward_core_error_destroy(error: *mut WardError) {
     if !error.is_null() {
         // SAFETY: The caller transfers an error handle exactly once.
         drop(unsafe { Box::from_raw(error) });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::{CStr, c_void};
+
+    use ward_realm_vz::{MacOsVirtualMachineError, MacOsVirtualMachineEvent};
+
+    use super::{
+        RealmEventSink, WardError, WardRealm, WardRealmEvent, WardRealmState,
+        ward_core_error_destroy, ward_core_error_message,
+        ward_core_realm_discard_saved_state_async, ward_core_realm_force_stop_async,
+        ward_core_realm_pause_async, ward_core_realm_request_stop_async,
+        ward_core_realm_restore_async, ward_core_realm_resume_async, ward_core_realm_start_async,
+        ward_core_realm_suspend_async,
+    };
+
+    struct CapturedRealmEvent {
+        state: WardRealmState,
+        error_message: String,
+    }
+
+    unsafe extern "C" fn capture_realm_event(context: *mut c_void, event: *const WardRealmEvent) {
+        // SAFETY: The test passes live pointers to both values for the duration
+        // of this callback.
+        let captured = unsafe { &mut *context.cast::<Option<CapturedRealmEvent>>() };
+        // SAFETY: The Realm event sink supplies a live borrowed event.
+        let event = unsafe { &*event };
+        let error_message = if event.error_message.is_null() {
+            String::new()
+        } else {
+            // SAFETY: The Realm event sink keeps the NUL-terminated message
+            // alive until this callback returns.
+            unsafe { CStr::from_ptr(event.error_message) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        *captured = Some(CapturedRealmEvent {
+            state: event.status.state,
+            error_message,
+        });
+    }
+
+    #[test]
+    fn realm_event_callback_receives_a_borrowed_error_payload() {
+        let mut captured: Option<CapturedRealmEvent> = None;
+        let sink = RealmEventSink {
+            callback: capture_realm_event,
+            context: std::ptr::from_mut(&mut captured).cast(),
+        };
+
+        sink.emit(MacOsVirtualMachineEvent {
+            status: ward_realm_vz::MacOsVirtualMachineStatus {
+                state: ward_realm_vz::MacOsVirtualMachineState::Error,
+                can_start: false,
+                can_pause: false,
+                can_resume: false,
+                can_request_stop: false,
+                can_force_stop: true,
+                can_suspend: false,
+                can_restore: false,
+                can_discard_saved_state: false,
+            },
+            error: Some(MacOsVirtualMachineError::Native {
+                domain: "app.craftward.tests".to_owned(),
+                code: 7,
+                message: "the Realm command failed".to_owned(),
+            }),
+        });
+
+        let captured = captured.expect("the Realm callback should receive the event");
+        assert_eq!(captured.state, WardRealmState::Error);
+        assert_eq!(
+            captured.error_message,
+            "the Realm command failed (app.craftward.tests, code 7)"
+        );
+    }
+
+    #[test]
+    fn realm_async_commands_return_owned_immediate_errors() {
+        type RealmCommand = unsafe extern "C" fn(*mut WardRealm, *mut *mut WardError) -> bool;
+        let commands: [RealmCommand; 8] = [
+            ward_core_realm_start_async,
+            ward_core_realm_pause_async,
+            ward_core_realm_resume_async,
+            ward_core_realm_request_stop_async,
+            ward_core_realm_force_stop_async,
+            ward_core_realm_suspend_async,
+            ward_core_realm_restore_async,
+            ward_core_realm_discard_saved_state_async,
+        ];
+
+        for command in commands {
+            let mut error = std::ptr::null_mut();
+            // SAFETY: A null Realm is an explicitly supported rejection case,
+            // and the error output pointer is writable.
+            assert!(!unsafe { command(std::ptr::null_mut(), &mut error) });
+            assert!(!error.is_null());
+            // SAFETY: The command returned a live owned Ward error.
+            let message = unsafe { ward_core_error_message(error) };
+            assert!(!message.is_null());
+            // SAFETY: The message is borrowed from the live error and is
+            // NUL-terminated.
+            assert_eq!(
+                unsafe { CStr::from_ptr(message) }.to_string_lossy(),
+                "the realm handle is missing"
+            );
+            // SAFETY: The test transfers each returned error exactly once.
+            unsafe { ward_core_error_destroy(error) };
+        }
     }
 }

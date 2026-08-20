@@ -57,6 +57,7 @@ target_link_libraries(Craftward
         Qt6::QuickControls2
         Qt6::QuickDialogs2
         Qt6::Svg
+        Ward::Core
         "${CRAFTWARD_APPKIT_FRAMEWORK}"
 )
 

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_char, c_void};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -21,8 +21,8 @@ use self::commands::{
 };
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
-use super::{WardBuffer, clear_error, required_string, wire};
-use crate::{WardError, write_error};
+use super::{WardBuffer, required_string, wire};
+use crate::{WardError, clear_error, write_error};
 
 mod commands;
 mod events;
@@ -34,16 +34,44 @@ mod test_support;
 mod tests;
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const TURN_ATTACHMENT_LOCAL_IMAGE: c_int = 0;
-const TURN_ATTACHMENT_LOCAL_AUDIO: c_int = 1;
-const TURN_ATTACHMENT_MENTION: c_int = 2;
+
+/// A Codex turn mode passed through Ward Core's private C interface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
+#[allow(dead_code)] // The variants are constructed by callers across the C interface.
+pub enum WardCodexTurnMode {
+    Default = 0,
+    Plan = 1,
+}
+
+/// A Codex turn permission preset passed through Ward Core's private C
+/// interface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
+#[allow(dead_code)] // The variants are constructed by callers across the C interface.
+pub enum WardCodexPermissionPreset {
+    Inherit = 0,
+    RequestApproval = 1,
+    ReadOnly = 2,
+}
+
+/// A Codex turn attachment kind passed through Ward Core's private C
+/// interface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
+#[allow(dead_code)] // The variants are constructed by callers across the C interface.
+pub enum WardCodexTurnAttachmentKind {
+    LocalImage = 0,
+    LocalAudio = 1,
+    Mention = 2,
+}
 
 /// One typed local attachment borrowed through Ward Core's private C interface.
 #[repr(C)]
 pub struct WardCodexTurnAttachment {
-    kind: c_int,
-    name: *const c_char,
-    path: *const c_char,
+    pub kind: WardCodexTurnAttachmentKind,
+    pub name: *const c_char,
+    pub path: *const c_char,
 }
 
 #[derive(Clone, Copy)]
@@ -90,8 +118,18 @@ impl ObserverOperationGate {
     }
 }
 
-type WardCodexHistoryEventCallback =
-    unsafe extern "C" fn(context: *mut c_void, event: *const WardBuffer);
+/// Receives borrowed serialized Codex history events.
+///
+/// The callback may run on any Ward runtime thread and may run before
+/// [`ward_core_codex_history_observer_open`] returns. `event` remains valid
+/// only until the callback returns, and `context` must remain valid until
+/// [`ward_core_codex_history_observer_destroy`] returns. If opening fails, no
+/// callback occurs after the open function returns. The callback must not
+/// destroy its observer and must not unwind across the C interface.
+pub type WardCodexHistoryEventCallback =
+    Option<unsafe extern "C" fn(context: *mut c_void, event: *const WardBuffer)>;
+
+type WardCodexHistoryEventFn = unsafe extern "C" fn(context: *mut c_void, event: *const WardBuffer);
 
 /// An opaque asynchronous Codex history observer passed through Ward Core's
 /// private C interface.
@@ -129,7 +167,7 @@ impl Drop for WardCodexHistoryObserver {
 pub unsafe extern "C" fn ward_core_codex_history_observer_open(
     runtime: *const crate::WardRuntime,
     executable: *const c_char,
-    callback: Option<WardCodexHistoryEventCallback>,
+    callback: WardCodexHistoryEventCallback,
     callback_context: *mut c_void,
     output_error: *mut *mut WardError,
 ) -> *mut WardCodexHistoryObserver {
@@ -185,13 +223,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
 ///
 /// The first successful read is emitted immediately as an updated event.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
 /// NUL-terminated string. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_watch(
+pub unsafe extern "C" fn ward_core_codex_history_observer_watch_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     output_error: *mut *mut WardError,
@@ -218,13 +261,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_watch(
 /// The next successful list read is emitted as a scope-tagged authoritative
 /// snapshot.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `output_error`, when non-null,
 /// must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_show_archived(
+pub unsafe extern "C" fn ward_core_codex_history_observer_show_archived_async(
     observer: *mut WardCodexHistoryObserver,
     archived: bool,
     output_error: *mut *mut WardError,
@@ -253,13 +301,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_show_archived(
 /// Updated thread and conversation snapshots are emitted asynchronously after
 /// the rename succeeds.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` and `name` must point
 /// to NUL-terminated strings. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_rename_thread(
+pub unsafe extern "C" fn ward_core_codex_history_observer_rename_thread_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     name: *const c_char,
@@ -302,6 +355,11 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_rename_thread(
 /// The asynchronous result is emitted as either a thread-forked event carrying
 /// the new conversation or a thread-fork-error event for the source thread.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
@@ -309,7 +367,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_rename_thread(
 /// must point to NUL-terminated strings. `output_error`, when non-null, must be
 /// writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_fork_thread(
+pub unsafe extern "C" fn ward_core_codex_history_observer_fork_thread_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     last_turn_id: *const c_char,
@@ -360,13 +418,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_fork_thread(
 ///
 /// The resulting active-history snapshot is emitted asynchronously.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
 /// NUL-terminated string. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_archive_thread(
+pub unsafe extern "C" fn ward_core_codex_history_observer_archive_thread_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     output_error: *mut *mut WardError,
@@ -387,13 +450,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_archive_thread(
 ///
 /// The resulting archived-history snapshot is emitted asynchronously.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
 /// NUL-terminated string. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_restore_thread(
+pub unsafe extern "C" fn ward_core_codex_history_observer_restore_thread_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     output_error: *mut *mut WardError,
@@ -416,13 +484,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_restore_thread(
 /// thread-start-error event. A successful start also grants writing access and
 /// makes the new thread the observer's selected thread.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `working_directory` must point to
 /// a NUL-terminated string. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_start_thread(
+pub unsafe extern "C" fn ward_core_codex_history_observer_start_thread_async(
     observer: *mut WardCodexHistoryObserver,
     working_directory: *const c_char,
     output_error: *mut *mut WardError,
@@ -461,13 +534,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_thread(
 
 /// Requests an immediate history refresh while preserving the observer.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `output_error`, when non-null,
 /// must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_refresh(
+pub unsafe extern "C" fn ward_core_codex_history_observer_refresh_async(
     observer: *mut WardCodexHistoryObserver,
     output_error: *mut *mut WardError,
 ) -> bool {
@@ -488,13 +566,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_refresh(
 /// successful acquisition remains active until it is released, another thread
 /// is selected, or the observer is destroyed.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
 /// NUL-terminated string. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_acquire_write(
+pub unsafe extern "C" fn ward_core_codex_history_observer_acquire_write_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     output_error: *mut *mut WardError,
@@ -525,13 +608,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_acquire_write(
 /// The release is asynchronous. Its completion is emitted as a thread
 /// write-state event.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
 /// NUL-terminated string. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_release_write(
+pub unsafe extern "C" fn ward_core_codex_history_observer_release_write_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     output_error: *mut *mut WardError,
@@ -562,6 +650,11 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_release_write(
 /// The observer uses its previously acquired writer and emits ordered
 /// conversation updates until the turn completes.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
@@ -576,7 +669,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_release_write(
 /// `permission_preset` must use values declared by the private C interface.
 /// `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
+pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     prompt: *const c_char,
@@ -584,8 +677,8 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
     attachment_count: usize,
     model: *const c_char,
     reasoning_effort: *const c_char,
-    turn_mode: c_int,
-    permission_preset: c_int,
+    turn_mode: WardCodexTurnMode,
+    permission_preset: WardCodexPermissionPreset,
     output_error: *mut *mut WardError,
 ) -> bool {
     // SAFETY: The caller supplied the optional error output pointer.
@@ -647,14 +740,9 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
         }
         let path = PathBuf::from(path);
         input.push(match attachment.kind {
-            TURN_ATTACHMENT_LOCAL_IMAGE => TurnInput::LocalImage { path },
-            TURN_ATTACHMENT_LOCAL_AUDIO => TurnInput::LocalAudio { path },
-            TURN_ATTACHMENT_MENTION => TurnInput::Mention { name, path },
-            _ => {
-                // SAFETY: The caller supplied the optional error output pointer.
-                unsafe { write_error(output_error, "the Codex attachment kind is invalid") };
-                return false;
-            }
+            WardCodexTurnAttachmentKind::LocalImage => TurnInput::LocalImage { path },
+            WardCodexTurnAttachmentKind::LocalAudio => TurnInput::LocalAudio { path },
+            WardCodexTurnAttachmentKind::Mention => TurnInput::Mention { name, path },
         });
     }
     if input.is_empty() {
@@ -695,14 +783,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
         }
         ReasoningEffort::new(reasoning_effort)
     };
-    let mut options = match decode_turn_options(turn_mode, permission_preset) {
-        Ok(options) => options,
-        Err(message) => {
-            // SAFETY: The caller supplied the optional error output pointer.
-            unsafe { write_error(output_error, message) };
-            return false;
-        }
-    };
+    let mut options = decode_turn_options(turn_mode, permission_preset);
     options.inference = match (model, reasoning_effort) {
         (Some(model), Some(reasoning_effort)) => {
             Some(InferenceOverride::selection(model, reasoning_effort))
@@ -731,6 +812,11 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
 /// The asynchronous result is emitted as either a turn-steered event or a
 /// turn-steer-error event.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
@@ -738,7 +824,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
 /// and `prompt` must point to NUL-terminated strings. `output_error`, when
 /// non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_steer_turn(
+pub unsafe extern "C" fn ward_core_codex_history_observer_steer_turn_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     expected_turn_id: *const c_char,
@@ -836,25 +922,23 @@ fn reserve_operation(
 }
 
 fn decode_turn_options(
-    turn_mode: c_int,
-    permission_preset: c_int,
-) -> Result<TurnOptions, &'static str> {
+    turn_mode: WardCodexTurnMode,
+    permission_preset: WardCodexPermissionPreset,
+) -> TurnOptions {
     let mode = match turn_mode {
-        0 => TurnMode::Default,
-        1 => TurnMode::Plan,
-        _ => return Err("the Codex turn mode is invalid"),
+        WardCodexTurnMode::Default => TurnMode::Default,
+        WardCodexTurnMode::Plan => TurnMode::Plan,
     };
     let permission_preset = match permission_preset {
-        0 => TurnPermissionPreset::Inherit,
-        1 => TurnPermissionPreset::RequestApproval,
-        2 => TurnPermissionPreset::ReadOnly,
-        _ => return Err("the Codex permission preset is invalid"),
+        WardCodexPermissionPreset::Inherit => TurnPermissionPreset::Inherit,
+        WardCodexPermissionPreset::RequestApproval => TurnPermissionPreset::RequestApproval,
+        WardCodexPermissionPreset::ReadOnly => TurnPermissionPreset::ReadOnly,
     };
-    Ok(TurnOptions {
+    TurnOptions {
         mode,
         permission_preset,
         inference: None,
-    })
+    }
 }
 
 /// Requests interruption of the selected thread's active Codex turn.
@@ -862,13 +946,18 @@ fn decode_turn_options(
 /// The interruption is asynchronous. Runtime and turn-completion events report
 /// the eventual state.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
 /// NUL-terminated string. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_interrupt_turn(
+pub unsafe extern "C" fn ward_core_codex_history_observer_interrupt_turn_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     output_error: *mut *mut WardError,
@@ -896,6 +985,11 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_interrupt_turn(
 
 /// Sends one structured response to a pending Codex interaction.
 ///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
 /// # Safety
 ///
 /// `observer` must point to a live handle returned by
@@ -904,7 +998,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_interrupt_turn(
 /// `PendingInteractionResponse`. `output_error`, when non-null, must be
 /// writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_codex_history_observer_resolve_interaction(
+pub unsafe extern "C" fn ward_core_codex_history_observer_resolve_interaction_async(
     observer: *mut WardCodexHistoryObserver,
     response_data: *const u8,
     response_size: usize,

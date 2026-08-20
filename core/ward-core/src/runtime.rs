@@ -3,7 +3,7 @@
 
 use ward_runtime::WardRuntime as RuntimeOwner;
 
-use crate::{WardError, write_error};
+use crate::{WardError, clear_error, write_error};
 
 /// An opaque owner of Ward Core's process-wide asynchronous runtime.
 pub struct WardRuntime {
@@ -25,10 +25,8 @@ impl WardRuntime {
 pub unsafe extern "C" fn ward_core_runtime_create(
     output_error: *mut *mut WardError,
 ) -> *mut WardRuntime {
-    if !output_error.is_null() {
-        // SAFETY: The C caller supplied a writable error output pointer.
-        unsafe { *output_error = std::ptr::null_mut() };
-    }
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
 
     match RuntimeOwner::new() {
         Ok(owner) => Box::into_raw(Box::new(WardRuntime { owner })),

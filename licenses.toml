@@ -16,6 +16,12 @@ license-url = "https://raw.githubusercontent.com/BLAKE3-team/BLAKE3/refs/tags/1.
 website = "https://github.com/BLAKE3-team/BLAKE3"
 
 [[component]]
+name = "cbindgen"
+spdx-identifier = "MPL-2.0"
+license-url = "https://raw.githubusercontent.com/mozilla/cbindgen/v0.29.4/LICENSE"
+website = "https://github.com/mozilla/cbindgen"
+
+[[component]]
 name = "cc"
 spdx-identifier = "MIT"
 license-url = "https://raw.githubusercontent.com/rust-lang/cc-rs/a91e05ec40f26d4637d4bff9e9764221d0a59dd8/LICENSE-MIT"

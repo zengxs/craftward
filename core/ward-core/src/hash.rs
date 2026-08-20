@@ -6,12 +6,12 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use crate::{WardError, write_error};
+use crate::{WardError, clear_error, write_error};
 
 /// A BLAKE3-256 digest passed through Ward Core's private C interface.
 #[repr(C)]
 pub struct WardBlake3Digest {
-    bytes: [u8; blake3::OUT_LEN],
+    pub bytes: [u8; 32],
 }
 
 fn hash_reader(mut reader: impl Read) -> io::Result<[u8; blake3::OUT_LEN]> {
@@ -36,10 +36,8 @@ pub unsafe extern "C" fn ward_core_blake3_hash_file(
     output_digest: *mut WardBlake3Digest,
     output_error: *mut *mut WardError,
 ) -> bool {
-    if !output_error.is_null() {
-        // SAFETY: The C caller supplied a writable error output pointer.
-        unsafe { *output_error = std::ptr::null_mut() };
-    }
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
     let Some(output_digest) = (unsafe { output_digest.as_mut() }) else {
         // SAFETY: The caller supplied the optional error output pointer.
         unsafe { write_error(output_error, "the BLAKE3 digest output is missing") };

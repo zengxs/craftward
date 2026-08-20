@@ -14,13 +14,6 @@ pub struct WardBuffer {
     bytes: Box<[u8]>,
 }
 
-unsafe fn clear_error(output_error: *mut *mut WardError) {
-    if !output_error.is_null() {
-        // SAFETY: The C caller supplied a writable error output pointer.
-        unsafe { *output_error = std::ptr::null_mut() };
-    }
-}
-
 unsafe fn required_string(
     value: *const c_char,
     name: &'static str,

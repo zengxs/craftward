@@ -16,8 +16,22 @@ target_link_libraries(CraftwardCoreFfiSupport
 )
 
 if(BUILD_TESTING)
+    add_library(CraftwardWardCoreHeaderCSmoke OBJECT
+        tests/ward_core_header_smoke.c
+    )
+    target_link_libraries(CraftwardWardCoreHeaderCSmoke PRIVATE Ward::Core)
+
+    add_library(CraftwardWardCoreHeaderCxxSmoke OBJECT
+        tests/ward_core_header_smoke.cpp
+    )
+    target_link_libraries(CraftwardWardCoreHeaderCxxSmoke PRIVATE Ward::Core)
+
     qt_add_executable(CraftwardCoreFfiSupportTest
         tests/coreffierrortest.cpp
+    )
+    add_dependencies(CraftwardCoreFfiSupportTest
+        CraftwardWardCoreHeaderCSmoke
+        CraftwardWardCoreHeaderCxxSmoke
     )
     target_link_libraries(CraftwardCoreFfiSupportTest
         PRIVATE

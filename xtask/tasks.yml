@@ -8,6 +8,7 @@ tasks:
         msg: cargo is not available in PATH
     cmds:
       - cargo test --all-targets --locked
+      - task: bindings:check
       - task: licenses:check
 
   format:cargo:
@@ -15,6 +16,18 @@ tasks:
     internal: true
     cmds:
       - cargo fmt
+
+  bindings:generate:
+    desc: Generate the committed Ward Core C interface
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - cargo run --manifest-path xtask/Cargo.toml --locked -- bindings generate
+
+  bindings:check:
+    desc: Check the committed Ward Core C interface
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - cargo run --manifest-path xtask/Cargo.toml --locked -- bindings check
 
   version:sync:
     desc: Synchronize product versions from version.toml

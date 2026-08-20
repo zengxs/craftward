@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "ward/coreffierror.h"
-#include "ward/coreffi.h"
+#include <ward_core.h>
 
 #include <QtTest/QTest>
 

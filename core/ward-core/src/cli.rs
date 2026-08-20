@@ -8,8 +8,8 @@ use ward_cli::CliDisposition;
 /// The result of dispatching process arguments through Ward's embedded CLI.
 #[repr(C)]
 pub struct WardCliResult {
-    handled: bool,
-    exit_code: c_int,
+    pub handled: bool,
+    pub exit_code: c_int,
 }
 
 /// Dispatches process arguments through Ward's embedded CLI.

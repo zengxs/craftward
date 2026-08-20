@@ -4,7 +4,6 @@ qt_add_qml_module(CraftwardRealm
     DEPENDENCIES
         QtQuick
     SOURCES
-        "${PROJECT_SOURCE_DIR}/src/ward/coreffi.h"
         realmcontroller.cpp
         realmcontroller.h
 )

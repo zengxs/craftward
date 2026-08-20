@@ -3,7 +3,7 @@
 
 #include "ward/coreffierror.h"
 
-#include "ward/coreffi.h"
+#include <ward_core.h>
 
 #include <memory>
 

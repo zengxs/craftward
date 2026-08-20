@@ -4,9 +4,9 @@
 #include "applicationcontroller.h"
 #include "applicationiconprovider.h"
 #include "ward/codex/codexhistorycontroller.h"
-#include "ward/coreffi.h"
 #include "ward/coreffierror.h"
 #include "ward/realm/realmcontroller.h"
+#include <ward_core.h>
 
 #include <QCoreApplication>
 #include <QGuiApplication>

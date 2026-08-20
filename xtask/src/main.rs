@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod bindings;
 mod licenses;
 mod version;
 
@@ -18,11 +19,29 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Manage the generated Ward Core C interface.
+    Bindings(BindingsArgs),
+
     /// Manage bundled application and third-party license resources.
     Licenses(LicensesArgs),
 
     /// Manage the synchronized Craftward product version.
     Version(VersionArgs),
+}
+
+#[derive(Debug, Args)]
+struct BindingsArgs {
+    #[command(subcommand)]
+    command: BindingsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum BindingsCommand {
+    /// Generate the committed Ward Core C header from its Rust interface.
+    Generate,
+
+    /// Check that the committed Ward Core C header matches its Rust interface.
+    Check,
 }
 
 #[derive(Debug, Args)]
@@ -76,6 +95,25 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Bindings(args) => {
+            let paths = bindings::ProjectPaths::default();
+            match args.command {
+                BindingsCommand::Generate => {
+                    if bindings::generate(&paths)? {
+                        println!(
+                            "Generated the Ward Core C interface at {}.",
+                            paths.header.display()
+                        );
+                    } else {
+                        println!("The Ward Core C interface is already synchronized.");
+                    }
+                }
+                BindingsCommand::Check => {
+                    bindings::check(&paths)?;
+                    println!("The Ward Core C interface is synchronized.");
+                }
+            }
+        }
         Command::Licenses(args) => {
             let defaults = licenses::ProjectPaths::default();
             match args.command {

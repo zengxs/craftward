@@ -86,6 +86,7 @@ tasks:
     requires:
       vars: [QT6_ROOT]
     deps:
+      - task: :xtask:bindings:check
       - task: :xtask:version:check
       - task: :xtask:licenses:generate
         vars:

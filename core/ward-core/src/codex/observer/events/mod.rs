@@ -8,13 +8,13 @@ use ward_codex::{ModelCatalog, PendingInteraction, Thread, ThreadActiveFlag, Thr
 
 use super::super::live::LiveRuntimeState;
 use super::super::{WardBuffer, wire};
-use super::WardCodexHistoryEventCallback;
+use super::WardCodexHistoryEventFn;
 
 #[cfg(test)]
 mod tests;
 
 pub(super) struct HistoryEventSink {
-    callback: WardCodexHistoryEventCallback,
+    callback: WardCodexHistoryEventFn,
     context: *mut c_void,
 }
 
@@ -29,7 +29,7 @@ unsafe impl Send for HistoryEventSink {}
 unsafe impl Sync for HistoryEventSink {}
 
 impl HistoryEventSink {
-    pub(super) const fn new(callback: WardCodexHistoryEventCallback, context: *mut c_void) -> Self {
+    pub(super) const fn new(callback: WardCodexHistoryEventFn, context: *mut c_void) -> Self {
         Self { callback, context }
     }
 

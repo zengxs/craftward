@@ -3,8 +3,9 @@
 
 #include "ward/realm/realmcontroller.h"
 
-#include "ward/coreffi.h"
 #include "ward/coreffierror.h"
+
+#include <ward_core.h>
 
 #include <QDir>
 #include <QFileInfo>
@@ -208,8 +209,7 @@ RealmController::start()
 {
     if (!ensureRealm() || !canStart())
         return;
-    beginCommand();
-    ward_core_realm_start(realm_);
+    queueCommand(ward_core_realm_start_async);
 }
 
 void
@@ -217,8 +217,7 @@ RealmController::pause()
 {
     if (!canPause())
         return;
-    beginCommand();
-    ward_core_realm_pause(realm_);
+    queueCommand(ward_core_realm_pause_async);
 }
 
 void
@@ -226,8 +225,7 @@ RealmController::resume()
 {
     if (!canResume())
         return;
-    beginCommand();
-    ward_core_realm_resume(realm_);
+    queueCommand(ward_core_realm_resume_async);
 }
 
 void
@@ -235,8 +233,7 @@ RealmController::requestStop()
 {
     if (!canRequestStop())
         return;
-    beginCommand();
-    ward_core_realm_request_stop(realm_);
+    queueCommand(ward_core_realm_request_stop_async);
 }
 
 void
@@ -244,8 +241,7 @@ RealmController::forceStop()
 {
     if (!canForceStop())
         return;
-    beginCommand();
-    ward_core_realm_force_stop(realm_);
+    queueCommand(ward_core_realm_force_stop_async);
 }
 
 void
@@ -253,8 +249,7 @@ RealmController::suspend()
 {
     if (!canSuspend())
         return;
-    beginCommand();
-    ward_core_realm_suspend(realm_);
+    queueCommand(ward_core_realm_suspend_async);
 }
 
 void
@@ -262,8 +257,7 @@ RealmController::restore()
 {
     if (!ensureRealm() || !canRestore())
         return;
-    beginCommand();
-    ward_core_realm_restore(realm_);
+    queueCommand(ward_core_realm_restore_async);
 }
 
 void
@@ -271,8 +265,7 @@ RealmController::discardSavedState()
 {
     if (!canDiscardSavedState())
         return;
-    beginCommand();
-    ward_core_realm_discard_saved_state(realm_);
+    queueCommand(ward_core_realm_discard_saved_state_async);
 }
 
 bool
@@ -327,16 +320,16 @@ RealmController::clearError()
 }
 
 void
-RealmController::handleRealmEvent(void* context, const WardRealmStatus* status, const char* errorMessage)
+RealmController::handleRealmEvent(void* context, const WardRealmEvent* event)
 {
-    if (context == nullptr || status == nullptr)
+    if (context == nullptr || event == nullptr)
         return;
 
     auto* callbackContext = static_cast<RealmCallbackContext*>(context);
     RealmController* controller = callbackContext->controller;
     const std::uint64_t generation = callbackContext->generation;
-    const WardRealmStatus statusCopy = *status;
-    const QString errorCopy = errorMessage != nullptr ? QString::fromUtf8(errorMessage) : QString();
+    const WardRealmStatus statusCopy = event->status;
+    const QString errorCopy = event->error_message != nullptr ? QString::fromUtf8(event->error_message) : QString();
     auto apply = [controller, generation, statusCopy, errorCopy] {
         if (controller->generation_ == generation)
             controller->applyStatus(generation, statusCopy, errorCopy);
@@ -406,6 +399,22 @@ RealmController::beginCommand()
 {
     setErrorMessage({});
     commandPending_ = true;
+    emit statusChanged();
+}
+
+void
+RealmController::queueCommand(RealmCommand command)
+{
+    beginCommand();
+    WardError* error = nullptr;
+    if (command(realm_, &error))
+        return;
+
+    commandPending_ = false;
+    QString message = ward::coreffi::takeErrorMessage(error);
+    if (message.isEmpty())
+        message = tr("The Realm command could not be queued.");
+    setErrorMessage(message);
     emit statusChanged();
 }
 

@@ -13,7 +13,9 @@
 #include <memory>
 
 struct RealmCallbackContext;
+struct WardError;
 struct WardRealm;
+struct WardRealmEvent;
 struct WardRealmStatus;
 
 class RealmController : public QObject
@@ -102,11 +104,14 @@ class RealmController : public QObject
     void displayWindowChanged();
 
   private:
-    static void handleRealmEvent(void* context, const WardRealmStatus* status, const char* errorMessage);
+    using RealmCommand = bool (*)(WardRealm* realm, WardError** outputError);
+
+    static void handleRealmEvent(void* context, const WardRealmEvent* event);
 
     [[nodiscard]] bool ensureRealm();
     void destroyRealm();
     void beginCommand();
+    void queueCommand(RealmCommand command);
     void applyStatus(std::uint64_t generation, WardRealmStatus status, const QString& errorMessage);
     void setErrorMessage(const QString& errorMessage);
 

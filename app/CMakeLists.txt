@@ -9,7 +9,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING
 )
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/version.cmake")
-project(Craftward VERSION "${CRAFTWARD_VERSION}" LANGUAGES CXX)
+project(Craftward VERSION "${CRAFTWARD_VERSION}" LANGUAGES C CXX)
 
 option(BUILD_TESTING "Build the Craftward test suite" OFF)
 include(CTest)
@@ -63,6 +63,9 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 find_package(Qt6 6.11 REQUIRED COMPONENTS Protobuf Qml Quick QuickControls2 QuickDialogs2 Svg)
 if(BUILD_TESTING)
@@ -86,9 +89,14 @@ if(NOT EXISTS "${CRAFTWARD_LEGAL_QRC}")
 endif()
 
 add_library(Ward::Core STATIC IMPORTED GLOBAL)
+set(CRAFTWARD_WARD_CORE_INCLUDE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../core/ward-core/include"
+)
 set_target_properties(Ward::Core PROPERTIES
     IMPORTED_LOCATION
         "${CMAKE_CURRENT_SOURCE_DIR}/../core/dist/${CMAKE_BUILD_TYPE}/libward_core.a"
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${CRAFTWARD_WARD_CORE_INCLUDE_DIR}"
 )
 
 set(CRAFTWARD_COMMIT_HASH "" CACHE STRING "Source commit for the Craftward application")

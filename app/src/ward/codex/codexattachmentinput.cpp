@@ -3,8 +3,9 @@
 
 #include "ward/codex/codexattachmentinput.h"
 
-#include "ward/coreffi.h"
 #include "ward/coreffierror.h"
+
+#include <ward_core.h>
 
 #include <QClipboard>
 #include <QCoreApplication>
