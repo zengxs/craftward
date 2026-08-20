@@ -56,9 +56,9 @@ jobs:
         run: |
           aqt install-qt \
             --outputdir "$HOME/Library/Qt" \
-            mac desktop 6.11.1 clang_64 \
+            mac desktop 6.11.2 clang_64 \
             -m qtgrpc qtimageformats qttasktree
-          echo "QT6_ROOT=$HOME/Library/Qt/6.11.1/macos" >> "$GITHUB_ENV"
+          echo "QT6_ROOT=$HOME/Library/Qt/6.11.2/macos" >> "$GITHUB_ENV"
 
       - name: Test
         run: task test BUILD_TYPE=Release SIGN_IDENTITY=-
