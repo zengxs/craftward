@@ -10,7 +10,7 @@ name = "ward"
 path = "src/main.rs"
 
 [dependencies]
-clap = { workspace = true, features = ["derive", "string"] }
+clap = { workspace = true }
 tokio = { workspace = true }
 ward-codex = { workspace = true }
 ward-runtime = { workspace = true }
