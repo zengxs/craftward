@@ -147,21 +147,38 @@ ApplicationWindow {
             }
         }
 
-        StackLayout {
+        Item {
             SplitView.fillWidth: true
             SplitView.fillHeight: true
-            currentIndex: root.currentPage
 
-            SettingsGeneralPage {}
+            StackLayout {
+                anchors.fill: parent
+                currentIndex: root.currentPage
 
-            AboutPage {
-                id: aboutPage
+                SettingsGeneralPage {}
 
-                applicationIconSource: root.applicationIconSource
-                buildNumber: root.buildNumber
-                commitHash: root.commitHash
-                onViewApplicationLicenseRequested: applicationLicenseDialog.open()
-                onViewThirdPartyLicensesRequested: thirdPartyLicensesDialog.open()
+                AboutPage {
+                    id: aboutPage
+
+                    applicationIconSource: root.applicationIconSource
+                    buildNumber: root.buildNumber
+                    commitHash: root.commitHash
+                    onViewApplicationLicenseRequested: applicationLicenseDialog.open()
+                    onViewThirdPartyLicensesRequested: thirdPartyLicensesDialog.open()
+                }
+            }
+
+            Item {
+                anchors {
+                    top: parent.top
+                    left: parent.left
+                    right: parent.right
+                }
+                height: root.titleBarInset
+
+                WindowMoveHandler {
+                    targetWindow: root
+                }
             }
         }
     }
