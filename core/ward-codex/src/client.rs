@@ -30,7 +30,7 @@ use crate::protocol::{
 use crate::{
     CodexAppServerSource, CodexError, InteractionId, InteractionResponse, ModelCatalog,
     PendingInteraction, ServerInfo, Thread, ThreadInferenceState, ThreadPage, ThreadStartOptions,
-    ThreadStreamEvent, ThreadSubscription, TurnOptions,
+    ThreadStreamEvent, ThreadSubscription, TurnInput, TurnOptions,
 };
 
 type AppServerConnection = Connection<BufReader<AppServerReader>, BufWriter<AppServerWriter>>;
@@ -502,8 +502,20 @@ impl CodexClient {
         &mut self,
         thread_id: &str,
         text: &str,
+        options: TurnOptions,
+    ) -> Result<ThreadStreamEvent, CodexError> {
+        self.begin_turn(thread_id, &[TurnInput::Text(text.to_owned())], options)
+            .await
+    }
+
+    /// Starts one turn from typed user input and returns its initial streamed event.
+    pub async fn begin_turn(
+        &mut self,
+        thread_id: &str,
+        input: &[TurnInput],
         mut options: TurnOptions,
     ) -> Result<ThreadStreamEvent, CodexError> {
+        TurnStartParams::validate_input(input)?;
         if let Some(selected_model) = options
             .inference
             .as_ref()
@@ -547,10 +559,10 @@ impl CodexClient {
         let result = tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => Err(CodexError::Interrupted),
-            result = begin_text_turn_on_connection(
+            result = begin_turn_on_connection(
                 connection,
                 thread_id,
-                text,
+                input,
                 &active_inference,
                 options,
             ) => result,
@@ -703,10 +715,10 @@ where
     Ok((subscription, inference))
 }
 
-async fn begin_text_turn_on_connection<R, W>(
+async fn begin_turn_on_connection<R, W>(
     connection: &mut Connection<R, W>,
     thread_id: &str,
-    text: &str,
+    input: &[TurnInput],
     active_inference: &ThreadInferenceState,
     options: TurnOptions,
 ) -> Result<ThreadStreamEvent, CodexError>
@@ -714,7 +726,7 @@ where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let params = TurnStartParams::text(thread_id, text, active_inference, &options)?;
+    let params = TurnStartParams::new(thread_id, input, active_inference, &options)?;
     let response: TurnStartResponse = connection.request(TURN_START_METHOD, &params).await?;
     let turn = response
         .into_turn()
@@ -840,10 +852,10 @@ mod tests {
         let active_inference = ThreadInferenceState::default();
 
         events.push(
-            begin_text_turn_on_connection(
+            begin_turn_on_connection(
                 &mut connection,
                 "thread-1",
-                "Continue",
+                &[TurnInput::Text("Continue".to_owned())],
                 &active_inference,
                 TurnOptions::default(),
             )

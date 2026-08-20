@@ -9,6 +9,7 @@ license.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+blake3 = { workspace = true }
 prost = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

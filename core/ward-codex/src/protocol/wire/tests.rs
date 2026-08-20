@@ -10,8 +10,8 @@ use super::{
 use crate::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
     CommandActionKind, InferenceOverride, ReasoningEffort, ThreadActiveFlag, ThreadInferenceState,
-    ThreadItem, ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnMode, TurnOptions,
-    TurnPermissionPreset, UserInput,
+    ThreadItem, ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnInput, TurnMode,
+    TurnOptions, TurnPermissionPreset, UserInput,
 };
 
 fn inference_state(model: Option<&str>, reasoning_effort: Option<&str>) -> ThreadInferenceState {
@@ -648,6 +648,111 @@ fn serializes_a_text_turn_start_request() {
             }
         })
     );
+}
+
+#[test]
+fn serializes_typed_turn_input_in_order() {
+    assert_eq!(
+        serde_json::to_value(
+            TurnStartParams::new(
+                "thread-1",
+                &[
+                    TurnInput::Text("Compare these screenshots".to_owned()),
+                    TurnInput::LocalImage {
+                        path: PathBuf::from("/workspace/before.png"),
+                    },
+                    TurnInput::LocalAudio {
+                        path: PathBuf::from("/workspace/note.wav"),
+                    },
+                    TurnInput::Mention {
+                        name: "requirements.pdf".to_owned(),
+                        path: PathBuf::from("/workspace/requirements.pdf"),
+                    },
+                ],
+                &inference_state(Some("gpt-5.6-sol"), Some("medium")),
+                &TurnOptions::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+        serde_json::json!({
+            "threadId": "thread-1",
+            "input": [
+                { "type": "text", "text": "Compare these screenshots" },
+                { "type": "localImage", "path": "/workspace/before.png" },
+                { "type": "localAudio", "path": "/workspace/note.wav" },
+                {
+                    "type": "mention",
+                    "name": "requirements.pdf",
+                    "path": "/workspace/requirements.pdf"
+                }
+            ],
+            "collaborationMode": {
+                "mode": "default",
+                "settings": {
+                    "developer_instructions": null,
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium"
+                }
+            }
+        })
+    );
+}
+
+#[test]
+fn rejects_empty_turn_input_before_sending_a_request() {
+    let active_inference = inference_state(Some("gpt-5.6-sol"), Some("medium"));
+
+    assert!(matches!(
+        TurnStartParams::new("thread-1", &[], &active_inference, &TurnOptions::default(),),
+        Err(crate::CodexError::InvalidTurnInput { .. })
+    ));
+    assert!(matches!(
+        TurnStartParams::new(
+            "thread-1",
+            &[TurnInput::LocalImage {
+                path: PathBuf::new(),
+            }],
+            &active_inference,
+            &TurnOptions::default(),
+        ),
+        Err(crate::CodexError::InvalidTurnInput { .. })
+    ));
+    assert!(matches!(
+        TurnStartParams::new(
+            "thread-1",
+            &[TurnInput::LocalAudio {
+                path: PathBuf::new(),
+            }],
+            &active_inference,
+            &TurnOptions::default(),
+        ),
+        Err(crate::CodexError::InvalidTurnInput { .. })
+    ));
+    assert!(matches!(
+        TurnStartParams::new(
+            "thread-1",
+            &[TurnInput::Mention {
+                name: " ".to_owned(),
+                path: PathBuf::from("/workspace/notes.md"),
+            }],
+            &active_inference,
+            &TurnOptions::default(),
+        ),
+        Err(crate::CodexError::InvalidTurnInput { .. })
+    ));
+    assert!(matches!(
+        TurnStartParams::new(
+            "thread-1",
+            &[TurnInput::Mention {
+                name: "notes.md".to_owned(),
+                path: PathBuf::new(),
+            }],
+            &active_inference,
+            &TurnOptions::default(),
+        ),
+        Err(crate::CodexError::InvalidTurnInput { .. })
+    ));
 }
 
 #[test]

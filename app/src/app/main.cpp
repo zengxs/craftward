@@ -5,6 +5,7 @@
 #include "applicationiconprovider.h"
 #include "ward/codex/codexhistorycontroller.h"
 #include "ward/coreffi.h"
+#include "ward/coreffierror.h"
 #include "ward/realm/realmcontroller.h"
 
 #include <QCoreApplication>
@@ -32,10 +33,6 @@ struct RuntimeDeleter
     void operator()(WardRuntime* runtime) const { ward_core_runtime_destroy(runtime); }
 };
 
-struct ErrorDeleter
-{
-    void operator()(WardError* error) const { ward_core_error_destroy(error); }
-};
 }
 
 int
@@ -58,10 +55,11 @@ main(int argc, char* argv[])
 
     WardError* rawRuntimeError = nullptr;
     std::unique_ptr<WardRuntime, RuntimeDeleter> runtime(ward_core_runtime_create(&rawRuntimeError));
-    std::unique_ptr<WardError, ErrorDeleter> runtimeError(rawRuntimeError);
+    const QString runtimeError = ward::coreffi::takeErrorMessage(rawRuntimeError);
     if (runtime == nullptr) {
-        const char* message = runtimeError != nullptr ? ward_core_error_message(runtimeError.get()) : nullptr;
-        qCritical("%s", message != nullptr ? message : "The Ward async runtime could not be started.");
+        const QString message =
+          runtimeError.isEmpty() ? QStringLiteral("The Ward async runtime could not be started.") : runtimeError;
+        qCritical("%s", qUtf8Printable(message));
         return 1;
     }
 

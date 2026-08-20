@@ -3,6 +3,7 @@
 
 mod cli;
 mod codex;
+mod hash;
 mod macos;
 mod runtime;
 

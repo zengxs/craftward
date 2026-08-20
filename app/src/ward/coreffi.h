@@ -33,6 +33,14 @@ extern "C"
     WardRuntime* ward_core_runtime_create(WardError** error);
     void ward_core_runtime_destroy(WardRuntime* runtime);
 
+    typedef struct WardBlake3Digest
+    {
+        uint8_t bytes[32];
+    } WardBlake3Digest;
+
+    // Completes on the calling thread before returning.
+    bool ward_core_blake3_hash_file(const char* path, WardBlake3Digest* digest, WardError** error);
+
     typedef struct WardCodexHistoryObserver WardCodexHistoryObserver;
     typedef void (*WardCodexHistoryEventCallback)(void* context, const WardBuffer* event);
 
@@ -48,6 +56,20 @@ extern "C"
         WardCodexPermissionPresetRequestApproval = 1,
         WardCodexPermissionPresetReadOnly = 2,
     } WardCodexPermissionPreset;
+
+    typedef enum WardCodexTurnAttachmentKind
+    {
+        WardCodexTurnAttachmentKindLocalImage = 0,
+        WardCodexTurnAttachmentKindLocalAudio = 1,
+        WardCodexTurnAttachmentKindMention = 2,
+    } WardCodexTurnAttachmentKind;
+
+    typedef struct WardCodexTurnAttachment
+    {
+        WardCodexTurnAttachmentKind kind;
+        const char* name;
+        const char* path;
+    } WardCodexTurnAttachment;
 
     // The serialized event buffer is borrowed until the callback returns. The
     // callback context must remain valid until observer destruction completes.
@@ -89,6 +111,8 @@ extern "C"
     bool ward_core_codex_history_observer_start_turn(WardCodexHistoryObserver* observer,
                                                      const char* thread_id,
                                                      const char* prompt,
+                                                     const WardCodexTurnAttachment* attachments,
+                                                     size_t attachment_count,
                                                      const char* model,
                                                      const char* reasoning_effort,
                                                      WardCodexTurnMode turn_mode,

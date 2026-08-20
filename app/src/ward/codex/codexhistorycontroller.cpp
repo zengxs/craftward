@@ -4,6 +4,7 @@
 #include "ward/codex/codexhistorycontroller.h"
 
 #include "ward/coreffi.h"
+#include "ward/coreffierror.h"
 
 #include <QByteArray>
 #include <QByteArrayView>
@@ -22,24 +23,6 @@ struct CodexHistoryCallbackContext
 };
 
 namespace {
-struct ErrorDeleter
-{
-    void operator()(WardError* error) const { ward_core_error_destroy(error); }
-};
-
-QString
-copyString(const char* value)
-{
-    return value != nullptr ? QString::fromUtf8(value) : QString();
-}
-
-QString
-copyError(WardError* error)
-{
-    std::unique_ptr<WardError, ErrorDeleter> ownedError(error);
-    return error != nullptr ? copyString(ward_core_error_message(error)) : QString();
-}
-
 template<typename Message>
 QString
 deserializeBytes(QByteArrayView bytes, Message& message)
@@ -80,7 +63,7 @@ CodexHistoryController::CodexHistoryController(const WardRuntime* runtime, QObje
     if (historyObserver_ == nullptr) {
         callbackContext_.reset();
         loadingThreads_ = false;
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex history observer could not be started.");
         setThreadErrorMessage(message);
@@ -171,7 +154,7 @@ CodexHistoryController::refresh()
 
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_refresh(historyObserver_, &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex history could not be refreshed.");
         finishThreadLoading(message);
@@ -193,7 +176,7 @@ CodexHistoryController::showArchivedThreads(bool archived)
 
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_show_archived(historyObserver_, archived, &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The displayed Codex history could not be changed.");
         setThreadErrorMessage(message);
@@ -232,7 +215,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
 
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_watch(historyObserver_, encodedThreadId.constData(), &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex conversation could not be observed.");
         conversationController_.finishLoading(message);
@@ -257,7 +240,7 @@ CodexHistoryController::renameSelectedThread(const QString& name)
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_rename_thread(
           historyObserver_, threadId.constData(), encodedName.constData(), &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex conversation could not be renamed.");
         conversationController_.setErrorMessage(message);
@@ -285,7 +268,7 @@ CodexHistoryController::forkSelectedThread(const QString& lastTurnId)
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_fork_thread(
           historyObserver_, threadId.constData(), encodedLastTurnId.constData(), &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex conversation could not be forked.");
         conversationController_.setErrorMessage(message);
@@ -339,7 +322,7 @@ CodexHistoryController::changeSelectedThreadLifecycle(ThreadLifecycleAction acti
             break;
     }
     if (!queued) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = fallbackError;
         conversationController_.setErrorMessage(message);
@@ -378,7 +361,7 @@ CodexHistoryController::startThread(const QUrl& workingDirectory)
     const QByteArray encodedPath = path.toUtf8();
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_start_thread(historyObserver_, encodedPath.constData(), &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex conversation could not be started.");
         setThreadStartErrorMessage(message);

@@ -4,6 +4,7 @@
 #include "ward/realm/realmcontroller.h"
 
 #include "ward/coreffi.h"
+#include "ward/coreffierror.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -284,14 +285,10 @@ RealmController::attachDisplay()
 
     WardError* error = nullptr;
     void* nativeView = ward_core_realm_attach_display(realm_, &error);
+    const QString coreErrorMessage = ward::coreffi::takeErrorMessage(error);
     if (nativeView == nullptr) {
-        QString message = tr("The Realm display could not be attached.");
-        if (error != nullptr) {
-            const char* nativeMessage = ward_core_error_message(error);
-            if (nativeMessage != nullptr)
-                message = QString::fromUtf8(nativeMessage);
-            ward_core_error_destroy(error);
-        }
+        const QString message =
+          coreErrorMessage.isEmpty() ? tr("The Realm display could not be attached.") : coreErrorMessage;
         setErrorMessage(message);
         return false;
     }
@@ -372,18 +369,13 @@ RealmController::ensureRealm()
     WardError* error = nullptr;
     const QByteArray bundlePath = bundleUrl_.toLocalFile().toUtf8();
     realm_ = ward_core_realm_open(bundlePath.constData(), handleRealmEvent, callbackContext_.get(), &error);
+    const QString coreErrorMessage = ward::coreffi::takeErrorMessage(error);
     if (realm_ != nullptr) {
         emit statusChanged();
         return true;
     }
 
-    QString message = tr("The realm bundle could not be opened.");
-    if (error != nullptr) {
-        const char* nativeMessage = ward_core_error_message(error);
-        if (nativeMessage != nullptr)
-            message = QString::fromUtf8(nativeMessage);
-        ward_core_error_destroy(error);
-    }
+    const QString message = coreErrorMessage.isEmpty() ? tr("The realm bundle could not be opened.") : coreErrorMessage;
     callbackContext_.reset();
     setErrorMessage(message);
     return false;

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use ward_codex::{
-    CodexHistoryCancellation, InferenceOverride, ReasoningEffort, TurnMode, TurnOptions,
+    CodexHistoryCancellation, InferenceOverride, ReasoningEffort, TurnInput, TurnMode, TurnOptions,
     TurnPermissionPreset,
 };
 
@@ -16,8 +16,9 @@ use super::commands::{
     ThreadListScope, ThreadRenameRequest, TurnRequest,
 };
 use super::{
-    COMMAND_QUEUE_CAPACITY, ObserverOperation, ObserverOperationGate, WardCodexHistoryObserver,
-    decode_turn_options, ward_core_codex_history_observer_archive_thread,
+    COMMAND_QUEUE_CAPACITY, ObserverOperation, ObserverOperationGate, TURN_ATTACHMENT_LOCAL_AUDIO,
+    TURN_ATTACHMENT_LOCAL_IMAGE, TURN_ATTACHMENT_MENTION, WardCodexHistoryObserver,
+    WardCodexTurnAttachment, decode_turn_options, ward_core_codex_history_observer_archive_thread,
     ward_core_codex_history_observer_fork_thread, ward_core_codex_history_observer_rename_thread,
     ward_core_codex_history_observer_restore_thread,
     ward_core_codex_history_observer_show_archived, ward_core_codex_history_observer_start_turn,
@@ -80,6 +81,8 @@ async fn queues_conversation_inference_overrides_through_the_private_c_interface
             std::ptr::from_ref(&observer).cast_mut(),
             thread_id.as_ptr(),
             prompt.as_ptr(),
+            std::ptr::null(),
+            0,
             model.as_ptr(),
             reasoning_effort.as_ptr(),
             0,
@@ -92,12 +95,88 @@ async fn queues_conversation_inference_overrides_through_the_private_c_interface
         receiver.recv().await,
         Some(ObserverCommand::StartTurn(TurnRequest {
             thread_id: "thread-1".to_owned(),
-            prompt: "Continue".to_owned(),
+            input: vec![TurnInput::Text("Continue".to_owned())],
             options: TurnOptions {
                 inference: ReasoningEffort::new("low")
                     .map(|effort| InferenceOverride::selection("gpt-fast", effort)),
                 ..TurnOptions::default()
             },
+        }))
+    );
+}
+
+#[tokio::test]
+async fn queues_typed_attachments_through_the_private_c_interface() {
+    let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let observer = WardCodexHistoryObserver {
+        commands,
+        cancellation: CodexHistoryCancellation::new(),
+        active_operation: Arc::new(ObserverOperationGate::new()),
+        runtime: Handle::current(),
+        worker: None,
+    };
+    let thread_id = CString::new("thread-1").expect("the thread ID is valid");
+    let prompt = CString::new("").expect("the empty prompt is valid");
+    let image_name = CString::new("first.png").expect("the image name is valid");
+    let image_path = CString::new("/workspace/first.png").expect("the image path is valid");
+    let audio_name = CString::new("note.wav").expect("the audio name is valid");
+    let audio_path = CString::new("/workspace/note.wav").expect("the audio path is valid");
+    let file_name = CString::new("requirements.pdf").expect("the file name is valid");
+    let file_path = CString::new("/workspace/requirements.pdf").expect("the file path is valid");
+    let attachments = [
+        WardCodexTurnAttachment {
+            kind: TURN_ATTACHMENT_LOCAL_IMAGE,
+            name: image_name.as_ptr(),
+            path: image_path.as_ptr(),
+        },
+        WardCodexTurnAttachment {
+            kind: TURN_ATTACHMENT_LOCAL_AUDIO,
+            name: audio_name.as_ptr(),
+            path: audio_path.as_ptr(),
+        },
+        WardCodexTurnAttachment {
+            kind: TURN_ATTACHMENT_MENTION,
+            name: file_name.as_ptr(),
+            path: file_path.as_ptr(),
+        },
+    ];
+    let mut error = std::ptr::null_mut();
+
+    // SAFETY: The observer, strings, and attachment array remain live for the
+    // duration of the private C interface call, and the error output pointer
+    // is writable.
+    assert!(unsafe {
+        ward_core_codex_history_observer_start_turn(
+            std::ptr::from_ref(&observer).cast_mut(),
+            thread_id.as_ptr(),
+            prompt.as_ptr(),
+            attachments.as_ptr(),
+            attachments.len(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            0,
+            &mut error,
+        )
+    });
+    assert!(error.is_null());
+    assert_eq!(
+        receiver.recv().await,
+        Some(ObserverCommand::StartTurn(TurnRequest {
+            thread_id: "thread-1".to_owned(),
+            input: vec![
+                TurnInput::LocalImage {
+                    path: "/workspace/first.png".into(),
+                },
+                TurnInput::LocalAudio {
+                    path: "/workspace/note.wav".into(),
+                },
+                TurnInput::Mention {
+                    name: "requirements.pdf".to_owned(),
+                    path: "/workspace/requirements.pdf".into(),
+                },
+            ],
+            options: TurnOptions::default(),
         }))
     );
 }

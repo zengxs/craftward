@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QObject>
 #include <QString>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
@@ -148,7 +149,9 @@ class CodexConversationController : public QObject
 
     Q_INVOKABLE void acquireWriteAccess();
     Q_INVOKABLE void releaseWriteAccess();
-    Q_INVOKABLE bool startTurn(const QString& prompt);
+    Q_INVOKABLE QVariantList describeAttachments(const QList<QUrl>& attachments);
+    Q_INVOKABLE QVariantList attachmentsFromClipboard();
+    Q_INVOKABLE bool startTurn(const QString& prompt, const QList<QUrl>& attachments);
     Q_INVOKABLE bool selectModel(const QString& model);
     Q_INVOKABLE bool selectReasoningEffort(const QString& effort);
     Q_INVOKABLE bool steerTurn(const QString& prompt);

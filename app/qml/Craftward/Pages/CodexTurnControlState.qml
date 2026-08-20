@@ -12,8 +12,11 @@ QtObject {
     property bool interruptPending: false
     property bool writable: false
     property bool promptReady: false
+    property bool attachmentReady: false
     readonly property bool inputEnabled: !steerPending && !interruptPending && (!turnInFlight || turnRunning)
-    readonly property bool sendEnabled: inputEnabled && writable && promptReady
+    readonly property bool attachmentInputEnabled: !turnInFlight || turnRunning
+    readonly property bool contentReady: promptReady || (!turnRunning && attachmentReady)
+    readonly property bool sendEnabled: inputEnabled && writable && contentReady
     readonly property string sendLabel: steerPending ? qsTr("Guiding…") : (turnRunning ? qsTr("Guide") : (turnInFlight ? qsTr("Starting…") : qsTr("Send")))
     readonly property bool stopVisible: turnInFlight
     readonly property bool stopEnabled: turnInFlight && !interruptPending

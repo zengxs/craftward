@@ -2,6 +2,8 @@ qt_add_qml_module(CraftwardCodex
     STATIC
     URI Craftward.Codex
     SOURCES
+        codexattachmentinput.cpp
+        codexattachmentinput.h
         codexconversationcontroller.cpp
         codexconversationcontroller_events.cpp
         codexconversationcontroller.h
@@ -35,6 +37,8 @@ target_include_directories(CraftwardCodex
 
 target_link_libraries(CraftwardCodex
     PRIVATE
+        CraftwardCoreFfiSupport
+        Qt6::Gui
         Qt6::Protobuf
         Qt6::Qml
         Ward::Core
@@ -51,6 +55,7 @@ if(BUILD_TESTING)
     target_link_libraries(CraftwardCodexHistoryControllerTest
         PRIVATE
             CraftwardCodex
+            Qt6::Gui
             Qt6::Test
             "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
     )

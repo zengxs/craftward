@@ -9,7 +9,8 @@ use ward_codex::{
     CodexThreadWriter, InferenceOverride, InteractionAnswer, InteractionDecision,
     InteractionResponse, InteractionResponseBody, PendingInteraction, PendingInteractionKind,
     ReasoningEffort, ThreadItem, ThreadListOptions, ThreadPagePoll, ThreadPoll,
-    ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnOptions, TurnStatus, UserInput,
+    ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnInput, TurnOptions, TurnStatus,
+    UserInput,
 };
 use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions, FakeTurnScenario};
 
@@ -34,6 +35,65 @@ async fn starts_a_thread_through_the_public_writer_seam() {
     assert_eq!(subscription.thread.summary.cwd, Path::new("/workspace"));
     assert_eq!(subscription.runtime_status, ThreadRuntimeStatus::Idle);
 
+    writer.shutdown().await;
+}
+
+#[tokio::test]
+async fn starts_a_turn_with_typed_attachments_through_the_public_writer_seam() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let (mut writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the public writer seam should start a thread");
+    let input = vec![
+        TurnInput::Text("Compare these screenshots".to_owned()),
+        TurnInput::LocalImage {
+            path: "/workspace/before.png".into(),
+        },
+        TurnInput::LocalAudio {
+            path: "/workspace/note.wav".into(),
+        },
+        TurnInput::Mention {
+            name: "requirements.pdf".to_owned(),
+            path: "/workspace/requirements.pdf".into(),
+        },
+    ];
+
+    writer
+        .begin_turn(&input, TurnOptions::default())
+        .await
+        .expect("the attachment turn should start");
+    let ThreadStreamEvent::ItemStarted {
+        item: ThreadItem::UserMessage { content, .. },
+        ..
+    } = next_fake_turn_event(&mut writer).await
+    else {
+        panic!("the attachment turn should stream its user input first");
+    };
+    assert_eq!(
+        content,
+        vec![
+            UserInput::Text("Compare these screenshots".to_owned()),
+            UserInput::LocalImage {
+                path: "/workspace/before.png".into(),
+            },
+            UserInput::LocalAudio {
+                path: "/workspace/note.wav".into(),
+            },
+            UserInput::Mention {
+                name: "requirements.pdf".to_owned(),
+                path: "/workspace/requirements.pdf".into(),
+            },
+        ]
+    );
+
+    let outcome = finish_fake_turn(&mut writer).await;
+    assert_eq!(outcome.answer, "Done.");
     writer.shutdown().await;
 }
 

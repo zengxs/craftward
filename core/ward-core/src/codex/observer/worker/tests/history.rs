@@ -12,7 +12,7 @@ async fn complete_fake_turn(state: &mut ObserverState, thread_id: &str, sink: &H
         .run_turn(
             TurnRequest {
                 thread_id: thread_id.to_owned(),
-                prompt: "Seed the fork boundary".to_owned(),
+                input: vec![TurnInput::Text("Seed the fork boundary".to_owned())],
                 options: TurnOptions::default(),
             },
             sink,
@@ -112,7 +112,7 @@ async fn publishes_conversation_inference_changes_after_the_turn_is_accepted() {
         .run_turn(
             TurnRequest {
                 thread_id: thread_id.clone(),
-                prompt: "Use the faster model".to_owned(),
+                input: vec![TurnInput::Text("Use the faster model".to_owned())],
                 options: TurnOptions {
                     inference: ReasoningEffort::new("low")
                         .map(|effort| InferenceOverride::selection("gpt-fast", effort)),

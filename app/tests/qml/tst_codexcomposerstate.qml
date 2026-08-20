@@ -15,6 +15,16 @@ Item {
     property var state
     property int integratedAcquireCount: 0
 
+    function attachment(url, name, kind) {
+        return {
+            "url": url,
+            "name": name,
+            "mimeType": kind === "localImage" ? "image/png" : (kind === "localAudio" ? "audio/wav" : "application/pdf"),
+            "kind": kind,
+            "managed": false
+        };
+    }
+
     Pages.CodexComposerState {
         id: integratedState
 
@@ -99,12 +109,54 @@ Item {
         function test_draftIsClearedOnlyAfterSubmissionIsConfirmed() {
             suite.state.threadId = "thread-1";
             suite.state.saveDraft("Continue from here");
+            suite.state.addAttachments([suite.attachment("file:///workspace/screenshot.png", "screenshot.png", "localImage")]);
 
             compare(suite.state.draft, "Continue from here");
+            compare(suite.state.attachments.length, 1);
             compare(suite.state.draftCount(), 1);
             suite.state.confirmSubmission();
             compare(suite.state.draft, "");
+            compare(suite.state.attachments.length, 0);
             compare(suite.state.draftCount(), 0);
+        }
+
+        function test_attachmentsFollowTheirConversationWithoutDuplicates() {
+            const firstImage = suite.attachment("file:///workspace/first.png", "first.png", "localImage");
+            const requirements = suite.attachment("file:///workspace/requirements.pdf", "requirements.pdf", "mention");
+            suite.state.threadId = "thread-1";
+            suite.state.addAttachments([firstImage, firstImage, requirements]);
+            compare(suite.state.attachments.length, 2);
+            compare(suite.state.draftCount(), 1);
+            compare(suite.state.attachmentUrls(), ["file:///workspace/first.png", "file:///workspace/requirements.pdf"]);
+
+            suite.state.threadId = "thread-2";
+            compare(suite.state.attachments.length, 0);
+            suite.state.addAttachments([suite.attachment("file:///workspace/note.wav", "note.wav", "localAudio")]);
+
+            suite.state.threadId = "thread-1";
+            compare(suite.state.attachments.length, 2);
+            compare(String(suite.state.attachments[0].url), "file:///workspace/first.png");
+            compare(suite.state.attachments[0].kind, "localImage");
+            suite.state.removeAttachment(0);
+            compare(suite.state.attachments.length, 1);
+            compare(String(suite.state.attachments[0].url), "file:///workspace/requirements.pdf");
+
+            suite.state.threadId = "thread-2";
+            compare(suite.state.attachments.length, 1);
+            compare(String(suite.state.attachments[0].url), "file:///workspace/note.wav");
+        }
+
+        function test_confirmedGuidanceKeepsAttachmentsForTheNextTurn() {
+            suite.state.threadId = "thread-1";
+            suite.state.saveDraft("Guide the active turn");
+            suite.state.addAttachments([suite.attachment("file:///workspace/next-turn.pdf", "next-turn.pdf", "mention")]);
+
+            suite.state.confirmTextSubmission();
+
+            compare(suite.state.draft, "");
+            compare(suite.state.attachments.length, 1);
+            compare(String(suite.state.attachments[0].url), "file:///workspace/next-turn.pdf");
+            compare(suite.state.draftCount(), 1);
         }
 
         function test_emptyDraftsAreRemoved() {

@@ -62,6 +62,21 @@ Item {
             compare(stopSpy.count, 0);
         }
 
+        function test_attachmentCanStartButCannotGuideATurnWithoutText() {
+            suite.state.writable = true;
+            suite.state.attachmentReady = true;
+            verify(suite.state.sendEnabled);
+
+            suite.state.turnInFlight = true;
+            verify(!suite.state.sendEnabled);
+
+            suite.state.turnRunning = true;
+            verify(!suite.state.sendEnabled);
+
+            suite.state.promptReady = true;
+            verify(suite.state.sendEnabled);
+        }
+
         function test_inputFollowsTheSubmissionLifecycle() {
             verify(suite.state.inputEnabled);
 
@@ -77,6 +92,22 @@ Item {
             suite.state.steerPending = false;
             suite.state.interruptPending = true;
             verify(!suite.state.inputEnabled);
+        }
+
+        function test_attachmentInputIgnoresPendingTurnControls() {
+            verify(suite.state.attachmentInputEnabled);
+
+            suite.state.turnInFlight = true;
+            verify(!suite.state.attachmentInputEnabled);
+
+            suite.state.turnRunning = true;
+            verify(suite.state.attachmentInputEnabled);
+
+            suite.state.steerPending = true;
+            verify(suite.state.attachmentInputEnabled);
+
+            suite.state.interruptPending = true;
+            verify(suite.state.attachmentInputEnabled);
         }
 
         function test_runningTurnOffersGuidanceAndIndependentStop() {

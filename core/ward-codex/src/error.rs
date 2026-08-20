@@ -60,6 +60,8 @@ pub enum CodexError {
         interaction_id: InteractionId,
         description: String,
     },
+    #[error("the Codex turn input is invalid: {description}")]
+    InvalidTurnInput { description: String },
     #[error("the Codex app-server does not support the selected turn controls: {description}")]
     UnsupportedTurnControls { description: String },
 }

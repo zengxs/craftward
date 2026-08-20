@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio::task::JoinHandle;
 use ward_codex::{
     CodexAppServerSource, CodexHistoryCancellation, InferenceOverride, InteractionResponse,
-    ReasoningEffort, TurnMode, TurnOptions, TurnPermissionPreset,
+    ReasoningEffort, TurnInput, TurnMode, TurnOptions, TurnPermissionPreset,
 };
 
 use self::commands::{
@@ -34,6 +34,17 @@ mod test_support;
 mod tests;
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
+const TURN_ATTACHMENT_LOCAL_IMAGE: c_int = 0;
+const TURN_ATTACHMENT_LOCAL_AUDIO: c_int = 1;
+const TURN_ATTACHMENT_MENTION: c_int = 2;
+
+/// One typed local attachment borrowed through Ward Core's private C interface.
+#[repr(C)]
+pub struct WardCodexTurnAttachment {
+    kind: c_int,
+    name: *const c_char,
+    path: *const c_char,
+}
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -546,7 +557,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_release_write(
     )
 }
 
-/// Starts one text turn on the selected persisted Codex thread.
+/// Starts one turn on the selected persisted Codex thread.
 ///
 /// The observer uses its previously acquired writer and emits ordered
 /// conversation updates until the turn completes.
@@ -555,17 +566,22 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_release_write(
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` and `prompt` must
-/// point to NUL-terminated strings. `model` may be null to preserve the
-/// thread's active model; otherwise it must point to a non-empty NUL-terminated
-/// string. `reasoning_effort` follows the same convention for the thread's
-/// active reasoning effort. `turn_mode` and `permission_preset` must use values
-/// declared by the private C interface. `output_error`, when non-null, must be
-/// writable.
+/// point to NUL-terminated strings. When `attachment_count` is nonzero,
+/// `attachments` must point to that many attachment records. Every record must
+/// contain NUL-terminated `name` and `path` strings and a declared attachment
+/// kind.
+/// `model` may be null to preserve the thread's active model; otherwise it must
+/// point to a non-empty NUL-terminated string. `reasoning_effort` follows the
+/// same convention for the thread's active reasoning effort. `turn_mode` and
+/// `permission_preset` must use values declared by the private C interface.
+/// `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     prompt: *const c_char,
+    attachments: *const WardCodexTurnAttachment,
+    attachment_count: usize,
     model: *const c_char,
     reasoning_effort: *const c_char,
     turn_mode: c_int,
@@ -590,9 +606,60 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
     else {
         return false;
     };
-    if prompt.trim().is_empty() {
+    let raw_attachments = if attachment_count == 0 {
+        &[][..]
+    } else {
+        if attachments.is_null() {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex turn attachments are missing") };
+            return false;
+        }
+        // SAFETY: The private C interface requires an array containing the
+        // documented number of attachment records.
+        unsafe { std::slice::from_raw_parts(attachments, attachment_count) }
+    };
+    let mut input = Vec::with_capacity(usize::from(!prompt.trim().is_empty()) + attachment_count);
+    if !prompt.trim().is_empty() {
+        input.push(TurnInput::Text(prompt));
+    }
+    for attachment in raw_attachments {
+        // SAFETY: Every attachment must name NUL-terminated strings.
+        let Some(name) = (unsafe {
+            required_string(attachment.name, "the Codex attachment name", output_error)
+        }) else {
+            return false;
+        };
+        // SAFETY: Every attachment must name NUL-terminated strings.
+        let Some(path) = (unsafe {
+            required_string(attachment.path, "the Codex attachment path", output_error)
+        }) else {
+            return false;
+        };
+        if name.trim().is_empty() {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex attachment name is empty") };
+            return false;
+        }
+        if path.trim().is_empty() {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex attachment path is empty") };
+            return false;
+        }
+        let path = PathBuf::from(path);
+        input.push(match attachment.kind {
+            TURN_ATTACHMENT_LOCAL_IMAGE => TurnInput::LocalImage { path },
+            TURN_ATTACHMENT_LOCAL_AUDIO => TurnInput::LocalAudio { path },
+            TURN_ATTACHMENT_MENTION => TurnInput::Mention { name, path },
+            _ => {
+                // SAFETY: The caller supplied the optional error output pointer.
+                unsafe { write_error(output_error, "the Codex attachment kind is invalid") };
+                return false;
+            }
+        });
+    }
+    if input.is_empty() {
         // SAFETY: The caller supplied the optional error output pointer.
-        unsafe { write_error(output_error, "the Codex prompt is empty") };
+        unsafe { write_error(output_error, "the Codex turn input is empty") };
         return false;
     }
     let model = if model.is_null() {
@@ -652,7 +719,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn(
         ObserverOperation::Turn,
         ObserverCommand::StartTurn(TurnRequest {
             thread_id,
-            prompt,
+            input,
             options,
         }),
         output_error,

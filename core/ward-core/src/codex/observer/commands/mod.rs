@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use tokio::sync::mpsc::Receiver;
-use ward_codex::{InteractionResponse, TurnOptions};
+use ward_codex::{InteractionResponse, TurnInput, TurnOptions};
 
 #[cfg(test)]
 mod tests;
@@ -67,7 +67,7 @@ pub(super) enum WriteAccessRequest {
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct TurnRequest {
     pub(super) thread_id: String,
-    pub(super) prompt: String,
+    pub(super) input: Vec<TurnInput>,
     pub(super) options: TurnOptions,
 }
 

@@ -67,12 +67,14 @@ tasks:
     cmds:
       - >-
         cmake --build "{{.BUILD_DIR}}"
-        --target CraftwardCodexHistoryControllerTest
+        --target
+        CraftwardCoreFfiSupportTest
+        CraftwardCodexHistoryControllerTest
         --parallel
       - >-
         ctest --test-dir "{{.BUILD_DIR}}"
         --output-on-failure
-        -R '^CraftwardCodexHistoryControllerTest$'
+        -R '^Craftward(CoreFfiSupport|CodexHistoryController)Test$'
 
   configure:
     label: "app:configure:{{.BUILD_TYPE}}:testing={{.BUILD_TESTING}}"

@@ -183,6 +183,16 @@ pub enum TurnPermissionPreset {
     ReadOnly,
 }
 
+/// One user-supplied input item used to start a Codex turn.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TurnInput {
+    Text(String),
+    LocalImage { path: PathBuf },
+    LocalAudio { path: PathBuf },
+    Mention { name: String, path: PathBuf },
+}
+
 /// User-facing controls that affect how a Codex turn runs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TurnOptions {

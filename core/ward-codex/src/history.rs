@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     CodexAppServerSource, CodexClient, CodexError, InteractionResponse, ModelCatalog, Thread,
     ThreadListOptions, ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
+    TurnInput,
 };
 
 /// A cloneable handle that interrupts in-flight Codex session operations.
@@ -492,12 +493,23 @@ impl CodexThreadWriter {
         text: &str,
         options: crate::TurnOptions,
     ) -> Result<ThreadStreamEvent, CodexError> {
+        self.begin_turn(&[TurnInput::Text(text.to_owned())], options)
+            .await
+    }
+
+    /// Starts a turn from typed user input without resuming again, preserving
+    /// the writer lease acquired on this same connection.
+    pub async fn begin_turn(
+        &mut self,
+        input: &[TurnInput],
+        options: crate::TurnOptions,
+    ) -> Result<ThreadStreamEvent, CodexError> {
         if self.cancellation.is_cancelled() {
             return Err(CodexError::Interrupted);
         }
         let result = self
             .client
-            .begin_text_turn(&self.thread_id, text, options)
+            .begin_turn(&self.thread_id, input, options)
             .await;
         if self.cancellation.is_cancelled() {
             Err(CodexError::Interrupted)

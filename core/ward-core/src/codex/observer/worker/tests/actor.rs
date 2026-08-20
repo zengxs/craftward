@@ -276,7 +276,7 @@ async fn forks_and_selects_a_thread_through_the_observer_actor() {
     sender
         .send(ObserverCommand::StartTurn(TurnRequest {
             thread_id: "thread-fork-1".to_owned(),
-            prompt: "Continue the fork".to_owned(),
+            input: vec![TurnInput::Text("Continue the fork".to_owned())],
             options: TurnOptions::default(),
         }))
         .await

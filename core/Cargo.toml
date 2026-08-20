@@ -28,6 +28,7 @@ ward-runtime = { path = "ward-runtime" }
 
 # third-party crates
 anyhow = "1"
+blake3 = "1"
 cc = "1"
 clap = "4"
 serde = "1"

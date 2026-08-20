@@ -3,7 +3,8 @@
 
 use tokio::sync::mpsc;
 use ward_codex::{
-    InteractionDecision, InteractionId, InteractionResponse, InteractionResponseBody, TurnOptions,
+    InteractionDecision, InteractionId, InteractionResponse, InteractionResponseBody, TurnInput,
+    TurnOptions,
 };
 
 use super::*;
@@ -12,7 +13,7 @@ use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
 fn turn_request(thread_id: &str, prompt: &str) -> TurnRequest {
     TurnRequest {
         thread_id: thread_id.to_owned(),
-        prompt: prompt.to_owned(),
+        input: vec![TurnInput::Text(prompt.to_owned())],
         options: TurnOptions::default(),
     }
 }

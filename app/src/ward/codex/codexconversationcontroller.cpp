@@ -3,31 +3,37 @@
 
 #include "ward/codex/codexconversationcontroller.h"
 
+#include "ward/codex/codexattachmentinput.h"
 #include "ward/codex/codexhistorycontroller.h"
 #include "ward/coreffi.h"
+#include "ward/coreffierror.h"
 
 #include <QByteArray>
 #include <QtProtobuf/QProtobufSerializer>
 
-#include <memory>
 #include <utility>
 
 namespace {
-struct ErrorDeleter
+QVariantMap
+attachmentDescriptorMap(const CodexAttachmentDescriptor& attachment)
 {
-    void operator()(WardError* error) const { ward_core_error_destroy(error); }
-};
+    return {
+        { QStringLiteral("url"), attachment.url },
+        { QStringLiteral("name"), attachment.name },
+        { QStringLiteral("mimeType"), attachment.mimeType },
+        { QStringLiteral("kind"), CodexAttachmentInput::kindName(attachment.kind) },
+        { QStringLiteral("managed"), attachment.managed },
+    };
+}
 
-using UniqueError = std::unique_ptr<WardError, ErrorDeleter>;
-
-QString
-copyError(WardError* rawError)
+QVariantList
+attachmentDescriptorList(const QList<CodexAttachmentDescriptor>& attachments)
 {
-    const UniqueError error(rawError);
-    if (!error)
-        return {};
-    const char* message = ward_core_error_message(error.get());
-    return message == nullptr ? QString() : QString::fromUtf8(message);
+    QVariantList described;
+    described.reserve(attachments.size());
+    for (const CodexAttachmentDescriptor& attachment : attachments)
+        described.append(attachmentDescriptorMap(attachment));
+    return described;
 }
 
 static_assert(static_cast<int>(CodexConversationController::TurnMode::DefaultMode) == WardCodexTurnModeDefault);
@@ -38,6 +44,9 @@ static_assert(static_cast<int>(CodexConversationController::PermissionPreset::Re
               WardCodexPermissionPresetRequestApproval);
 static_assert(static_cast<int>(CodexConversationController::PermissionPreset::ReadOnlyPermissions) ==
               WardCodexPermissionPresetReadOnly);
+static_assert(static_cast<int>(CodexAttachmentKind::LocalImage) == WardCodexTurnAttachmentKindLocalImage);
+static_assert(static_cast<int>(CodexAttachmentKind::LocalAudio) == WardCodexTurnAttachmentKindLocalAudio);
+static_assert(static_cast<int>(CodexAttachmentKind::Mention) == WardCodexTurnAttachmentKindMention);
 }
 
 CodexConversationController::CodexConversationController(CodexHistoryController* history, QObject* parent)
@@ -317,7 +326,7 @@ CodexConversationController::acquireWriteAccess()
     const QByteArray threadId = threadId_.toUtf8();
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_acquire_write(observer_, threadId.constData(), &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("Writing access could not be checked for this conversation.");
         setWriteAvailability(WriteAvailability::Unavailable, message);
@@ -341,7 +350,7 @@ CodexConversationController::releaseWriteAccess()
     const QByteArray threadId = threadId_.toUtf8();
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_release_write(observer_, threadId.constData(), &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("Writing access could not be released for this conversation.");
         setWriteAvailability(WriteAvailability::Unavailable, message);
@@ -352,14 +361,29 @@ CodexConversationController::releaseWriteAccess()
 }
 
 bool
-CodexConversationController::startTurn(const QString& prompt)
+CodexConversationController::startTurn(const QString& prompt, const QList<QUrl>& attachments)
 {
-    if (history_->showingArchived() || prompt.trimmed().isEmpty() || threadId_.isEmpty() || mutationInFlight() ||
-        writeAvailability_ != WriteAvailability::Writable)
+    if (history_->showingArchived() || (prompt.trimmed().isEmpty() && attachments.isEmpty()) || threadId_.isEmpty() ||
+        mutationInFlight() || writeAvailability_ != WriteAvailability::Writable)
         return false;
     if (observer_ == nullptr) {
         setErrorMessage(tr("The Codex history observer is unavailable."));
         return false;
+    }
+
+    QString attachmentError;
+    const std::optional<QList<CodexTurnAttachment>> preparedAttachments =
+      CodexAttachmentInput::prepare(attachments, &attachmentError);
+    if (!preparedAttachments.has_value()) {
+        setErrorMessage(attachmentError);
+        return false;
+    }
+    QList<WardCodexTurnAttachment> encodedAttachments;
+    encodedAttachments.reserve(preparedAttachments->size());
+    for (const CodexTurnAttachment& attachment : *preparedAttachments) {
+        encodedAttachments.append({ static_cast<WardCodexTurnAttachmentKind>(static_cast<int>(attachment.kind)),
+                                    attachment.name.constData(),
+                                    attachment.path.constData() });
     }
 
     const QByteArray threadId = threadId_.toUtf8();
@@ -371,12 +395,14 @@ CodexConversationController::startTurn(const QString& prompt)
           observer_,
           threadId.constData(),
           encodedPrompt.constData(),
+          encodedAttachments.isEmpty() ? nullptr : encodedAttachments.constData(),
+          static_cast<size_t>(encodedAttachments.size()),
           encodedModel.isEmpty() ? nullptr : encodedModel.constData(),
           encodedReasoningEffort.isEmpty() ? nullptr : encodedReasoningEffort.constData(),
           static_cast<WardCodexTurnMode>(static_cast<int>(turnMode_)),
           static_cast<WardCodexPermissionPreset>(static_cast<int>(permissionPreset_)),
           &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex turn could not be started.");
         setErrorMessage(message);
@@ -387,6 +413,33 @@ CodexConversationController::startTurn(const QString& prompt)
     setInterruptRequested(false);
     setTurnState(TurnState::Starting);
     return true;
+}
+
+QVariantList
+CodexConversationController::describeAttachments(const QList<QUrl>& attachments)
+{
+    QString attachmentError;
+    const std::optional<QList<CodexAttachmentDescriptor>> described =
+      CodexAttachmentInput::describe(attachments, false, &attachmentError);
+    if (!described.has_value()) {
+        setErrorMessage(attachmentError);
+        return {};
+    }
+    if (!described->isEmpty())
+        setErrorMessage({});
+    return attachmentDescriptorList(*described);
+}
+
+QVariantList
+CodexConversationController::attachmentsFromClipboard()
+{
+    QString attachmentError;
+    const QList<CodexAttachmentDescriptor> attachments = CodexAttachmentInput::fromClipboard(&attachmentError);
+    if (!attachmentError.isEmpty())
+        setErrorMessage(attachmentError);
+    else if (!attachments.isEmpty())
+        setErrorMessage({});
+    return attachmentDescriptorList(attachments);
 }
 
 bool
@@ -530,7 +583,7 @@ CodexConversationController::steerTurn(const QString& prompt)
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_steer_turn(
           observer_, threadId.constData(), turnId.constData(), encodedPrompt.constData(), &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex turn could not be guided.");
         setErrorMessage(message);
@@ -552,7 +605,7 @@ CodexConversationController::interruptTurn()
     const QByteArray threadId = threadId_.toUtf8();
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_interrupt_turn(observer_, threadId.constData(), &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex turn could not be stopped.");
         setErrorMessage(message);
@@ -743,7 +796,7 @@ CodexConversationController::sendInteractionResponse(const QString& interactionI
           reinterpret_cast<const std::uint8_t*>(encoded.constData()),
           static_cast<std::size_t>(encoded.size()),
           &rawError)) {
-        QString message = copyError(rawError);
+        QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = tr("The Codex response could not be sent.");
         setErrorMessage(message);

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use serde_json::Value;
+
 use super::FakeCodexAppServerOptions;
 
 pub(super) struct FakeState {
@@ -39,6 +41,7 @@ pub(super) struct FakeThread {
 pub(super) struct FakeTurn {
     pub(super) number: usize,
     pub(super) prompt: String,
+    pub(super) input: Vec<Value>,
     pub(super) guidance: Vec<String>,
     pub(super) answer: String,
     pub(super) completed: bool,

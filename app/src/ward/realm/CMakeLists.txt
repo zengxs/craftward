@@ -16,6 +16,7 @@ target_include_directories(CraftwardRealm
 
 target_link_libraries(CraftwardRealm
     PRIVATE
+        CraftwardCoreFfiSupport
         Qt6::Gui
         Qt6::Qml
         Ward::Core

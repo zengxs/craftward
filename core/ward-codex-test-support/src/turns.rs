@@ -132,10 +132,14 @@ pub(super) fn turn_start_messages(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let prompt = params
+    let input = params
         .get("input")
         .and_then(Value::as_array)
-        .and_then(|input| input.first())
+        .cloned()
+        .unwrap_or_default();
+    let prompt = input
+        .iter()
+        .find(|input| input.get("type").and_then(Value::as_str) == Some("text"))
         .and_then(|input| input.get("text"))
         .and_then(Value::as_str)
         .unwrap_or("")
@@ -203,6 +207,7 @@ pub(super) fn turn_start_messages(
         thread.turns.push(FakeTurn {
             number: turn_number,
             prompt: prompt.clone(),
+            input: input.clone(),
             guidance: vec![],
             answer: "Done.".to_owned(),
             completed: turn_scenario == FakeTurnScenario::Complete,
@@ -215,7 +220,7 @@ pub(super) fn turn_start_messages(
     let user = json!({
         "id": user_id,
         "type": "userMessage",
-        "content": [{ "type": "text", "text": prompt }]
+        "content": input
     });
     let mut messages = vec![
         json!({
@@ -454,7 +459,7 @@ pub(super) fn turn_json(
     let mut items = vec![json!({
         "id": user_id,
         "type": "userMessage",
-        "content": [{ "type": "text", "text": turn.prompt }]
+        "content": turn.input
     })];
     items.extend(turn.guidance.iter().map(|guidance| {
         json!({

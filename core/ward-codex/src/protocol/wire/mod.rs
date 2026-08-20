@@ -13,7 +13,7 @@ pub(crate) use self::notifications::turn_stream_event;
 use self::thread::{WireThread, WireTurn};
 use crate::{
     CodexError, ServerInfo, ThreadInferenceState, ThreadStartOptions, ThreadSubscription, Turn,
-    TurnMode, TurnOptions, TurnPermissionPreset,
+    TurnInput, TurnMode, TurnOptions, TurnPermissionPreset,
 };
 
 mod interactions;
@@ -258,7 +258,7 @@ impl ThreadResumeResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TurnStartParams<'a> {
     pub(crate) thread_id: &'a str,
-    input: Vec<TextTurnInput<'a>>,
+    input: Vec<WireTurnInput<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -274,9 +274,90 @@ pub(crate) struct TurnStartParams<'a> {
 }
 
 impl<'a> TurnStartParams<'a> {
+    pub(crate) fn validate_input(input: &'a [TurnInput]) -> Result<(), CodexError> {
+        if input.is_empty() {
+            return Err(CodexError::InvalidTurnInput {
+                description: "at least one input item is required".to_owned(),
+            });
+        }
+        for input in input {
+            match input {
+                TurnInput::Text(text) if text.trim().is_empty() => {
+                    return Err(CodexError::InvalidTurnInput {
+                        description: "text input is empty".to_owned(),
+                    });
+                }
+                TurnInput::LocalImage { path } if path.as_os_str().is_empty() => {
+                    return Err(CodexError::InvalidTurnInput {
+                        description: "a local image path is empty".to_owned(),
+                    });
+                }
+                TurnInput::LocalAudio { path } if path.as_os_str().is_empty() => {
+                    return Err(CodexError::InvalidTurnInput {
+                        description: "a local audio path is empty".to_owned(),
+                    });
+                }
+                TurnInput::Mention { name, .. } if name.trim().is_empty() => {
+                    return Err(CodexError::InvalidTurnInput {
+                        description: "a mentioned file name is empty".to_owned(),
+                    });
+                }
+                TurnInput::Mention { path, .. } if path.as_os_str().is_empty() => {
+                    return Err(CodexError::InvalidTurnInput {
+                        description: "a mentioned file path is empty".to_owned(),
+                    });
+                }
+                TurnInput::Text(_)
+                | TurnInput::LocalImage { .. }
+                | TurnInput::LocalAudio { .. }
+                | TurnInput::Mention { .. } => {}
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn new(
+        thread_id: &'a str,
+        input: &'a [TurnInput],
+        active_inference: &'a ThreadInferenceState,
+        options: &'a TurnOptions,
+    ) -> Result<Self, CodexError> {
+        Self::validate_input(input)?;
+        let input = input
+            .iter()
+            .map(|input| match input {
+                TurnInput::Text(text) => WireTurnInput::Text { text },
+                TurnInput::LocalImage { path } => WireTurnInput::LocalImage { path },
+                TurnInput::LocalAudio { path } => WireTurnInput::LocalAudio { path },
+                TurnInput::Mention { name, path } => WireTurnInput::Mention { name, path },
+            })
+            .collect();
+        Self::with_input(thread_id, input, active_inference, options)
+    }
+
+    #[cfg(test)]
     pub(crate) fn text(
         thread_id: &'a str,
         text: &'a str,
+        active_inference: &'a ThreadInferenceState,
+        options: &'a TurnOptions,
+    ) -> Result<Self, CodexError> {
+        if text.trim().is_empty() {
+            return Err(CodexError::InvalidTurnInput {
+                description: "text input is empty".to_owned(),
+            });
+        }
+        Self::with_input(
+            thread_id,
+            vec![WireTurnInput::Text { text }],
+            active_inference,
+            options,
+        )
+    }
+
+    fn with_input(
+        thread_id: &'a str,
+        input: Vec<WireTurnInput<'a>>,
         active_inference: &'a ThreadInferenceState,
         options: &'a TurnOptions,
     ) -> Result<Self, CodexError> {
@@ -335,7 +416,7 @@ impl<'a> TurnStartParams<'a> {
         };
         Ok(Self {
             thread_id,
-            input: vec![TextTurnInput { kind: "text", text }],
+            input,
             model: selected_model,
             effort: selected_reasoning_effort,
             collaboration_mode,
@@ -395,10 +476,12 @@ enum SandboxPolicy {
 }
 
 #[derive(Serialize)]
-struct TextTurnInput<'a> {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    text: &'a str,
+#[serde(tag = "type", rename_all = "camelCase")]
+enum WireTurnInput<'a> {
+    Text { text: &'a str },
+    LocalImage { path: &'a Path },
+    LocalAudio { path: &'a Path },
+    Mention { name: &'a str, path: &'a Path },
 }
 
 #[derive(Deserialize)]
@@ -411,7 +494,7 @@ pub(crate) struct TurnStartResponse {
 pub(crate) struct TurnSteerParams<'a> {
     pub(crate) thread_id: &'a str,
     pub(crate) expected_turn_id: &'a str,
-    input: Vec<TextTurnInput<'a>>,
+    input: Vec<WireTurnInput<'a>>,
 }
 
 impl<'a> TurnSteerParams<'a> {
@@ -419,7 +502,7 @@ impl<'a> TurnSteerParams<'a> {
         Self {
             thread_id,
             expected_turn_id,
-            input: vec![TextTurnInput { kind: "text", text }],
+            input: vec![WireTurnInput::Text { text }],
         }
     }
 }

@@ -386,7 +386,7 @@ impl WriterRuntime {
     ) -> OperationDrive<bool> {
         let TurnRequest {
             thread_id,
-            prompt,
+            input,
             options,
         } = request;
         let inference_override_requested = options.inference.is_some();
@@ -416,12 +416,7 @@ impl WriterRuntime {
                 .writer
                 .as_mut()
                 .expect("the matching writer was checked above");
-            drive_operation(
-                writer.begin_text_turn(&prompt, options),
-                receiver,
-                cancellation,
-            )
-            .await
+            drive_operation(writer.begin_turn(&input, options), receiver, cancellation).await
         };
         let OperationDrive::Completed {
             output: result,

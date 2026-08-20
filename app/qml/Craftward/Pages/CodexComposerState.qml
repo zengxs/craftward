@@ -8,6 +8,7 @@ QtObject {
 
     property int capacity: 20
     property string draft
+    property var attachments: []
     property string threadId
     property string activeThreadId
     property var drafts: []
@@ -21,8 +22,41 @@ QtObject {
         return root.drafts.length;
     }
 
+    function attachmentUrls() {
+        return root.attachments.map(attachment => attachment.url);
+    }
+
     function confirmSubmission() {
+        root.attachments = [];
         root.saveDraft("");
+    }
+
+    function confirmTextSubmission() {
+        root.saveDraft("");
+    }
+
+    function addAttachments(candidates) {
+        if (root.activeThreadId !== root.threadId)
+            root.activateThread();
+
+        const nextAttachments = root.attachments.slice();
+        for (let index = 0; index < candidates.length; ++index) {
+            const candidate = candidates[index];
+            const candidateKey = String(candidate.url);
+            if (!nextAttachments.some(attachment => String(attachment.url) === candidateKey))
+                nextAttachments.push(candidate);
+        }
+        root.attachments = nextAttachments;
+        root.persistActiveDraft();
+    }
+
+    function removeAttachment(index) {
+        if (index < 0 || index >= root.attachments.length)
+            return;
+        const nextAttachments = root.attachments.slice();
+        nextAttachments.splice(index, 1);
+        root.attachments = nextAttachments;
+        root.persistActiveDraft();
     }
 
     function saveDraft(text) {
@@ -32,13 +66,18 @@ QtObject {
         const normalizedText = String(text);
         if (root.draft !== normalizedText)
             root.draft = normalizedText;
+        root.persistActiveDraft();
+    }
+
+    function persistActiveDraft() {
         root.removeDraft(root.activeThreadId);
-        if (root.activeThreadId.length === 0 || normalizedText.length === 0)
+        if (root.activeThreadId.length === 0 || (root.draft.length === 0 && root.attachments.length === 0))
             return;
 
         root.drafts.push({
             "threadId": root.activeThreadId,
-            "text": normalizedText
+            "text": root.draft,
+            "attachments": root.attachments.slice()
         });
         root.trimDrafts();
     }
@@ -50,11 +89,14 @@ QtObject {
         root.activeThreadId = root.threadId;
         const index = root.draftIndex(root.activeThreadId);
         let restoredDraft = "";
+        let restoredAttachments = [];
         if (index >= 0) {
             const entry = root.drafts.splice(index, 1)[0];
             root.drafts.push(entry);
             restoredDraft = entry.text;
+            restoredAttachments = entry.attachments ? entry.attachments.slice() : [];
         }
+        root.attachments = restoredAttachments;
         root.draft = restoredDraft;
         root.editorShouldLoseFocus();
     }

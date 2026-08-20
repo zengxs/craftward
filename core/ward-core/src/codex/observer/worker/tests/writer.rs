@@ -28,7 +28,19 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
         .run_turn(
             TurnRequest {
                 thread_id: started_thread_id.clone(),
-                prompt: "Hello".to_owned(),
+                input: vec![
+                    TurnInput::Text("Hello".to_owned()),
+                    TurnInput::LocalImage {
+                        path: "/workspace/image.png".into(),
+                    },
+                    TurnInput::LocalAudio {
+                        path: "/workspace/note.wav".into(),
+                    },
+                    TurnInput::Mention {
+                        name: "requirements.pdf".to_owned(),
+                        path: "/workspace/requirements.pdf".into(),
+                    },
+                ],
                 options: TurnOptions::default(),
             },
             &sink,
@@ -86,7 +98,10 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
             })
             .collect::<Vec<_>>();
         assert_eq!(messages[0].message_id, "persisted-user-1");
-        assert_eq!(messages[0].text, "Hello");
+        assert_eq!(
+            messages[0].text,
+            "Hello\n[image: /workspace/image.png]\n[audio: /workspace/note.wav]\n[mention: requirements.pdf (/workspace/requirements.pdf)]"
+        );
         assert_eq!(messages[1].message_id, "persisted-agent-1");
         assert_eq!(messages[1].text, "Done.");
     }
@@ -119,7 +134,7 @@ async fn steers_an_active_turn_and_reports_the_outcome() {
         .run_turn(
             TurnRequest {
                 thread_id: thread_id.clone(),
-                prompt: "Implement the change".to_owned(),
+                input: vec![TurnInput::Text("Implement the change".to_owned())],
                 options: TurnOptions::default(),
             },
             &sink,
@@ -277,7 +292,7 @@ async fn publishes_and_clears_command_approval_before_the_turn_completes() {
         state.run_turn(
             TurnRequest {
                 thread_id: thread_id.clone(),
-                prompt: "Run pwd".to_owned(),
+                input: vec![TurnInput::Text("Run pwd".to_owned())],
                 options: TurnOptions::default(),
             },
             &sink,

@@ -44,6 +44,7 @@ target_include_directories(Craftward
 
 target_link_libraries(Craftward
     PRIVATE
+        CraftwardCoreFfiSupport
         CraftwardComponentsplugin
         CraftwardCodex
         CraftwardCodexplugin

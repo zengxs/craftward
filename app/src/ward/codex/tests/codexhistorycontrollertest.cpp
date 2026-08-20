@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "ward/codex/codexhistorycontroller.h"
+#include "ward/codex/codexattachmentinput.h"
 
+#include <QDirIterator>
+#include <QFile>
+#include <QImage>
+#include <QRegularExpression>
+#include <QTemporaryDir>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
@@ -173,7 +179,129 @@ class CodexHistoryControllerTest : public QObject
     void keepsArchivedConversationsReadOnly();
     void appliesModelCatalogUpdatesAndErrors();
     void keepsInferenceSelectionScopedToTheConversationUntilAccepted();
+    void describesAndClassifiesLocalAttachmentsByContent();
+    void storesClipboardImagesByBlake3Content();
+    void rejectsInvalidLocalAttachments();
 };
+
+void
+CodexHistoryControllerTest::describesAndClassifiesLocalAttachmentsByContent()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto writeFile = [&directory](const QString& name, const QByteArray& content) {
+        QFile file(directory.filePath(name));
+        return file.open(QIODevice::WriteOnly) && file.write(content) == content.size();
+    };
+    const QString imagePath = directory.filePath(QStringLiteral("visual.dat"));
+    const QString audioPath = directory.filePath(QStringLiteral("recording.dat"));
+    const QString documentPath = directory.filePath(QStringLiteral("requirements.dat"));
+    QVERIFY(writeFile(QStringLiteral("visual.dat"),
+                      QByteArray::fromHex("89504e470d0a1a0a0000000d4948445200000001000000010806000000")));
+    QVERIFY(writeFile(
+      QStringLiteral("recording.dat"),
+      QByteArray::fromHex("524946462400000057415645666d74201000000001000100401f0000803e0000020010006461746100000000")));
+    QVERIFY(writeFile(QStringLiteral("requirements.dat"), QByteArrayLiteral("%PDF-1.7\n")));
+
+    QString errorMessage;
+    const auto described = CodexAttachmentInput::describe({ QUrl::fromLocalFile(imagePath),
+                                                            QUrl::fromLocalFile(audioPath),
+                                                            QUrl::fromLocalFile(documentPath),
+                                                            QUrl::fromLocalFile(imagePath) },
+                                                          false,
+                                                          &errorMessage);
+    QVERIFY(described.has_value());
+    QVERIFY(errorMessage.isEmpty());
+    QCOMPARE(described->size(), 3);
+    QCOMPARE((*described)[0].kind, CodexAttachmentKind::LocalImage);
+    QCOMPARE((*described)[0].mimeType, QStringLiteral("image/png"));
+    QCOMPARE((*described)[0].name, QStringLiteral("visual.dat"));
+    QCOMPARE((*described)[0].url, QUrl::fromLocalFile(QFileInfo(imagePath).canonicalFilePath()));
+    QVERIFY(!(*described)[0].managed);
+    QCOMPARE((*described)[1].kind, CodexAttachmentKind::LocalAudio);
+    QVERIFY((*described)[1].mimeType.startsWith(QStringLiteral("audio/")));
+    QCOMPARE((*described)[2].kind, CodexAttachmentKind::Mention);
+    QCOMPARE((*described)[2].mimeType, QStringLiteral("application/pdf"));
+
+    const auto prepared = CodexAttachmentInput::prepare({ QUrl::fromLocalFile(imagePath),
+                                                          QUrl::fromLocalFile(audioPath),
+                                                          QUrl::fromLocalFile(documentPath),
+                                                          QUrl::fromLocalFile(imagePath) },
+                                                        &errorMessage);
+
+    QVERIFY(prepared.has_value());
+    QVERIFY(errorMessage.isEmpty());
+    QCOMPARE(prepared->size(), 3);
+    QCOMPARE((*prepared)[0].kind, CodexAttachmentKind::LocalImage);
+    QCOMPARE((*prepared)[0].name, QByteArrayLiteral("visual.dat"));
+    QCOMPARE((*prepared)[1].kind, CodexAttachmentKind::LocalAudio);
+    QCOMPARE((*prepared)[1].name, QByteArrayLiteral("recording.dat"));
+    QCOMPARE((*prepared)[2].kind, CodexAttachmentKind::Mention);
+    QCOMPARE((*prepared)[2].name, QByteArrayLiteral("requirements.dat"));
+    QCOMPARE((*prepared)[2].path, QFileInfo(documentPath).canonicalFilePath().toUtf8());
+}
+
+void
+CodexHistoryControllerTest::storesClipboardImagesByBlake3Content()
+{
+    QTemporaryDir dataDirectory;
+    QVERIFY(dataDirectory.isValid());
+    QImage firstImage(2, 2, QImage::Format_RGBA8888);
+    firstImage.fill(QColorConstants::Red);
+    QImage secondImage(2, 2, QImage::Format_RGBA8888);
+    secondImage.fill(QColorConstants::Blue);
+
+    QString errorMessage;
+    const QUrl firstUrl = CodexAttachmentInput::storeClipboardImage(firstImage, dataDirectory.path(), &errorMessage);
+    QVERIFY2(!firstUrl.isEmpty(), qPrintable(errorMessage));
+    QVERIFY(errorMessage.isEmpty());
+    const QUrl duplicateUrl =
+      CodexAttachmentInput::storeClipboardImage(firstImage, dataDirectory.path(), &errorMessage);
+    QCOMPARE(duplicateUrl, firstUrl);
+    QVERIFY(errorMessage.isEmpty());
+    const QUrl secondUrl = CodexAttachmentInput::storeClipboardImage(secondImage, dataDirectory.path(), &errorMessage);
+    QVERIFY2(!secondUrl.isEmpty(), qPrintable(errorMessage));
+    QVERIFY(secondUrl != firstUrl);
+
+    const QFileInfo firstFile(firstUrl.toLocalFile());
+    QVERIFY(firstFile.isFile());
+    QVERIFY(QRegularExpression(QStringLiteral("^[0-9a-f]{64}\\.png$")).match(firstFile.fileName()).hasMatch());
+    QDir contentDirectory = firstFile.dir();
+    QCOMPARE(contentDirectory.dirName(), firstFile.completeBaseName().left(2));
+    QVERIFY(contentDirectory.cdUp());
+    QCOMPARE(contentDirectory.dirName(), QStringLiteral("attachments"));
+    QVERIFY(contentDirectory.cdUp());
+    QCOMPARE(contentDirectory.absolutePath(), QDir(dataDirectory.path()).absolutePath());
+
+    qsizetype storedFileCount = 0;
+    QDirIterator files(dataDirectory.path(), { QStringLiteral("*.png") }, QDir::Files, QDirIterator::Subdirectories);
+    while (files.hasNext()) {
+        files.next();
+        ++storedFileCount;
+    }
+    QCOMPARE(storedFileCount, 2);
+}
+
+void
+CodexHistoryControllerTest::rejectsInvalidLocalAttachments()
+{
+    QString errorMessage;
+    auto prepared =
+      CodexAttachmentInput::prepare({ QUrl(QStringLiteral("https://example.com/file.pdf")) }, &errorMessage);
+    QVERIFY(!prepared.has_value());
+    QVERIFY(!errorMessage.isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    prepared = CodexAttachmentInput::prepare({ QUrl::fromLocalFile(directory.path()) }, &errorMessage);
+    QVERIFY(!prepared.has_value());
+    QVERIFY(!errorMessage.isEmpty());
+
+    prepared = CodexAttachmentInput::prepare({ QUrl::fromLocalFile(directory.filePath(QStringLiteral("missing.txt"))) },
+                                             &errorMessage);
+    QVERIFY(!prepared.has_value());
+    QVERIFY(!errorMessage.isEmpty());
+}
 
 void
 CodexHistoryControllerTest::appliesModelCatalogUpdatesAndErrors()
@@ -724,7 +852,7 @@ CodexHistoryControllerTest::keepsArchivedConversationsReadOnly()
     conversation->acquireWriteAccess();
     QCOMPARE(conversation->writeAvailability(), CodexConversationController::WriteAvailability::NotRequested);
     conversation->setWriteAvailability(CodexConversationController::WriteAvailability::Writable);
-    QVERIFY(!conversation->startTurn(QStringLiteral("Continue")));
+    QVERIFY(!conversation->startTurn(QStringLiteral("Continue"), {}));
     QVERIFY(controller.errorMessage().isEmpty());
 }
 
