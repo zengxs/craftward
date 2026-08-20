@@ -3,7 +3,7 @@
 
 use ward_runtime::WardRuntime as RuntimeOwner;
 
-use crate::{WardError, clear_error, write_error};
+use super::error::{WardError, clear_error, write_error};
 
 /// An opaque owner of Ward Core's process-wide asynchronous runtime.
 pub struct WardRuntime {

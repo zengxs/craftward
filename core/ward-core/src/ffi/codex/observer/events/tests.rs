@@ -6,8 +6,8 @@ use std::sync::Mutex;
 use ward_codex::{ThreadActiveFlag, ThreadPage};
 
 use super::super::test_support::{CapturedEvent, event_sink, thread};
-use crate::codex::live::LiveRuntimeState;
-use crate::codex::wire;
+use crate::ffi::codex::live::LiveRuntimeState;
+use crate::ffi::codex::wire;
 
 #[test]
 fn serializes_thread_pages_for_the_callback_duration() {

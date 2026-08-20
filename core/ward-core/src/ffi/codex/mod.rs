@@ -3,7 +3,7 @@
 
 use std::ffi::{CStr, c_char};
 
-use crate::{WardError, write_error};
+use super::error::{WardError, write_error};
 
 mod live;
 mod observer;

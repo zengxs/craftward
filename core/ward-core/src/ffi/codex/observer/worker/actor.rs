@@ -49,7 +49,7 @@ fn watch_created_thread(
     *live_emit_due = None;
 }
 
-pub(in crate::codex::observer) async fn run_observer(
+pub(in crate::ffi::codex::observer) async fn run_observer(
     source: CodexAppServerSource,
     mut receiver: Receiver<ObserverCommand>,
     sink: HistoryEventSink,

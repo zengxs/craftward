@@ -24,16 +24,16 @@ use super::state::{
     classify_write_access_result,
 };
 use super::writer::WriterRuntime;
-use crate::codex::live::LiveRuntimeState;
-use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
-use crate::codex::observer::ObserverOperationGate;
-use crate::codex::observer::commands::{
+use crate::ffi::codex::live::LiveRuntimeState;
+use crate::ffi::codex::observer::COMMAND_QUEUE_CAPACITY;
+use crate::ffi::codex::observer::ObserverOperationGate;
+use crate::ffi::codex::observer::commands::{
     CommandUpdate, ObserverCommand, ThreadControlRequest, ThreadForkRequest, ThreadLifecycleAction,
     ThreadLifecycleRequest, ThreadListScope, ThreadRenameRequest, ThreadStartRequest, TurnRequest,
     TurnSteerRequest,
 };
-use crate::codex::observer::events::HistoryEventSink;
-use crate::codex::wire;
+use crate::ffi::codex::observer::events::HistoryEventSink;
+use crate::ffi::codex::wire;
 
 mod actor;
 mod history;

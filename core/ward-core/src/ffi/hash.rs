@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use crate::{WardError, clear_error, write_error};
+use super::error::{WardError, clear_error, write_error};
 
 /// A BLAKE3-256 digest passed through Ward Core's private C interface.
 #[repr(C)]

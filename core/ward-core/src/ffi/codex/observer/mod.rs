@@ -22,7 +22,7 @@ use self::commands::{
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
 use super::{WardBuffer, required_string, wire};
-use crate::{WardError, clear_error, write_error};
+use crate::ffi::error::{WardError, clear_error, write_error};
 
 mod commands;
 mod events;

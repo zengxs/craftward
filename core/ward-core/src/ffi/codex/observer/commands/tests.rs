@@ -8,7 +8,7 @@ use ward_codex::{
 };
 
 use super::*;
-use crate::codex::observer::COMMAND_QUEUE_CAPACITY;
+use crate::ffi::codex::observer::COMMAND_QUEUE_CAPACITY;
 
 fn turn_request(thread_id: &str, prompt: &str) -> TurnRequest {
     TurnRequest {
