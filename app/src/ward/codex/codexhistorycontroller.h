@@ -16,6 +16,7 @@
 
 struct CodexHistoryCallbackContext;
 struct WardBuffer;
+struct WardCodexExecutionTarget;
 struct WardCodexHistoryObserver;
 struct WardRuntime;
 
@@ -38,7 +39,9 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(bool changingThreadLifecycle READ changingThreadLifecycle NOTIFY changingThreadLifecycleChanged)
 
   public:
-    explicit CodexHistoryController(const WardRuntime* runtime, QObject* parent = nullptr);
+    explicit CodexHistoryController(const WardRuntime* runtime,
+                                    const WardCodexExecutionTarget* executionTarget,
+                                    QObject* parent = nullptr);
     ~CodexHistoryController() override;
 
     [[nodiscard]] CodexThreadModel* threads();

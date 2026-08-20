@@ -11,8 +11,8 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task::JoinHandle;
 use ward_codex::{
-    CodexAppServerSource, CodexHistoryCancellation, InferenceOverride, InteractionResponse,
-    ReasoningEffort, TurnInput, TurnMode, TurnOptions, TurnPermissionPreset,
+    CodexHistoryCancellation, InferenceOverride, InteractionResponse, ReasoningEffort, TurnInput,
+    TurnMode, TurnOptions, TurnPermissionPreset,
 };
 
 use self::commands::{
@@ -21,6 +21,7 @@ use self::commands::{
 };
 use self::events::HistoryEventSink;
 use self::worker::run_observer;
+use super::execution_target::WardCodexExecutionTarget;
 use super::{WardBuffer, required_string, wire};
 use crate::ffi::error::{WardError, clear_error, write_error};
 
@@ -160,13 +161,13 @@ impl Drop for WardCodexHistoryObserver {
 /// # Safety
 ///
 /// `runtime` must point to a live Ward runtime that outlives the returned
-/// observer. `executable` must point to a NUL-terminated string. `callback`
-/// must be a valid function pointer. `output_error`, when non-null, must be
-/// writable.
+/// observer. `execution_target` must point to a live Codex execution target
+/// for the duration of this call. `callback` must be a valid function pointer.
+/// `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_codex_history_observer_open(
     runtime: *const crate::WardRuntime,
-    executable: *const c_char,
+    execution_target: *const WardCodexExecutionTarget,
     callback: WardCodexHistoryEventCallback,
     callback_context: *mut c_void,
     output_error: *mut *mut WardError,
@@ -178,10 +179,10 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
         unsafe { write_error(output_error, "the Ward async runtime is missing") };
         return std::ptr::null_mut();
     };
-    // SAFETY: The private C interface requires the documented string pointer.
-    let Some(executable) =
-        (unsafe { required_string(executable, "the Codex executable", output_error) })
-    else {
+    // SAFETY: A non-null pointer names a live handle owned by the caller.
+    let Some(execution_target) = (unsafe { execution_target.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex execution target is missing") };
         return std::ptr::null_mut();
     };
     let Some(callback) = callback else {
@@ -194,19 +195,13 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
     let cancellation = CodexHistoryCancellation::new();
     let active_operation = Arc::new(ObserverOperationGate::new());
     let sink = HistoryEventSink::new(callback, callback_context);
+    let source = execution_target.source();
     let runtime = runtime.handle();
     let worker = runtime.spawn({
         let cancellation = cancellation.clone();
         let active_operation = Arc::clone(&active_operation);
         async move {
-            run_observer(
-                CodexAppServerSource::executable(PathBuf::from(executable)),
-                receiver,
-                sink,
-                cancellation,
-                active_operation,
-            )
-            .await;
+            run_observer(source, receiver, sink, cancellation, active_operation).await;
         }
     });
 

@@ -34,15 +34,11 @@ deserializeBytes(QByteArrayView bytes, Message& message)
     return QStringLiteral("Failed to decode Ward Core response: %1").arg(serializer.lastErrorString());
 }
 
-QByteArray
-codexExecutable()
-{
-    const QByteArray configured = qgetenv("CRAFTWARD_CODEX_PATH");
-    return configured.isEmpty() ? QByteArrayLiteral("codex") : configured;
-}
 }
 
-CodexHistoryController::CodexHistoryController(const WardRuntime* runtime, QObject* parent)
+CodexHistoryController::CodexHistoryController(const WardRuntime* runtime,
+                                               const WardCodexExecutionTarget* executionTarget,
+                                               QObject* parent)
   : QObject(parent)
   , threadModel_(this)
   , conversationController_(this, this)
@@ -58,9 +54,8 @@ CodexHistoryController::CodexHistoryController(const WardRuntime* runtime, QObje
     });
 
     WardError* rawError = nullptr;
-    const QByteArray executable = codexExecutable();
     historyObserver_ = ward_core_codex_history_observer_open(
-      runtime, executable.constData(), handleHistoryEvent, callbackContext_.get(), &rawError);
+      runtime, executionTarget, handleHistoryEvent, callbackContext_.get(), &rawError);
     if (historyObserver_ == nullptr) {
         callbackContext_.reset();
         loadingThreads_ = false;

@@ -8,6 +8,7 @@
 #include "ward/realm/realmcontroller.h"
 #include <ward_core.h>
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QObject>
@@ -33,6 +34,17 @@ struct RuntimeDeleter
     void operator()(WardRuntime* runtime) const { ward_core_runtime_destroy(runtime); }
 };
 
+struct CodexExecutionTargetDeleter
+{
+    void operator()(WardCodexExecutionTarget* target) const { ward_core_codex_execution_target_destroy(target); }
+};
+
+QByteArray
+codexExecutable()
+{
+    const QByteArray configured = qgetenv("CRAFTWARD_CODEX_PATH");
+    return configured.isEmpty() ? QByteArrayLiteral("codex") : configured;
+}
 }
 
 int
@@ -63,7 +75,19 @@ main(int argc, char* argv[])
         return 1;
     }
 
-    CodexHistoryController codexHistoryController(runtime.get());
+    WardError* rawTargetError = nullptr;
+    const QByteArray executable = codexExecutable();
+    std::unique_ptr<WardCodexExecutionTarget, CodexExecutionTargetDeleter> codexExecutionTarget(
+      ward_core_codex_execution_target_create_host(executable.constData(), &rawTargetError));
+    const QString targetError = ward::coreffi::takeErrorMessage(rawTargetError);
+    if (codexExecutionTarget == nullptr) {
+        const QString message =
+          targetError.isEmpty() ? QStringLiteral("The host Codex execution target could not be created.") : targetError;
+        qCritical("%s", qUtf8Printable(message));
+        return 1;
+    }
+
+    CodexHistoryController codexHistoryController(runtime.get(), codexExecutionTarget.get());
     RealmController realmController;
     ApplicationController applicationController(app, realmController);
     QQmlApplicationEngine engine;

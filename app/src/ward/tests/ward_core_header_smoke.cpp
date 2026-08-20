@@ -6,6 +6,14 @@
 #include <type_traits>
 
 static_assert(std::is_same_v<WardCodexHistoryEventCallback, void (*)(void*, const WardBuffer*)>);
+static_assert(std::is_same_v<decltype(&ward_core_codex_execution_target_create_host),
+                             WardCodexExecutionTarget* (*)(const char*, WardError**)>);
+static_assert(std::is_same_v<decltype(&ward_core_codex_history_observer_open),
+                             WardCodexHistoryObserver* (*)(const WardRuntime*,
+                                                           const WardCodexExecutionTarget*,
+                                                           WardCodexHistoryEventCallback,
+                                                           void*,
+                                                           WardError**)>);
 static_assert(std::is_same_v<WardRealmEventCallback, void (*)(void*, const WardRealmEvent*)>);
 static_assert(std::is_same_v<decltype(&ward_core_realm_start_async), bool (*)(WardRealm*, WardError**)>);
 static_assert(

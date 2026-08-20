@@ -306,7 +306,7 @@ CodexHistoryControllerTest::rejectsInvalidLocalAttachments()
 void
 CodexHistoryControllerTest::appliesModelCatalogUpdatesAndErrors()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
 
     HistoryEvent error;
@@ -341,7 +341,7 @@ CodexHistoryControllerTest::appliesModelCatalogUpdatesAndErrors()
 void
 CodexHistoryControllerTest::keepsInferenceSelectionScopedToTheConversationUntilAccepted()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(modelCatalogEvent(), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
@@ -411,7 +411,7 @@ CodexHistoryControllerTest::keepsInferenceSelectionScopedToTheConversationUntilA
 void
 CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
@@ -467,7 +467,7 @@ CodexHistoryControllerTest::replacesLiveFirstTurnWithItsPersistedSnapshot()
 void
 CodexHistoryControllerTest::marksOnlyAuthoritativeTurnEndsAsForkBoundaries()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED,
                                                    {
@@ -507,7 +507,7 @@ CodexHistoryControllerTest::marksOnlyAuthoritativeTurnEndsAsForkBoundaries()
 void
 CodexHistoryControllerTest::confirmsAcceptedTurnGuidance()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     QSignalSpy steeredSpy(conversation, &CodexConversationController::turnSteered);
@@ -522,7 +522,7 @@ CodexHistoryControllerTest::confirmsAcceptedTurnGuidance()
 void
 CodexHistoryControllerTest::reportsRejectedTurnGuidanceWithoutConfirmation()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     QSignalSpy steeredSpy(conversation, &CodexConversationController::turnSteered);
@@ -540,7 +540,7 @@ CodexHistoryControllerTest::reportsRejectedTurnGuidanceWithoutConfirmation()
 void
 CodexHistoryControllerTest::validatesConversationRenamesBeforeDispatch()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     controller.clearError();
 
     QVERIFY(!controller.renameSelectedThread(QStringLiteral("Focused work")));
@@ -558,7 +558,7 @@ CodexHistoryControllerTest::validatesConversationRenamesBeforeDispatch()
 void
 CodexHistoryControllerTest::appliesForkedConversationAndSelectsIt()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.setForkingThread(true, QStringLiteral("thread-new"));
@@ -601,7 +601,7 @@ CodexHistoryControllerTest::appliesForkedConversationAndSelectsIt()
 void
 CodexHistoryControllerTest::reportsDedicatedThreadForkErrors()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.setForkingThread(true, QStringLiteral("thread-new"));
@@ -633,7 +633,7 @@ CodexHistoryControllerTest::reportsDedicatedThreadForkErrors()
 void
 CodexHistoryControllerTest::validatesConversationForksBeforeDispatch()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.clearError();
 
@@ -666,7 +666,7 @@ CodexHistoryControllerTest::validatesConversationForksBeforeDispatch()
 void
 CodexHistoryControllerTest::appliesRenamedConversationTitles()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
@@ -687,7 +687,7 @@ CodexHistoryControllerTest::appliesRenamedConversationTitles()
 void
 CodexHistoryControllerTest::ignoresStaleThreadPagesAndWaitsForLifecycleConfirmation()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("New conversation")), {});
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
@@ -739,7 +739,7 @@ CodexHistoryControllerTest::ignoresStaleThreadPagesAndWaitsForLifecycleConfirmat
 void
 CodexHistoryControllerTest::keepsLifecyclePendingAfterHistoryDecodingFailure()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
@@ -757,7 +757,7 @@ CodexHistoryControllerTest::keepsLifecyclePendingAfterHistoryDecodingFailure()
 void
 CodexHistoryControllerTest::keepsLifecyclePendingAfterMalformedThreadUpdates()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
@@ -785,7 +785,7 @@ CodexHistoryControllerTest::keepsLifecyclePendingAfterMalformedThreadUpdates()
 void
 CodexHistoryControllerTest::rejectsUnscopedThreadRecoveryAndErrorEvents()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
     controller.changingThreadLifecycle_ = true;
@@ -816,7 +816,7 @@ CodexHistoryControllerTest::rejectsUnscopedThreadRecoveryAndErrorEvents()
 void
 CodexHistoryControllerTest::reportsDedicatedThreadLifecycleErrors()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
     controller.pendingLifecycleThreadId_ = QStringLiteral("thread-new");
@@ -836,7 +836,7 @@ CodexHistoryControllerTest::reportsDedicatedThreadLifecycleErrors()
 void
 CodexHistoryControllerTest::keepsArchivedConversationsReadOnly()
 {
-    CodexHistoryController controller(nullptr);
+    CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
     controller.showingArchived_ = true;
     controller.applyHistoryEvent(threadPageEvent(QStringLiteral("Archived conversation"), true), {});

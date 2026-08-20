@@ -5,6 +5,7 @@ use std::ffi::{CStr, c_char};
 
 use super::error::{WardError, write_error};
 
+mod execution_target;
 mod live;
 mod observer;
 mod wire;

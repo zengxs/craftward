@@ -57,6 +57,14 @@ typedef enum WardRealmState {
 // An opaque serialized payload passed through Ward Core's private C interface.
 typedef struct WardBuffer WardBuffer;
 
+// An opaque Codex execution target passed through Ward Core's private C
+// interface.
+//
+// An execution target hides how independent Codex app-server connections are
+// opened. A host target starts a local executable; other target adapters can
+// provide the same connection source without changing observers.
+typedef struct WardCodexExecutionTarget WardCodexExecutionTarget;
+
 // An opaque asynchronous Codex history observer passed through Ward Core's
 // private C interface.
 typedef struct WardCodexHistoryObserver WardCodexHistoryObserver;
@@ -175,6 +183,30 @@ size_t ward_core_buffer_size(const struct WardBuffer *buffer);
 // is positive. The strings must remain valid until this function returns.
 struct WardCliResult ward_core_cli_try_run(int argc, char **argv);
 
+// Creates a host-backed Codex execution target.
+//
+// The target starts `executable` in `app-server --stdio` mode whenever an
+// observer needs a new Codex connection. Creating the target does not start a
+// process.
+//
+// # Safety
+//
+// `executable` must point to a non-empty NUL-terminated string.
+// `output_error`, when non-null, must be writable.
+struct WardCodexExecutionTarget *ward_core_codex_execution_target_create_host(const char *executable,
+                                                                              struct WardError **output_error);
+
+// Destroys a Codex execution target.
+//
+// Observers clone the target's connection source when they are opened, so an
+// execution target may be destroyed before observers created from it.
+//
+// # Safety
+//
+// `target` must be null or a live handle returned by a Codex execution-target
+// factory, and ownership may be transferred only once.
+void ward_core_codex_execution_target_destroy(struct WardCodexExecutionTarget *target);
+
 // Attempts to acquire exclusive writing access for one persisted thread.
 //
 // The asynchronous result is emitted as a thread write-state event. A
@@ -276,11 +308,11 @@ bool ward_core_codex_history_observer_interrupt_turn_async(struct WardCodexHisto
 // # Safety
 //
 // `runtime` must point to a live Ward runtime that outlives the returned
-// observer. `executable` must point to a NUL-terminated string. `callback`
-// must be a valid function pointer. `output_error`, when non-null, must be
-// writable.
+// observer. `execution_target` must point to a live Codex execution target
+// for the duration of this call. `callback` must be a valid function pointer.
+// `output_error`, when non-null, must be writable.
 struct WardCodexHistoryObserver *ward_core_codex_history_observer_open(const struct WardRuntime *runtime,
-                                                                       const char *executable,
+                                                                       const struct WardCodexExecutionTarget *execution_target,
                                                                        WardCodexHistoryEventCallback callback,
                                                                        void *callback_context,
                                                                        struct WardError **output_error);
