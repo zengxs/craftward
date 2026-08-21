@@ -186,7 +186,7 @@ Rectangle {
                     wrapMode: Text.WordWrap
                 }
 
-                ComboBox {
+                MenuComboBox {
                     id: optionEditor
 
                     Layout.fillWidth: true

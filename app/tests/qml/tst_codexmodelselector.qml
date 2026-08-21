@@ -75,6 +75,9 @@ Item {
 
             const popupList = suite.selector.popup.contentItem;
             tryCompare(popupList, "count", 2);
+            tryVerify(function () {
+                return popupList.itemAtIndex(0) !== null && popupList.itemAtIndex(1) !== null;
+            });
             const balancedDelegate = popupList.itemAtIndex(0);
             const fastDelegate = popupList.itemAtIndex(1);
             verify(balancedDelegate !== null);

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Craftward.Components
 import Craftward.Localization
 
 Page {
@@ -58,7 +59,7 @@ Page {
                 font.pixelSize: 13
             }
 
-            ComboBox {
+            MenuComboBox {
                 id: languageSelector
 
                 Layout.preferredWidth: 190

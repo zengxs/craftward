@@ -8,6 +8,7 @@ import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import Craftward.Codex
+import Craftward.Components
 
 Pane {
     id: root
@@ -167,7 +168,7 @@ Pane {
                     font.pixelSize: 11
                 }
 
-                ComboBox {
+                MenuComboBox {
                     id: turnModeSelector
 
                     enabled: !root.controller.turnInFlight
@@ -199,7 +200,7 @@ Pane {
                     font.pixelSize: 11
                 }
 
-                ComboBox {
+                MenuComboBox {
                     id: permissionSelector
 
                     enabled: !root.controller.turnInFlight

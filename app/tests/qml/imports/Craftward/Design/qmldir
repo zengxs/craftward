@@ -1,0 +1,3 @@
+module Craftward.Design
+singleton TailwindColors 1.0 ../../../../../qml/Craftward/Design/TailwindColors.qml
+singleton Theme 1.0 ../../../../../qml/Craftward/Design/Theme.qml

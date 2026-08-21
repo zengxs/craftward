@@ -60,6 +60,7 @@ tasks:
       - 'cmake --build "{{.BUILD_DIR}}" --target release_translations --parallel'
       - >-
         "$QT6_ROOT/bin/qmltestrunner"
+        -import tests/qml/imports
         -translation "{{.BUILD_DIR}}/craftward_en.qm"
         -input tests/qml
 
