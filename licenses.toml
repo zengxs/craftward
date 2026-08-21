@@ -104,6 +104,15 @@ license-url = "https://raw.githubusercontent.com/dtolnay/thiserror/b1d5db5e03927
 website = "https://github.com/dtolnay/thiserror"
 
 [[component]]
+name = "Tailwind CSS"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/tailwindlabs/tailwindcss/v4.3.3/LICENSE"
+website = "https://tailwindcss.com/"
+notice-text = '''
+Craftward uses color palette values derived from Tailwind CSS.
+'''
+
+[[component]]
 name = "tokio"
 spdx-identifier = "MIT"
 license-url = "https://raw.githubusercontent.com/tokio-rs/tokio/refs/tags/tokio-1.53.1/LICENSE"

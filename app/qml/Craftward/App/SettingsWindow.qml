@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Craftward.Components
+import Craftward.Design
 import Craftward.Features.Legal
 import Craftward.Localization
 import Craftward.Pages
@@ -58,7 +59,7 @@ ApplicationWindow {
         Rectangle {
             anchors.fill: parent
             radius: 6
-            color: navigationButton.selected ? "#EEEEEE" : "transparent"
+            color: navigationButton.selected ? Theme.navigationSelectionBackground : "transparent"
         }
 
         Label {
@@ -68,7 +69,7 @@ ApplicationWindow {
                 rightMargin: 10
             }
             text: navigationButton.text
-            color: navigationButton.selected ? "#007AFF" : root.palette.text
+            color: navigationButton.selected ? Theme.navigationSelectionForeground : root.palette.text
             font.pixelSize: 13
             font.weight: Font.Normal
             verticalAlignment: Text.AlignVCenter
@@ -112,7 +113,7 @@ ApplicationWindow {
             SplitView.minimumWidth: 180
             SplitView.preferredWidth: 200
             SplitView.maximumWidth: 260
-            color: "#F8F8F8"
+            color: Theme.sidebarSurface
 
             WindowMoveHandler {
                 targetWindow: root

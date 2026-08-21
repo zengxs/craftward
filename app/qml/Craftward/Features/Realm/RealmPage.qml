@@ -6,6 +6,7 @@ import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import Craftward.Components
+import Craftward.Design
 import Craftward.Realm
 
 Page {
@@ -224,8 +225,8 @@ Page {
             Layout.fillWidth: true
             implicitHeight: errorLayout.implicitHeight + 24
             radius: 10
-            color: Qt.rgba(0.82, 0.12, 0.16, 0.08)
-            border.color: Qt.rgba(0.82, 0.12, 0.16, 0.24)
+            color: Theme.dangerSurface
+            border.color: Theme.dangerBorder
             visible: root.controller.errorMessage.length > 0
 
             RowLayout {
@@ -240,7 +241,7 @@ Page {
                 Label {
                     Layout.fillWidth: true
                     text: root.controller.errorMessage
-                    color: "#B4232A"
+                    color: Theme.dangerForeground
                     wrapMode: Text.WordWrap
                 }
 

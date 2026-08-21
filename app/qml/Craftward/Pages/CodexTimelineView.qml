@@ -8,6 +8,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Craftward.Codex
 import Craftward.Components
+import Craftward.Design
 
 Control {
     id: root
@@ -240,7 +241,7 @@ Control {
                                 Layout.preferredWidth: 8
                                 Layout.preferredHeight: 8
                                 radius: width / 2
-                                color: timelineDelegate.failed ? "#B4232A" : (timelineDelegate.running ? root.palette.highlight : root.palette.mid)
+                                color: timelineDelegate.failed ? Theme.dangerForeground : (timelineDelegate.running ? root.palette.highlight : root.palette.mid)
                             }
 
                             Label {
@@ -290,7 +291,7 @@ Control {
                                         Layout.preferredWidth: 7
                                         Layout.preferredHeight: 7
                                         radius: width / 2
-                                        color: activityItemDelegate.modelData.failed ? "#B4232A" : (activityItemDelegate.modelData.running ? root.palette.highlight : root.palette.mid)
+                                        color: activityItemDelegate.modelData.failed ? Theme.dangerForeground : (activityItemDelegate.modelData.running ? root.palette.highlight : root.palette.mid)
                                     }
 
                                     Label {
@@ -305,7 +306,7 @@ Control {
 
                                     Label {
                                         text: root.activityStatusText(activityItemDelegate.modelData)
-                                        color: activityItemDelegate.modelData.failed ? "#B4232A" : root.palette.placeholderText
+                                        color: activityItemDelegate.modelData.failed ? Theme.dangerForeground : root.palette.placeholderText
                                         font.pixelSize: 10
                                         visible: text.length > 0
                                     }

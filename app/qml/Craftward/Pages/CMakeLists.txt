@@ -23,6 +23,7 @@ target_link_libraries(CraftwardPages
     PRIVATE
         CraftwardComponentsplugin
         CraftwardCodexplugin
+        CraftwardDesign
         CraftwardLocalizationplugin
         Qt6::Quick
         Qt6::QuickControls2

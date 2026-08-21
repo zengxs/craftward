@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Craftward.Components
+import Craftward.Design
 
 ModalDialog {
     id: root
@@ -128,7 +129,7 @@ ModalDialog {
 
                         contentItem: Label {
                             text: componentDelegate.text
-                            color: componentDelegate.highlighted ? "#007AFF" : root.palette.text
+                            color: componentDelegate.highlighted ? Theme.navigationSelectionForeground : root.palette.text
                             font.pixelSize: 13
                             font.weight: Font.Normal
                             verticalAlignment: Text.AlignVCenter
@@ -139,13 +140,13 @@ ModalDialog {
                             radius: 5
                             color: {
                                 if (componentDelegate.down)
-                                    return "#E5E5E5";
+                                    return Theme.navigationPressedBackground;
                                 if (componentDelegate.highlighted)
-                                    return "#EEEEEE";
+                                    return Theme.navigationSelectionBackground;
                                 return "transparent";
                             }
                             border.width: componentDelegate.visualFocus ? 1 : 0
-                            border.color: "#007AFF"
+                            border.color: Theme.accent
                         }
                     }
 

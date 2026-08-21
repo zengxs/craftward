@@ -51,6 +51,7 @@ target_link_libraries(Craftward
         CraftwardComponentsplugin
         CraftwardCodex
         CraftwardCodexplugin
+        CraftwardDesign
         CraftwardEditorplugin
         CraftwardFeaturesLegalplugin
         CraftwardFeaturesRealmplugin

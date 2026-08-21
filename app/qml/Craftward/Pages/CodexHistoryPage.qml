@@ -9,6 +9,7 @@ import QtQuick.Dialogs
 import QtQuick.Layouts
 import Craftward.Codex
 import Craftward.Components
+import Craftward.Design
 
 Page {
     id: root
@@ -274,8 +275,8 @@ Page {
                         implicitWidth: runtimeStateLayout.implicitWidth + 16
                         implicitHeight: runtimeStateLayout.implicitHeight + 8
                         radius: height / 2
-                        color: root.conversation.turnState === CodexConversationController.SystemError ? Qt.rgba(0.82, 0.12, 0.16, 0.08) : root.palette.alternateBase
-                        border.color: root.conversation.turnState === CodexConversationController.SystemError ? Qt.rgba(0.82, 0.12, 0.16, 0.24) : root.palette.mid
+                        color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerSurface : root.palette.alternateBase
+                        border.color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerBorder : root.palette.mid
                         visible: root.conversation.threadId.length > 0
 
                         RowLayout {
@@ -290,7 +291,7 @@ Page {
                                 radius: width / 2
                                 color: {
                                     if (root.conversation.turnState === CodexConversationController.SystemError)
-                                        return "#B4232A";
+                                        return Theme.dangerForeground;
                                     if (root.conversation.turnState === CodexConversationController.Running || root.conversation.turnState === CodexConversationController.Starting)
                                         return root.palette.highlight;
                                     return root.palette.mid;
@@ -318,7 +319,7 @@ Page {
                                         return /*% "Status unknown" */ qsTrId("craftward.codex.runtime.unknown");
                                     return /*% "History only" */ qsTrId("craftward.codex.runtime.history_only");
                                 }
-                                color: root.conversation.turnState === CodexConversationController.SystemError ? "#B4232A" : root.palette.placeholderText
+                                color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerForeground : root.palette.placeholderText
                                 font.pixelSize: 11
                             }
                         }
@@ -358,8 +359,8 @@ Page {
                     Layout.fillWidth: true
                     implicitHeight: errorLayout.implicitHeight + 20
                     radius: 9
-                    color: Qt.rgba(0.82, 0.12, 0.16, 0.08)
-                    border.color: Qt.rgba(0.82, 0.12, 0.16, 0.24)
+                    color: Theme.dangerSurface
+                    border.color: Theme.dangerBorder
                     visible: root.controller.errorMessage.length > 0
 
                     RowLayout {
@@ -373,7 +374,7 @@ Page {
                         Label {
                             Layout.fillWidth: true
                             text: root.controller.errorMessage
-                            color: "#B4232A"
+                            color: Theme.dangerForeground
                             wrapMode: Text.WordWrap
                         }
 

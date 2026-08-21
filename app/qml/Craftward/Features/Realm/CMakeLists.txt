@@ -10,6 +10,7 @@ qt_add_qml_module(CraftwardFeaturesRealm
 target_link_libraries(CraftwardFeaturesRealm
     PRIVATE
         CraftwardComponentsplugin
+        CraftwardDesign
         CraftwardRealmplugin
         Qt6::Quick
         Qt6::QuickControls2

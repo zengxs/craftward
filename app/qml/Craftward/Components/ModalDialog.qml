@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import Craftward.Design
 
 Dialog {
     id: control
@@ -18,6 +19,6 @@ Dialog {
     }
 
     Overlay.modal: Rectangle {
-        color: Qt.rgba(0, 0, 0, 0.18)
+        color: Theme.modalScrim
     }
 }
