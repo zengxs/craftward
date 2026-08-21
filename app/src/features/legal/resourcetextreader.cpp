@@ -4,6 +4,7 @@
 #include "resourcetextreader.h"
 
 #include <QFile>
+#include <QtTranslation>
 
 ResourceTextReader::ResourceTextReader(QObject* parent)
   : QObject(parent)
@@ -15,7 +16,8 @@ ResourceTextReader::read(const QUrl& resourceUrl) const
 {
     if (resourceUrl.scheme() != QStringLiteral("qrc")) {
         return {
-            { QStringLiteral("errorMessage"), tr("Text resources must use a local Qt resource URL.") },
+            { QStringLiteral("errorMessage"),
+              /*% "Text resources must use a local Qt resource URL." */ qtTrId("craftward.legal.error.resource_url") },
             { QStringLiteral("text"), QString() },
         };
     }
@@ -23,7 +25,8 @@ ResourceTextReader::read(const QUrl& resourceUrl) const
     QFile file(QStringLiteral(":") + resourceUrl.path());
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return {
-            { QStringLiteral("errorMessage"), tr("The text resource could not be opened.") },
+            { QStringLiteral("errorMessage"),
+              /*% "The text resource could not be opened." */ qtTrId("craftward.legal.error.resource_open") },
             { QStringLiteral("text"), QString() },
         };
     }

@@ -17,10 +17,10 @@ QtObject {
     readonly property bool attachmentInputEnabled: !turnInFlight || turnRunning
     readonly property bool contentReady: promptReady || (!turnRunning && attachmentReady)
     readonly property bool sendEnabled: inputEnabled && writable && contentReady
-    readonly property string sendLabel: steerPending ? qsTr("Guiding…") : (turnRunning ? qsTr("Guide") : (turnInFlight ? qsTr("Starting…") : qsTr("Send")))
+    readonly property string sendLabel: steerPending ? /*% "Guiding…" */ qsTrId("craftward.codex.turn.guiding") : (turnRunning ? /*% "Guide" */ qsTrId("craftward.codex.turn.guide") : (turnInFlight ? /*% "Starting…" */ qsTrId("craftward.codex.turn.starting") : /*% "Send" */ qsTrId("craftward.codex.turn.send")))
     readonly property bool stopVisible: turnInFlight
     readonly property bool stopEnabled: turnInFlight && !interruptPending
-    readonly property string stopLabel: interruptPending ? qsTr("Stopping…") : qsTr("Stop")
+    readonly property string stopLabel: interruptPending ? /*% "Stopping…" */ qsTrId("craftward.codex.turn.stopping") : /*% "Stop" */ qsTrId("craftward.codex.turn.stop")
 
     signal sendRequested
     signal stopRequested

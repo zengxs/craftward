@@ -14,7 +14,7 @@ CodexCatalogSelector {
 
     function effortLabel(effort) {
         if (effort === "xhigh")
-            return qsTr("Extra high");
+            return /*% "Extra high" */ qsTrId("craftward.codex.reasoning_effort.extra_high");
         if (effort.length === 0)
             return "";
         return effort.charAt(0).toUpperCase() + effort.slice(1);
@@ -28,9 +28,9 @@ CodexCatalogSelector {
     displayText: {
         if (selectedEffort.length > 0)
             return effortLabel(selectedEffort);
-        return count > 0 ? qsTr("Current effort") : qsTr("No efforts available");
+        return count > 0 ? /*% "Current effort" */ qsTrId("craftward.codex.reasoning_effort.current") : /*% "No efforts available" */ qsTrId("craftward.codex.reasoning_effort.empty");
     }
-    Accessible.name: qsTr("Conversation reasoning effort")
+    Accessible.name: /*% "Conversation reasoning effort" */ qsTrId("craftward.codex.reasoning_effort.accessible_name")
     onValueSelected: value => root.effortSelected(value)
 
     toolTipText: {
@@ -39,6 +39,6 @@ CodexCatalogSelector {
             if (option && option.description)
                 return option.description;
         }
-        return qsTr("The selected effort is applied when the next turn starts and remains active for later turns.");
+        return /*% "The selected effort is applied when the next turn starts and remains active for later turns." */ qsTrId("craftward.codex.reasoning_effort.selection_description");
     }
 }

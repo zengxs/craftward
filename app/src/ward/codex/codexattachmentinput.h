@@ -11,12 +11,19 @@
 #include <optional>
 
 class QImage;
+class QMimeData;
 
 enum class CodexAttachmentKind
 {
     LocalImage,
     LocalAudio,
     Mention,
+};
+
+enum class CodexAttachmentNameKind
+{
+    FileName,
+    PastedImage,
 };
 
 struct CodexTurnAttachment
@@ -33,6 +40,7 @@ struct CodexAttachmentDescriptor
     QString mimeType;
     CodexAttachmentKind kind;
     bool managed;
+    CodexAttachmentNameKind nameKind = CodexAttachmentNameKind::FileName;
 };
 
 class CodexAttachmentInput final
@@ -45,9 +53,13 @@ class CodexAttachmentInput final
                                                                            QString* errorMessage);
     [[nodiscard]] static QList<CodexAttachmentDescriptor> fromClipboard(QString* errorMessage);
     [[nodiscard]] static QString kindName(CodexAttachmentKind kind);
+    [[nodiscard]] static QString nameKindName(CodexAttachmentNameKind kind);
 
   private:
     friend class CodexHistoryControllerTest;
 
+    [[nodiscard]] static QList<CodexAttachmentDescriptor> fromMimeData(const QMimeData& mimeData,
+                                                                       const QString& dataRoot,
+                                                                       QString* errorMessage);
     [[nodiscard]] static QUrl storeClipboardImage(const QImage& image, const QString& dataRoot, QString* errorMessage);
 };

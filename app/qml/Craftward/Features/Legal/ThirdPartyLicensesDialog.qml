@@ -27,12 +27,12 @@ ModalDialog {
         try {
             catalog = JSON.parse(result.text);
         } catch (error) {
-            root.errorMessage = qsTr("The legal document catalog is invalid.");
+            root.errorMessage = /*% "The legal document catalog is invalid." */ qsTrId("craftward.legal.error.catalog_invalid");
             return;
         }
 
         if (!catalog.components || catalog.components.length === 0) {
-            root.errorMessage = qsTr("No third-party software licenses are available.");
+            root.errorMessage = /*% "No third-party software licenses are available." */ qsTrId("craftward.legal.third_party.empty");
             return;
         }
 
@@ -64,7 +64,7 @@ ModalDialog {
     width: Math.min(800, Overlay.overlay.width - 48)
     height: Math.min(560, Overlay.overlay.height - 48)
     visible: false
-    title: qsTr("Third-Party Component Licenses")
+    title: /*% "Third-Party Component Licenses" */ qsTrId("craftward.legal.third_party.title")
     onOpened: if (!root.catalogLoaded)
         root.loadCatalog()
 
@@ -171,7 +171,7 @@ ModalDialog {
                         IconButton {
                             visible: Boolean(root.currentComponent.website)
                             icon.source: "qrc:///icons/phosphor/arrow-square-out.svg"
-                            toolTipText: qsTr("Open Project Website")
+                            toolTipText: /*% "Open Project Website" */ qsTrId("craftward.legal.third_party.open_website")
                             onClicked: Qt.openUrlExternally(root.currentComponent.website)
                         }
 
@@ -204,7 +204,7 @@ ModalDialog {
             }
 
             Button {
-                text: qsTr("Close")
+                text: /*% "Close" */ qsTrId("craftward.action.close")
                 onClicked: root.close()
             }
         }

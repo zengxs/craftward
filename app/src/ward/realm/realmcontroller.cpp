@@ -13,6 +13,7 @@
 #include <QQmlEngine>
 #include <QThread>
 #include <QWindow>
+#include <QtTranslation>
 
 #include <utility>
 
@@ -36,6 +37,12 @@ RealmController::~RealmController()
     callbackContext_.reset();
 }
 
+void
+RealmController::retranslate()
+{
+    emit stateTextChanged();
+}
+
 QUrl
 RealmController::bundleUrl() const
 {
@@ -46,14 +53,16 @@ void
 RealmController::setBundleUrl(const QUrl& bundleUrl)
 {
     if (!canSelectBundle()) {
-        setErrorMessage(tr("Stop the realm before changing its bundle."));
+        setErrorMessage(/*% "Stop the realm before changing its bundle." */ qtTrId(
+          "craftward.realm.error.stop_before_bundle_change"));
         return;
     }
 
     QUrl normalizedUrl;
     if (!bundleUrl.isEmpty()) {
         if (!bundleUrl.isLocalFile()) {
-            setErrorMessage(tr("The realm bundle must be a local folder."));
+            setErrorMessage(
+              /*% "The realm bundle must be a local folder." */ qtTrId("craftward.realm.error.bundle_not_local"));
             return;
         }
         normalizedUrl = QUrl::fromLocalFile(QDir::cleanPath(bundleUrl.toLocalFile()));
@@ -95,31 +104,31 @@ RealmController::stateText() const
 {
     switch (state_) {
         case Closed:
-            return tr("Not opened");
+            return /*% "Not opened" */ qtTrId("craftward.realm.state.closed");
         case Stopped:
-            return tr("Stopped");
+            return /*% "Stopped" */ qtTrId("craftward.realm.state.stopped");
         case Running:
-            return tr("Running");
+            return /*% "Running" */ qtTrId("craftward.realm.state.running");
         case Paused:
-            return tr("Paused");
+            return /*% "Paused" */ qtTrId("craftward.realm.state.paused");
         case Error:
-            return tr("Error");
+            return /*% "Error" */ qtTrId("craftward.realm.state.error");
         case Starting:
-            return tr("Starting…");
+            return /*% "Starting…" */ qtTrId("craftward.realm.state.starting");
         case Pausing:
-            return tr("Pausing…");
+            return /*% "Pausing…" */ qtTrId("craftward.realm.state.pausing");
         case Resuming:
-            return tr("Resuming…");
+            return /*% "Resuming…" */ qtTrId("craftward.realm.state.resuming");
         case Stopping:
-            return tr("Stopping…");
+            return /*% "Stopping…" */ qtTrId("craftward.realm.state.stopping");
         case Saving:
-            return tr("Saving…");
+            return /*% "Saving…" */ qtTrId("craftward.realm.state.saving");
         case Restoring:
-            return tr("Restoring…");
+            return /*% "Restoring…" */ qtTrId("craftward.realm.state.restoring");
         case Suspended:
-            return tr("Suspended");
+            return /*% "Suspended" */ qtTrId("craftward.realm.state.suspended");
     }
-    return tr("Unknown");
+    return /*% "Unknown" */ qtTrId("craftward.realm.state.unknown");
 }
 
 QString
@@ -281,7 +290,9 @@ RealmController::attachDisplay()
     const QString coreErrorMessage = ward::coreffi::takeErrorMessage(error);
     if (nativeView == nullptr) {
         const QString message =
-          coreErrorMessage.isEmpty() ? tr("The Realm display could not be attached.") : coreErrorMessage;
+          coreErrorMessage.isEmpty()
+            ? /*% "The Realm display could not be attached." */ qtTrId("craftward.realm.error.display_attach")
+            : coreErrorMessage;
         setErrorMessage(message);
         return false;
     }
@@ -289,7 +300,7 @@ RealmController::attachDisplay()
     std::unique_ptr<QWindow> displayWindow(QWindow::fromWinId(reinterpret_cast<WId>(nativeView)));
     if (displayWindow == nullptr) {
         ward_core_realm_detach_display(realm_);
-        setErrorMessage(tr("Qt could not embed the Realm display."));
+        setErrorMessage(/*% "Qt could not embed the Realm display." */ qtTrId("craftward.realm.error.display_embed"));
         return false;
     }
 
@@ -348,7 +359,8 @@ RealmController::ensureRealm()
     if (realm_ != nullptr)
         return true;
     if (bundleUrl_.isEmpty()) {
-        setErrorMessage(tr("Choose an installed realm bundle first."));
+        setErrorMessage(
+          /*% "Choose an installed realm bundle first." */ qtTrId("craftward.realm.error.bundle_required"));
         return false;
     }
 
@@ -368,7 +380,10 @@ RealmController::ensureRealm()
         return true;
     }
 
-    const QString message = coreErrorMessage.isEmpty() ? tr("The realm bundle could not be opened.") : coreErrorMessage;
+    const QString message =
+      coreErrorMessage.isEmpty()
+        ? /*% "The realm bundle could not be opened." */ qtTrId("craftward.realm.error.bundle_open")
+        : coreErrorMessage;
     callbackContext_.reset();
     setErrorMessage(message);
     return false;
@@ -382,6 +397,7 @@ RealmController::destroyRealm()
     if (realm_ != nullptr)
         ward_core_realm_destroy(std::exchange(realm_, nullptr));
     callbackContext_.reset();
+    const bool stateChanged = state_ != Closed;
     state_ = Closed;
     commandPending_ = false;
     backendCanStart_ = false;
@@ -392,6 +408,8 @@ RealmController::destroyRealm()
     backendCanSuspend_ = false;
     backendCanRestore_ = false;
     backendCanDiscardSavedState_ = false;
+    if (stateChanged)
+        emit stateTextChanged();
 }
 
 void
@@ -413,7 +431,7 @@ RealmController::queueCommand(RealmCommand command)
     commandPending_ = false;
     QString message = ward::coreffi::takeErrorMessage(error);
     if (message.isEmpty())
-        message = tr("The Realm command could not be queued.");
+        message = /*% "The Realm command could not be queued." */ qtTrId("craftward.realm.error.command_queue");
     setErrorMessage(message);
     emit statusChanged();
 }
@@ -424,44 +442,46 @@ RealmController::applyStatus(std::uint64_t generation, WardRealmStatus status, c
     if (generation != generation_)
         return;
 
+    State nextState = Error;
     switch (status.state) {
         case WardRealmStateStopped:
-            state_ = Stopped;
+            nextState = Stopped;
             break;
         case WardRealmStateRunning:
-            state_ = Running;
+            nextState = Running;
             break;
         case WardRealmStatePaused:
-            state_ = Paused;
+            nextState = Paused;
             break;
         case WardRealmStateError:
-            state_ = Error;
+            nextState = Error;
             break;
         case WardRealmStateStarting:
-            state_ = Starting;
+            nextState = Starting;
             break;
         case WardRealmStatePausing:
-            state_ = Pausing;
+            nextState = Pausing;
             break;
         case WardRealmStateResuming:
-            state_ = Resuming;
+            nextState = Resuming;
             break;
         case WardRealmStateStopping:
-            state_ = Stopping;
+            nextState = Stopping;
             break;
         case WardRealmStateSaving:
-            state_ = Saving;
+            nextState = Saving;
             break;
         case WardRealmStateRestoring:
-            state_ = Restoring;
+            nextState = Restoring;
             break;
         case WardRealmStateSuspended:
-            state_ = Suspended;
+            nextState = Suspended;
             break;
         default:
-            state_ = Error;
             break;
     }
+    const bool stateChanged = state_ != nextState;
+    state_ = nextState;
 
     commandPending_ = false;
     backendCanStart_ = status.can_start;
@@ -475,6 +495,8 @@ RealmController::applyStatus(std::uint64_t generation, WardRealmStatus status, c
     if (!errorMessage.isEmpty())
         setErrorMessage(errorMessage);
     emit statusChanged();
+    if (stateChanged)
+        emit stateTextChanged();
 }
 
 void

@@ -3,6 +3,8 @@
 
 #include "ward/codex/codexhistorycontroller.h"
 
+#include <QtTranslation>
+
 #include <algorithm>
 #include <utility>
 
@@ -41,13 +43,15 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
     switch (event.kind()) {
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_UPDATED: {
             if (!event.hasArchived()) {
-                rejectThreadListEvent(tr("Ward Core returned a thread update without its history scope."));
+                rejectThreadListEvent(/*% "Ward Core returned a thread update without its history scope." */ qtTrId(
+                  "craftward.codex.error.invalid_event.thread_scope_missing"));
                 break;
             }
             if (event.archived() != showingArchived_)
                 return;
             if (!event.hasThreadPage()) {
-                rejectThreadListEvent(tr("Ward Core returned a thread update without a thread page."));
+                rejectThreadListEvent(/*% "Ward Core returned a thread update without a thread page." */ qtTrId(
+                  "craftward.codex.error.invalid_event.thread_page_missing"));
                 break;
             }
             const auto& page = event.threadPage();
@@ -73,7 +77,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_RECOVERED:
             if (!event.hasArchived()) {
-                rejectThreadListEvent(tr("Ward Core returned a thread-list event without its history scope."));
+                rejectThreadListEvent(/*% "Ward Core returned a thread-list event without its history scope." */ qtTrId(
+                  "craftward.codex.error.invalid_event.thread_list_scope_missing"));
                 break;
             }
             if (event.archived() != showingArchived_)
@@ -83,14 +88,17 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             break;
         case HistoryEventKind::HISTORY_EVENT_KIND_THREADS_ERROR: {
             if (!event.hasArchived()) {
-                rejectThreadListEvent(tr("Ward Core returned a thread-list event without its history scope."));
+                rejectThreadListEvent(/*% "Ward Core returned a thread-list event without its history scope." */ qtTrId(
+                  "craftward.codex.error.invalid_event.thread_list_scope_missing"));
                 break;
             }
             if (event.archived() != showingArchived_)
                 return;
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            const QString normalizedMessage =
-              message.isEmpty() ? tr("The Codex conversation list could not be observed.") : message;
+            const QString normalizedMessage = message.isEmpty()
+                                                ? /*% "The Codex conversation list could not be observed." */ qtTrId(
+                                                    "craftward.codex.error.conversation_list_observe")
+                                                : message;
             if (changingThreadLifecycle_)
                 setThreadErrorMessage(normalizedMessage);
             else
@@ -100,7 +108,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
         case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED:
             if (threadId.isEmpty() || !event.hasConversation()) {
                 setThreadStartErrorMessage(
-                  tr("Ward Core returned a started Codex conversation without its initial state."));
+                  /*% "Ward Core returned a started Codex conversation without its initial state." */ qtTrId(
+                    "craftward.codex.error.invalid_event.started_conversation_missing"));
                 setStartingThread(false);
                 break;
             }
@@ -110,7 +119,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
             break;
         case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_START_ERROR: {
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            setThreadStartErrorMessage(message.isEmpty() ? tr("The Codex conversation could not be started.")
+            setThreadStartErrorMessage(message.isEmpty() ? /*% "The Codex conversation could not be started." */ qtTrId(
+                                                             "craftward.codex.error.conversation_start")
                                                          : message);
             setStartingThread(false);
             break;
@@ -120,7 +130,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 return;
             if (threadId.isEmpty() || !event.hasConversation()) {
                 conversationController_.setErrorMessage(
-                  tr("Ward Core returned a forked Codex conversation without its initial state."));
+                  /*% "Ward Core returned a forked Codex conversation without its initial state." */ qtTrId(
+                    "craftward.codex.error.invalid_event.forked_conversation_missing"));
                 setForkingThread(false);
                 break;
             }
@@ -132,7 +143,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 return;
             if (threadId.isEmpty()) {
                 conversationController_.setErrorMessage(
-                  tr("Ward Core returned a thread-fork error without its source thread."));
+                  /*% "Ward Core returned a thread-fork error without its source thread." */ qtTrId(
+                    "craftward.codex.error.invalid_event.fork_source_missing"));
                 setForkingThread(false);
                 break;
             }
@@ -140,7 +152,9 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 return;
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             conversationController_.setErrorMessage(
-              message.isEmpty() ? tr("The Codex conversation could not be forked.") : message);
+              message.isEmpty()
+                ? /*% "The Codex conversation could not be forked." */ qtTrId("craftward.codex.error.conversation_fork")
+                : message);
             setForkingThread(false);
             break;
         }
@@ -149,7 +163,9 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 return;
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
             const QString normalizedMessage =
-              message.isEmpty() ? tr("The Codex conversation could not be archived or restored.") : message;
+              message.isEmpty() ? /*% "The Codex conversation could not be archived or restored." */ qtTrId(
+                                    "craftward.codex.error.conversation_lifecycle")
+                                : message;
             if (changingThreadLifecycle_) {
                 setChangingThreadLifecycle(false);
                 const bool wasLoadingThreads = std::exchange(loadingThreads_, false);
@@ -162,7 +178,8 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_UNSPECIFIED:
         default: {
-            const QString message = tr("Ward Core returned an unsupported Codex history event.");
+            const QString message = /*% "Ward Core returned an unsupported Codex history event." */ qtTrId(
+              "craftward.codex.error.invalid_event.unsupported");
             if (threadId.isEmpty())
                 finishThreadLoading(message);
             else if (threadId == conversationController_.threadId())

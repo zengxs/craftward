@@ -54,6 +54,7 @@ target_link_libraries(Craftward
         CraftwardEditorplugin
         CraftwardFeaturesLegalplugin
         CraftwardFeaturesRealmplugin
+        CraftwardLocalizationplugin
         CraftwardPagesplugin
         CraftwardRealmplugin
         Qt6::Quick

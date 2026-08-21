@@ -7,7 +7,7 @@ ModalDialog {
 
     required property string message
     required property string acceptText
-    property string rejectText: qsTr("Cancel")
+    property string rejectText: /*% "Cancel" */ qsTrId("craftward.action.cancel")
     property bool primaryAction: false
 
     anchors.centerIn: Overlay.overlay

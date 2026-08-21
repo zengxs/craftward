@@ -5,6 +5,7 @@
 
 #include <QStringList>
 #include <QVariantMap>
+#include <QtTranslation>
 
 #include <algorithm>
 #include <utility>
@@ -12,6 +13,13 @@
 CodexTimelineModel::CodexTimelineModel(QObject* parent)
   : QAbstractListModel(parent)
 {
+}
+
+void
+CodexTimelineModel::retranslate()
+{
+    if (!rows_.isEmpty())
+        emit dataChanged(index(0), index(rows_.size() - 1), { ActivityLabelRole, ActivityItemsRole });
 }
 
 int
@@ -198,40 +206,40 @@ CodexTimelineModel::activityGroupLabel(ActivityPresentationKind kind) const
 {
     switch (kind) {
         case ActivityPresentationKind::Reasoning:
-            return tr("Reasoning");
+            return /*% "Reasoning" */ qtTrId("craftward.codex.timeline.activity.reasoning");
         case ActivityPresentationKind::Plan:
-            return tr("Planned");
+            return /*% "Planned" */ qtTrId("craftward.codex.timeline.activity.plan");
         case ActivityPresentationKind::ReadFiles:
-            return tr("Read files");
+            return /*% "Read files" */ qtTrId("craftward.codex.timeline.activity.read_files");
         case ActivityPresentationKind::ListFiles:
-            return tr("Listed files");
+            return /*% "Listed files" */ qtTrId("craftward.codex.timeline.activity.list_files");
         case ActivityPresentationKind::SearchFiles:
-            return tr("Searched files");
+            return /*% "Searched files" */ qtTrId("craftward.codex.timeline.activity.search_files");
         case ActivityPresentationKind::RunCommands:
-            return tr("Ran commands");
+            return /*% "Ran commands" */ qtTrId("craftward.codex.timeline.activity.run_commands");
         case ActivityPresentationKind::FileChange:
-            return tr("Changed files");
+            return /*% "Changed files" */ qtTrId("craftward.codex.timeline.activity.change_files");
         case ActivityPresentationKind::ToolCall:
-            return tr("Used tools");
+            return /*% "Used tools" */ qtTrId("craftward.codex.timeline.activity.use_tools");
         case ActivityPresentationKind::Collaboration:
-            return tr("Coordinated agents");
+            return /*% "Coordinated agents" */ qtTrId("craftward.codex.timeline.activity.coordinate_agents");
         case ActivityPresentationKind::WebSearch:
-            return tr("Searched the web");
+            return /*% "Searched the web" */ qtTrId("craftward.codex.timeline.activity.web_search");
         case ActivityPresentationKind::ImageView:
-            return tr("Viewed images");
+            return /*% "Viewed images" */ qtTrId("craftward.codex.timeline.activity.view_images");
         case ActivityPresentationKind::Wait:
-            return tr("Waited");
+            return /*% "Waited" */ qtTrId("craftward.codex.timeline.activity.wait");
         case ActivityPresentationKind::ImageGeneration:
-            return tr("Generated images");
+            return /*% "Generated images" */ qtTrId("craftward.codex.timeline.activity.generate_images");
         case ActivityPresentationKind::ReviewStarted:
-            return tr("Entered review mode");
+            return /*% "Entered review mode" */ qtTrId("craftward.codex.timeline.activity.review_started");
         case ActivityPresentationKind::ReviewCompleted:
-            return tr("Exited review mode");
+            return /*% "Exited review mode" */ qtTrId("craftward.codex.timeline.activity.review_completed");
         case ActivityPresentationKind::ContextCompaction:
-            return tr("Compacted context");
+            return /*% "Compacted context" */ qtTrId("craftward.codex.timeline.activity.context_compaction");
         case ActivityPresentationKind::Activity:
         default:
-            return tr("Activity");
+            return /*% "Activity" */ qtTrId("craftward.codex.timeline.activity.other");
     }
 }
 
@@ -286,15 +294,15 @@ CodexTimelineModel::activityStatusLabel(const CodexActivity& activity) const
     using ActivityStatus = ward::codex::v1::ActivityStatusGadget::ActivityStatus;
     switch (activity.status()) {
         case ActivityStatus::ACTIVITY_STATUS_IN_PROGRESS:
-            return tr("In progress");
+            return /*% "In progress" */ qtTrId("craftward.codex.timeline.status.in_progress");
         case ActivityStatus::ACTIVITY_STATUS_COMPLETED:
             return {};
         case ActivityStatus::ACTIVITY_STATUS_FAILED:
-            return tr("Failed");
+            return /*% "Failed" */ qtTrId("craftward.codex.timeline.status.failed");
         case ActivityStatus::ACTIVITY_STATUS_DECLINED:
-            return tr("Declined");
+            return /*% "Declined" */ qtTrId("craftward.codex.timeline.status.declined");
         case ActivityStatus::ACTIVITY_STATUS_OTHER:
-            return tr("Unknown status");
+            return /*% "Unknown status" */ qtTrId("craftward.codex.timeline.status.unknown");
         case ActivityStatus::ACTIVITY_STATUS_UNSPECIFIED:
         default:
             return {};
@@ -312,22 +320,31 @@ CodexTimelineModel::commandActionSummary(const CodexActivity& activity) const
         switch (action.kind()) {
             case CommandActionKind::COMMAND_ACTION_KIND_READ: {
                 const QString target = !path.isEmpty() ? path : (action.hasName() ? action.name() : QString());
-                summaries.append(target.isEmpty() ? tr("Read a file") : tr("Read %1").arg(target));
+                summaries.append(
+                  target.isEmpty()
+                    ? /*% "Read a file" */ qtTrId("craftward.codex.timeline.command.read_file")
+                    : /*% "Read %1" */ qtTrId("craftward.codex.timeline.command.read_target").arg(target));
                 break;
             }
             case CommandActionKind::COMMAND_ACTION_KIND_LIST_FILES:
-                summaries.append(path.isEmpty() ? tr("List files") : tr("List files in %1").arg(path));
+                summaries.append(
+                  path.isEmpty()
+                    ? /*% "List files" */ qtTrId("craftward.codex.timeline.command.list_files")
+                    : /*% "List files in %1" */ qtTrId("craftward.codex.timeline.command.list_files_in").arg(path));
                 break;
             case CommandActionKind::COMMAND_ACTION_KIND_SEARCH: {
                 const QString query = action.hasQuery() ? action.query() : QString();
                 if (!query.isEmpty() && !path.isEmpty())
-                    summaries.append(tr("Search for “%1” in %2").arg(query, path));
+                    summaries.append(/*% "Search for “%1” in %2" */ qtTrId("craftward.codex.timeline.command.search_in")
+                                       .arg(query, path));
                 else if (!query.isEmpty())
-                    summaries.append(tr("Search for “%1”").arg(query));
+                    summaries.append(
+                      /*% "Search for “%1”" */ qtTrId("craftward.codex.timeline.command.search").arg(query));
                 else if (!path.isEmpty())
-                    summaries.append(tr("Search in %1").arg(path));
+                    summaries.append(
+                      /*% "Search in %1" */ qtTrId("craftward.codex.timeline.command.search_location").arg(path));
                 else
-                    summaries.append(tr("Search files"));
+                    summaries.append(/*% "Search files" */ qtTrId("craftward.codex.timeline.command.search_files"));
                 break;
             }
             case CommandActionKind::COMMAND_ACTION_KIND_OTHER:

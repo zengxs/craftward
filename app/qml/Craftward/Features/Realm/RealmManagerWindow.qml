@@ -31,7 +31,7 @@ ApplicationWindow {
     transientParent: null
     visible: false
     flags: Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
-    title: qsTr("Realm Manager")
+    title: /*% "Realm Manager" */ qsTrId("craftward.realm.manager.title")
     topPadding: 0
     leftPadding: 0
     rightPadding: 0
@@ -46,9 +46,9 @@ ApplicationWindow {
     ConfirmationDialog {
         id: quitBlockedDialog
 
-        title: qsTr("Stop the Realm before quitting")
-        message: qsTr("Suspend or shut down the Realm before quitting Craftward. If the guest does not respond, use Force Stop from the actions menu.")
-        acceptText: qsTr("Continue Working")
+        title: /*% "Stop the Realm before quitting" */ qsTrId("craftward.realm.quit_blocked.title")
+        message: /*% "Suspend or shut down the Realm before quitting Craftward. If the guest does not respond, use Force Stop from the actions menu." */ qsTrId("craftward.realm.quit_blocked.message")
+        acceptText: /*% "Continue Working" */ qsTrId("craftward.realm.quit_blocked.continue")
         rejectText: ""
         primaryAction: true
     }

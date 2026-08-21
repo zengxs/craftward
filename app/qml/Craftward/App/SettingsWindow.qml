@@ -5,6 +5,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Craftward.Components
 import Craftward.Features.Legal
+import Craftward.Localization
 import Craftward.Pages
 
 ApplicationWindow {
@@ -14,6 +15,7 @@ ApplicationWindow {
     property string buildNumber
     property string commitHash
     property int currentPage: 0
+    required property LocalizationController localizationController
     readonly property real titleBarInset: SafeArea.margins.top
 
     function present(pageIndex) {
@@ -127,7 +129,7 @@ ApplicationWindow {
                 spacing: 4
 
                 NavigationButton {
-                    text: qsTr("General")
+                    text: /*% "General" */ qsTrId("craftward.settings.general.title")
                     selected: root.currentPage === 0
                     onClicked: root.currentPage = 0
                 }
@@ -137,7 +139,7 @@ ApplicationWindow {
                 }
 
                 NavigationButton {
-                    text: qsTr("About")
+                    text: /*% "About" */ qsTrId("craftward.settings.about.title")
                     selected: root.currentPage === 1
                     onClicked: {
                         root.currentPage = 1;
@@ -155,7 +157,9 @@ ApplicationWindow {
                 anchors.fill: parent
                 currentIndex: root.currentPage
 
-                SettingsGeneralPage {}
+                SettingsGeneralPage {
+                    localizationController: root.localizationController
+                }
 
                 AboutPage {
                     id: aboutPage
@@ -186,7 +190,7 @@ ApplicationWindow {
     LicenseTextDialog {
         id: applicationLicenseDialog
 
-        documentTitle: qsTr("Craftward License")
+        documentTitle: /*% "Craftward License" */ qsTrId("craftward.legal.application_license.title")
         documentUri: "qrc:///legal/application.txt"
     }
 

@@ -21,3 +21,24 @@ target_link_libraries(CraftwardRealm
         Ward::Core
         "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
 )
+
+if(BUILD_TESTING)
+    qt_add_executable(CraftwardRealmControllerTest
+        tests/realmcontrollertest.cpp
+    )
+    target_include_directories(CraftwardRealmControllerTest
+        PRIVATE
+            "${PROJECT_SOURCE_DIR}/src"
+    )
+    target_link_libraries(CraftwardRealmControllerTest
+        PRIVATE
+            CraftwardRealm
+            Qt6::Gui
+            Qt6::Test
+            "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
+    )
+    add_test(
+        NAME CraftwardRealmControllerTest
+        COMMAND CraftwardRealmControllerTest
+    )
+endif()

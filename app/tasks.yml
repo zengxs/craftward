@@ -40,15 +40,28 @@ tasks:
 
   test:qml:
     desc: Run QML regression tests
+    vars:
+      BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
+      BUILD_DIR: "build/{{.BUILD_TYPE}}"
     requires:
       vars: [QT6_ROOT]
+    deps:
+      - task: configure
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+          BUILD_TESTING: "ON"
+          SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
     preconditions:
       - sh: test -x "$QT6_ROOT/bin/qmltestrunner"
         msg: qmltestrunner was not found under QT6_ROOT
     env:
       QT_QPA_PLATFORM: offscreen
     cmds:
-      - '"$QT6_ROOT/bin/qmltestrunner" -input tests/qml'
+      - 'cmake --build "{{.BUILD_DIR}}" --target release_translations --parallel'
+      - >-
+        "$QT6_ROOT/bin/qmltestrunner"
+        -translation "{{.BUILD_DIR}}/craftward_en.qm"
+        -input tests/qml
 
   test:cpp:
     desc: Build and run C++ regression tests
@@ -70,11 +83,13 @@ tasks:
         --target
         CraftwardCoreFfiSupportTest
         CraftwardCodexHistoryControllerTest
+        CraftwardLocalizationControllerTest
+        CraftwardRealmControllerTest
         --parallel
       - >-
         ctest --test-dir "{{.BUILD_DIR}}"
         --output-on-failure
-        -R '^Craftward(CoreFfiSupport|CodexHistoryController)Test$'
+        -R '^Craftward(CoreFfiSupport|CodexHistoryController|LocalizationController|RealmController)Test$'
 
   configure:
     label: "app:configure:{{.BUILD_TYPE}}:testing={{.BUILD_TESTING}}"

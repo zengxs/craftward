@@ -31,7 +31,7 @@ ApplicationWindow {
     minimumHeight: 480
     flags: Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
     visible: true
-    title: qsTr("Craftward")
+    title: /*% "Craftward" */ qsTrId("craftward.app.name")
     topPadding: 0
     leftPadding: 0
     rightPadding: 0
@@ -39,10 +39,10 @@ ApplicationWindow {
 
     menuBar: MenuBar {
         Menu {
-            title: qsTr("File")
+            title: /*% "File" */ qsTrId("craftward.menu.file")
 
             Action {
-                text: qsTr("Close Window")
+                text: /*% "Close Window" */ qsTrId("craftward.window.close")
                 shortcut: StandardKey.Close
                 onTriggered: window.closeWindowRequested()
             }
@@ -50,12 +50,12 @@ ApplicationWindow {
             MenuSeparator {}
 
             Action {
-                text: qsTr("Manage Realms…")
+                text: /*% "Manage Realms…" */ qsTrId("craftward.realm.manager.open")
                 onTriggered: window.realmManagerRequested()
             }
 
             Action {
-                text: qsTr("Settings…")
+                text: /*% "Settings…" */ qsTrId("craftward.settings.open")
                 shortcut: StandardKey.Preferences
                 onTriggered: window.settingsRequested(0)
             }
@@ -63,51 +63,51 @@ ApplicationWindow {
             MenuSeparator {}
 
             Action {
-                text: qsTr("Quit Craftward")
+                text: /*% "Quit Craftward" */ qsTrId("craftward.app.quit")
                 shortcut: StandardKey.Quit
                 onTriggered: window.quitRequested()
             }
         }
 
         Menu {
-            title: qsTr("Window")
+            title: /*% "Window" */ qsTrId("craftward.menu.window")
 
             Action {
-                text: qsTr("Minimize")
+                text: /*% "Minimize" */ qsTrId("craftward.window.minimize")
                 shortcut: "Ctrl+M"
                 onTriggered: window.minimizeActiveWindowRequested()
             }
 
             Action {
-                text: qsTr("Zoom")
+                text: /*% "Zoom" */ qsTrId("craftward.window.zoom")
                 onTriggered: window.zoomActiveWindowRequested()
             }
 
             MenuSeparator {}
 
             Action {
-                text: qsTr("Bring All to Front")
+                text: /*% "Bring All to Front" */ qsTrId("craftward.window.bring_all_to_front")
                 onTriggered: window.bringAllWindowsToFrontRequested()
             }
         }
 
         Menu {
-            title: qsTr("Help")
+            title: /*% "Help" */ qsTrId("craftward.menu.help")
 
             Action {
-                text: qsTr("Craftward on GitHub")
+                text: /*% "Craftward on GitHub" */ qsTrId("craftward.help.github")
                 onTriggered: Qt.openUrlExternally("https://github.com/zengxs/craftward")
             }
 
             Action {
-                text: qsTr("Report an Issue…")
+                text: /*% "Report an Issue…" */ qsTrId("craftward.help.report_issue")
                 onTriggered: Qt.openUrlExternally("https://github.com/zengxs/craftward/issues/new")
             }
 
             MenuSeparator {}
 
             Action {
-                text: qsTr("About Craftward")
+                text: /*% "About Craftward" */ qsTrId("craftward.about.open")
                 onTriggered: window.settingsRequested(1)
             }
         }

@@ -38,14 +38,14 @@ ModalDialog {
 
         Label {
             Layout.fillWidth: true
-            text: qsTr("Rename conversation")
+            text: /*% "Rename conversation" */ qsTrId("craftward.codex.rename.title")
             font.pixelSize: 18
             font.weight: Font.DemiBold
         }
 
         Label {
             Layout.fillWidth: true
-            text: qsTr("Conversation name")
+            text: /*% "Conversation name" */ qsTrId("craftward.codex.rename.name.label")
         }
 
         TextField {
@@ -53,7 +53,7 @@ ModalDialog {
 
             Layout.fillWidth: true
             text: renameState.draft
-            Accessible.name: qsTr("Conversation name")
+            Accessible.name: /*% "Conversation name" */ qsTrId("craftward.codex.rename.name.label")
             onTextEdited: renameState.draft = text
             Keys.onReturnPressed: event => {
                 event.accepted = renameState.submit();
@@ -72,12 +72,12 @@ ModalDialog {
             }
 
             Button {
-                text: qsTr("Cancel")
+                text: /*% "Cancel" */ qsTrId("craftward.action.cancel")
                 onClicked: root.reject()
             }
 
             PrimaryButton {
-                text: qsTr("Rename")
+                text: /*% "Rename" */ qsTrId("craftward.action.rename")
                 enabled: renameState.canSubmit
                 onClicked: renameState.submit()
             }

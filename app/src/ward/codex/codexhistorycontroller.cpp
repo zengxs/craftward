@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QtProtobuf/QProtobufSerializer>
+#include <QtTranslation>
 
 #include <memory>
 #include <utility>
@@ -31,7 +32,8 @@ deserializeBytes(QByteArrayView bytes, Message& message)
     QProtobufSerializer serializer;
     if (message.deserialize(&serializer, bytes))
         return {};
-    return QStringLiteral("Failed to decode Ward Core response: %1").arg(serializer.lastErrorString());
+    return /*% "Failed to decode Ward Core response: %1" */
+      qtTrId("craftward.codex.error.response_decode").arg(serializer.lastErrorString());
 }
 
 }
@@ -61,7 +63,8 @@ CodexHistoryController::CodexHistoryController(const WardRuntime* runtime,
         loadingThreads_ = false;
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex history observer could not be started.");
+            message = /*% "The Codex history observer could not be started." */ qtTrId(
+              "craftward.codex.error.history_observer_start");
         setThreadErrorMessage(message);
         conversationController_.setObserverUnavailable(message);
     } else {
@@ -138,7 +141,8 @@ CodexHistoryController::refresh()
     if (threadCreationInFlight() || conversationController_.turnInFlight())
         return;
     if (historyObserver_ == nullptr) {
-        const QString message = tr("The Codex history observer is unavailable.");
+        const QString message = /*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable");
         setThreadErrorMessage(message);
         conversationController_.failRefresh(message);
         return;
@@ -152,7 +156,8 @@ CodexHistoryController::refresh()
     if (!ward_core_codex_history_observer_refresh_async(historyObserver_, &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex history could not be refreshed.");
+            message =
+              /*% "The Codex history could not be refreshed." */ qtTrId("craftward.codex.error.history_refresh");
         finishThreadLoading(message);
         conversationController_.failRefresh(message);
     }
@@ -166,7 +171,8 @@ CodexHistoryController::showArchivedThreads(bool archived)
     if (loadingThreads_ || conversationController_.loading() || conversationController_.mutationInFlight())
         return false;
     if (historyObserver_ == nullptr) {
-        setThreadErrorMessage(tr("The Codex history observer is unavailable."));
+        setThreadErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
         return false;
     }
 
@@ -174,7 +180,8 @@ CodexHistoryController::showArchivedThreads(bool archived)
     if (!ward_core_codex_history_observer_show_archived_async(historyObserver_, archived, &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The displayed Codex history could not be changed.");
+            message = /*% "The displayed Codex history could not be changed." */ qtTrId(
+              "craftward.codex.error.history_scope_change");
         setThreadErrorMessage(message);
         return false;
     }
@@ -205,7 +212,8 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     conversationController_.beginLoadingThread(threadId, title);
 
     if (historyObserver_ == nullptr) {
-        conversationController_.finishLoading(tr("The Codex history observer is unavailable."));
+        conversationController_.finishLoading(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
         return;
     }
 
@@ -213,7 +221,8 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
     if (!ward_core_codex_history_observer_watch_async(historyObserver_, encodedThreadId.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex conversation could not be observed.");
+            message = /*% "The Codex conversation could not be observed." */ qtTrId(
+              "craftward.codex.error.conversation_observe");
         conversationController_.finishLoading(message);
     }
 }
@@ -227,7 +236,8 @@ CodexHistoryController::renameSelectedThread(const QString& name)
         conversationController_.mutationInFlight() || conversationController_.loading())
         return false;
     if (historyObserver_ == nullptr) {
-        conversationController_.setErrorMessage(tr("The Codex history observer is unavailable."));
+        conversationController_.setErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
         return false;
     }
 
@@ -238,7 +248,8 @@ CodexHistoryController::renameSelectedThread(const QString& name)
           historyObserver_, threadId.constData(), encodedName.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex conversation could not be renamed.");
+            message =
+              /*% "The Codex conversation could not be renamed." */ qtTrId("craftward.codex.error.conversation_rename");
         conversationController_.setErrorMessage(message);
         return false;
     }
@@ -255,7 +266,8 @@ CodexHistoryController::forkSelectedThread(const QString& lastTurnId)
         !conversationController_.forkReady())
         return false;
     if (historyObserver_ == nullptr) {
-        conversationController_.setErrorMessage(tr("The Codex history observer is unavailable."));
+        conversationController_.setErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
         return false;
     }
 
@@ -266,7 +278,8 @@ CodexHistoryController::forkSelectedThread(const QString& lastTurnId)
           historyObserver_, threadId.constData(), encodedLastTurnId.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex conversation could not be forked.");
+            message =
+              /*% "The Codex conversation could not be forked." */ qtTrId("craftward.codex.error.conversation_fork");
         conversationController_.setErrorMessage(message);
         return false;
     }
@@ -299,7 +312,8 @@ CodexHistoryController::changeSelectedThreadLifecycle(ThreadLifecycleAction acti
         conversationController_.loading() || conversationController_.mutationInFlight())
         return false;
     if (historyObserver_ == nullptr) {
-        conversationController_.setErrorMessage(tr("The Codex history observer is unavailable."));
+        conversationController_.setErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
         return false;
     }
 
@@ -311,12 +325,14 @@ CodexHistoryController::changeSelectedThreadLifecycle(ThreadLifecycleAction acti
         case ThreadLifecycleAction::Archive:
             queued =
               ward_core_codex_history_observer_archive_thread_async(historyObserver_, threadId.constData(), &rawError);
-            fallbackError = tr("The Codex conversation could not be archived.");
+            fallbackError = /*% "The Codex conversation could not be archived." */ qtTrId(
+              "craftward.codex.error.conversation_archive");
             break;
         case ThreadLifecycleAction::Restore:
             queued =
               ward_core_codex_history_observer_restore_thread_async(historyObserver_, threadId.constData(), &rawError);
-            fallbackError = tr("The Codex conversation could not be restored.");
+            fallbackError = /*% "The Codex conversation could not be restored." */ qtTrId(
+              "craftward.codex.error.conversation_restore");
             break;
     }
     if (!queued) {
@@ -341,18 +357,21 @@ CodexHistoryController::startThread(const QUrl& workingDirectory)
         conversationController_.loading())
         return false;
     if (!workingDirectory.isLocalFile()) {
-        setThreadStartErrorMessage(tr("Choose a local working directory for the new Codex conversation."));
+        setThreadStartErrorMessage(/*% "Choose a local working directory for the new Codex conversation." */ qtTrId(
+          "craftward.codex.error.working_directory_required"));
         return false;
     }
 
     const QString path = QDir::cleanPath(workingDirectory.toLocalFile());
     const QFileInfo directory(path);
     if (!directory.isAbsolute() || !directory.isDir()) {
-        setThreadStartErrorMessage(tr("The selected Codex working directory is unavailable."));
+        setThreadStartErrorMessage(/*% "The selected Codex working directory is unavailable." */ qtTrId(
+          "craftward.codex.error.working_directory_unavailable"));
         return false;
     }
     if (historyObserver_ == nullptr) {
-        setThreadStartErrorMessage(tr("The Codex history observer is unavailable."));
+        setThreadStartErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
         return false;
     }
 
@@ -361,7 +380,8 @@ CodexHistoryController::startThread(const QUrl& workingDirectory)
     if (!ward_core_codex_history_observer_start_thread_async(historyObserver_, encodedPath.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex conversation could not be started.");
+            message =
+              /*% "The Codex conversation could not be started." */ qtTrId("craftward.codex.error.conversation_start");
         setThreadStartErrorMessage(message);
         return false;
     }

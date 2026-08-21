@@ -80,10 +80,10 @@ Rectangle {
                 Layout.fillWidth: true
                 text: {
                     if (root.kind === CodexConversationController.CommandApproval)
-                        return qsTr("Command approval");
+                        return /*% "Command approval" */ qsTrId("craftward.codex.interaction.command_approval.title");
                     if (root.kind === CodexConversationController.FileChangeApproval)
-                        return qsTr("File change approval");
-                    return qsTr("Codex needs your input");
+                        return /*% "File change approval" */ qsTrId("craftward.codex.interaction.file_change_approval.title");
+                    return /*% "Codex needs your input" */ qsTrId("craftward.codex.interaction.user_input.title");
                 }
                 font.weight: Font.DemiBold
             }
@@ -96,7 +96,7 @@ Rectangle {
             }
 
             Label {
-                text: qsTr("Required")
+                text: /*% "Required" */ qsTrId("craftward.codex.interaction.required")
                 color: root.palette.placeholderText
                 font.pixelSize: 10
                 visible: root.blocking
@@ -138,7 +138,7 @@ Rectangle {
 
         Label {
             Layout.fillWidth: true
-            text: root.workingDirectory.length > 0 ? qsTr("Working directory: %1").arg(root.workingDirectory) : qsTr("Write access: %1").arg(root.grantRoot)
+            text: root.workingDirectory.length > 0 ? /*% "Working directory: %1" */ qsTrId("craftward.codex.interaction.working_directory").arg(root.workingDirectory) : /*% "Write access: %1" */ qsTrId("craftward.codex.interaction.write_access").arg(root.grantRoot)
             color: root.palette.placeholderText
             font.pixelSize: 10
             elide: Text.ElideMiddle
@@ -210,7 +210,7 @@ Rectangle {
                     id: otherEditor
 
                     Layout.fillWidth: true
-                    placeholderText: qsTr("Or enter another answer")
+                    placeholderText: /*% "Or enter another answer" */ qsTrId("craftward.codex.interaction.other_answer.placeholder")
                     enabled: !root.resolving
                     echoMode: questionEditor.question.secret ? TextInput.Password : TextInput.Normal
                     visible: questionEditor.question.options.length > 0 && questionEditor.question.allowsOther
@@ -221,7 +221,7 @@ Rectangle {
                     id: textEditor
 
                     Layout.fillWidth: true
-                    placeholderText: qsTr("Enter your answer")
+                    placeholderText: /*% "Enter your answer" */ qsTrId("craftward.codex.interaction.answer.placeholder")
                     enabled: !root.resolving
                     echoMode: questionEditor.question.secret ? TextInput.Password : TextInput.Normal
                     visible: questionEditor.question.options.length === 0
@@ -240,28 +240,28 @@ Rectangle {
             }
 
             Button {
-                text: qsTr("Cancel turn")
+                text: /*% "Cancel turn" */ qsTrId("craftward.codex.interaction.cancel_turn")
                 enabled: !root.resolving
                 visible: approvalActions.offers(CodexConversationController.Cancel)
                 onClicked: root.approvalSubmitted(CodexConversationController.Cancel)
             }
 
             Button {
-                text: qsTr("Decline")
+                text: /*% "Decline" */ qsTrId("craftward.codex.interaction.decline")
                 enabled: !root.resolving
                 visible: approvalActions.offers(CodexConversationController.Decline)
                 onClicked: root.approvalSubmitted(CodexConversationController.Decline)
             }
 
             Button {
-                text: qsTr("Allow for session")
+                text: /*% "Allow for session" */ qsTrId("craftward.codex.interaction.allow_session")
                 enabled: !root.resolving
                 visible: approvalActions.offers(CodexConversationController.AcceptForSession)
                 onClicked: root.approvalSubmitted(CodexConversationController.AcceptForSession)
             }
 
             Button {
-                text: qsTr("Allow")
+                text: /*% "Allow" */ qsTrId("craftward.codex.interaction.allow")
                 enabled: !root.resolving
                 visible: approvalActions.offers(CodexConversationController.Accept)
                 highlighted: true
@@ -278,7 +278,7 @@ Rectangle {
             }
 
             Button {
-                text: qsTr("Submit")
+                text: /*% "Submit" */ qsTrId("craftward.action.submit")
                 enabled: !root.resolving && root.allQuestionsAnswered()
                 highlighted: true
                 onClicked: root.userInputSubmitted(root.collectAnswers())

@@ -25,7 +25,7 @@ ApplicationWindow {
     minimumHeight: 520
     transientParent: null
     visible: false
-    title: root.controller.displayName ? qsTr("%1 — Realm Display").arg(root.controller.displayName) : qsTr("Realm Display")
+    title: root.controller.displayName ? /*% "%1 — Realm Display" */ qsTrId("craftward.realm.display.named_title").arg(root.controller.displayName) : /*% "Realm Display" */ qsTrId("craftward.realm.display.title")
     onClosing: close => {
         close.accepted = false;
         root.hide();
@@ -54,7 +54,7 @@ ApplicationWindow {
 
         Label {
             anchors.centerIn: parent
-            text: qsTr("The Realm display is detached.")
+            text: /*% "The Realm display is detached." */ qsTrId("craftward.realm.display.detached")
             color: "white"
             visible: !root.controller.displayWindow
         }

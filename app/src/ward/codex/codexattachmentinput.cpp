@@ -22,6 +22,7 @@
 #include <QStandardPaths>
 #include <QUuid>
 #include <QVariant>
+#include <QtTranslation>
 
 namespace {
 void
@@ -78,21 +79,22 @@ CodexAttachmentInput::describe(const QList<QUrl>& attachments, bool managed, QSt
     for (const QUrl& attachment : attachments) {
         if (!attachment.isLocalFile()) {
             writeError(errorMessage,
-                       QCoreApplication::translate("CodexAttachmentInput", "Only local files can be attached."));
+                       /*% "Only local files can be attached." */ qtTrId("craftward.codex.attachment.local_only"));
             return std::nullopt;
         }
         const QFileInfo fileInfo(attachment.toLocalFile());
         if (!fileInfo.exists() || !fileInfo.isFile()) {
             writeError(
               errorMessage,
-              QCoreApplication::translate("CodexAttachmentInput", "An attached file is no longer available: %1")
+              /*% "An attached file is no longer available: %1" */ qtTrId("craftward.codex.attachment.error.missing")
                 .arg(attachment.fileName()));
             return std::nullopt;
         }
         if (!fileInfo.isReadable()) {
-            writeError(errorMessage,
-                       QCoreApplication::translate("CodexAttachmentInput", "An attached file is not readable: %1")
-                         .arg(fileInfo.fileName()));
+            writeError(
+              errorMessage,
+              /*% "An attached file is not readable: %1" */ qtTrId("craftward.codex.attachment.error.unreadable")
+                .arg(fileInfo.fileName()));
             return std::nullopt;
         }
 
@@ -127,9 +129,9 @@ CodexAttachmentInput::storeClipboardImage(const QImage& image, const QString& da
 {
     clearError(errorMessage);
     if (dataRoot.isEmpty()) {
-        writeError(
-          errorMessage,
-          QCoreApplication::translate("CodexAttachmentInput", "The application data directory is unavailable."));
+        writeError(errorMessage,
+                   /*% "The application data directory is unavailable." */ qtTrId(
+                     "craftward.attachment_storage.error.data_directory_unavailable"));
         return {};
     }
 
@@ -137,7 +139,7 @@ CodexAttachmentInput::storeClipboardImage(const QImage& image, const QString& da
     const QString incomingDirectory = QStringLiteral("attachments/.incoming");
     if (!dataDirectory.mkpath(incomingDirectory)) {
         writeError(errorMessage,
-                   QCoreApplication::translate("CodexAttachmentInput", "The clipboard image could not be saved."));
+                   /*% "The clipboard image could not be saved." */ qtTrId("craftward.clipboard_image.error.save"));
         return {};
     }
 
@@ -149,7 +151,7 @@ CodexAttachmentInput::storeClipboardImage(const QImage& image, const QString& da
     if (normalizedImage.isNull() || !output.open(QIODevice::WriteOnly) || !normalizedImage.save(&output, "PNG") ||
         !output.commit()) {
         writeError(errorMessage,
-                   QCoreApplication::translate("CodexAttachmentInput", "The clipboard image could not be saved."));
+                   /*% "The clipboard image could not be saved." */ qtTrId("craftward.clipboard_image.error.save"));
         return {};
     }
 
@@ -159,7 +161,8 @@ CodexAttachmentInput::storeClipboardImage(const QImage& image, const QString& da
     if (!ward_core_blake3_hash_file(encodedStagingPath.constData(), &digest, &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = QCoreApplication::translate("CodexAttachmentInput", "The clipboard image could not be indexed.");
+            message =
+              /*% "The clipboard image could not be indexed." */ qtTrId("craftward.clipboard_image.error.index");
         QFile::remove(stagingPath);
         writeError(errorMessage, message);
         return {};
@@ -171,7 +174,7 @@ CodexAttachmentInput::storeClipboardImage(const QImage& image, const QString& da
     if (!dataDirectory.mkpath(contentDirectory)) {
         QFile::remove(stagingPath);
         writeError(errorMessage,
-                   QCoreApplication::translate("CodexAttachmentInput", "The clipboard image could not be saved."));
+                   /*% "The clipboard image could not be saved." */ qtTrId("craftward.clipboard_image.error.save"));
         return {};
     }
 
@@ -190,7 +193,7 @@ CodexAttachmentInput::storeClipboardImage(const QImage& image, const QString& da
 
     QFile::remove(stagingPath);
     writeError(errorMessage,
-               QCoreApplication::translate("CodexAttachmentInput", "The clipboard image could not be saved."));
+               /*% "The clipboard image could not be saved." */ qtTrId("craftward.clipboard_image.error.save"));
     return {};
 }
 
@@ -202,11 +205,18 @@ CodexAttachmentInput::fromClipboard(QString* errorMessage)
     const QMimeData* mimeData = clipboard == nullptr ? nullptr : clipboard->mimeData();
     if (mimeData == nullptr)
         return {};
+    return fromMimeData(
+      *mimeData, QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation), errorMessage);
+}
 
-    if (mimeData->hasUrls()) {
+QList<CodexAttachmentDescriptor>
+CodexAttachmentInput::fromMimeData(const QMimeData& mimeData, const QString& dataRoot, QString* errorMessage)
+{
+    clearError(errorMessage);
+    if (mimeData.hasUrls()) {
         QList<QUrl> localFiles;
         QSet<QString> seenUrls;
-        for (const QUrl& url : mimeData->urls()) {
+        for (const QUrl& url : mimeData.urls()) {
             if (!url.isLocalFile())
                 continue;
             const QString key = url.adjusted(QUrl::NormalizePathSegments).toString();
@@ -221,22 +231,21 @@ CodexAttachmentInput::fromClipboard(QString* errorMessage)
         }
     }
 
-    if (!mimeData->hasImage())
+    if (!mimeData.hasImage())
         return {};
-    const QImage image = clipboardImage(*mimeData);
+    const QImage image = clipboardImage(mimeData);
     if (image.isNull()) {
         writeError(errorMessage,
-                   QCoreApplication::translate("CodexAttachmentInput", "The clipboard image could not be read."));
+                   /*% "The clipboard image could not be read." */ qtTrId("craftward.clipboard_image.error.read"));
         return {};
     }
-    const QString dataRoot = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     const QUrl storedImage = storeClipboardImage(image, dataRoot, errorMessage);
     if (storedImage.isEmpty())
         return {};
     std::optional<QList<CodexAttachmentDescriptor>> described = describe({ storedImage }, true, errorMessage);
     if (!described.has_value() || described->isEmpty())
         return {};
-    described->front().name = QCoreApplication::translate("CodexAttachmentInput", "Pasted image.png");
+    described->front().nameKind = CodexAttachmentNameKind::PastedImage;
     return *described;
 }
 
@@ -252,4 +261,16 @@ CodexAttachmentInput::kindName(CodexAttachmentKind kind)
             return QStringLiteral("mention");
     }
     return QStringLiteral("mention");
+}
+
+QString
+CodexAttachmentInput::nameKindName(CodexAttachmentNameKind kind)
+{
+    switch (kind) {
+        case CodexAttachmentNameKind::FileName:
+            return QStringLiteral("fileName");
+        case CodexAttachmentNameKind::PastedImage:
+            return QStringLiteral("pastedImage");
+    }
+    return QStringLiteral("fileName");
 }

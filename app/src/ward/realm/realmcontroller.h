@@ -27,7 +27,7 @@ class RealmController : public QObject
     Q_PROPERTY(QString bundlePath READ bundlePath NOTIFY bundleChanged)
     Q_PROPERTY(QString displayName READ displayName NOTIFY bundleChanged)
     Q_PROPERTY(State state READ state NOTIFY statusChanged)
-    Q_PROPERTY(QString stateText READ stateText NOTIFY statusChanged)
+    Q_PROPERTY(QString stateText READ stateText NOTIFY stateTextChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QWindow* displayWindow READ displayWindow NOTIFY displayWindowChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY statusChanged)
@@ -96,10 +96,12 @@ class RealmController : public QObject
     Q_INVOKABLE bool attachDisplay();
     Q_INVOKABLE void detachDisplay();
     Q_INVOKABLE void clearError();
+    void retranslate();
 
   signals:
     void bundleChanged();
     void statusChanged();
+    void stateTextChanged();
     void errorMessageChanged();
     void displayWindowChanged();
 

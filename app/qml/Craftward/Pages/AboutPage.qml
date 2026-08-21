@@ -11,11 +11,15 @@ Page {
     property string commitHash
     readonly property bool hasApplicationIcon: applicationIconSource.toString().length > 0
     readonly property string versionSummary: {
-        const parts = [qsTr("Version %1").arg(Application.version)];
-        if (root.buildNumber.length > 0)
-            parts.push(qsTr("Build %1").arg(root.buildNumber));
-        if (root.commitHash.length > 0)
-            parts.push(qsTr("Commit %1").arg(root.commitHash));
+        const parts = [/*% "Version %1" */ qsTrId("craftward.about.version").arg(Application.version)];
+        if (root.buildNumber.length > 0) {
+            //% "Build %1"
+            parts.push(qsTrId("craftward.about.build").arg(root.buildNumber));
+        }
+        if (root.commitHash.length > 0) {
+            //% "Commit %1"
+            parts.push(qsTrId("craftward.about.commit").arg(root.commitHash));
+        }
         return parts.join(" · ");
     }
 
@@ -63,7 +67,7 @@ Page {
             Label {
                 Layout.fillWidth: true
                 Layout.topMargin: applicationIcon.visible ? 14 : 0
-                text: qsTr("Craftward")
+                text: /*% "Craftward" */ qsTrId("craftward.app.name")
                 font.pixelSize: 22
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignHCenter
@@ -72,7 +76,7 @@ Page {
             Label {
                 Layout.fillWidth: true
                 Layout.topMargin: 4
-                text: qsTr("From intent to artifact.")
+                text: /*% "From intent to artifact." */ qsTrId("craftward.about.tagline")
                 font.pixelSize: 13
                 color: root.palette.placeholderText
                 horizontalAlignment: Text.AlignHCenter
@@ -94,17 +98,17 @@ Page {
                 spacing: 8
 
                 Button {
-                    text: qsTr("License")
-                    onClicked: root.viewApplicationLicenseRequested()
-                }
-
-                Button {
-                    text: qsTr("Source Code")
+                    text: /*% "GitHub" */ qsTrId("craftward.about.github.action")
                     onClicked: Qt.openUrlExternally("https://github.com/zengxs/craftward")
                 }
 
                 Button {
-                    text: qsTr("Third-Party Licenses")
+                    text: /*% "License" */ qsTrId("craftward.about.license.action")
+                    onClicked: root.viewApplicationLicenseRequested()
+                }
+
+                Button {
+                    text: /*% "Third-Party Licenses" */ qsTrId("craftward.about.third_party_licenses.action")
                     onClicked: root.viewThirdPartyLicensesRequested()
                 }
             }
@@ -112,7 +116,7 @@ Page {
             Label {
                 Layout.fillWidth: true
                 Layout.topMargin: 24
-                text: qsTr("Copyright © 2026 Xiangsong Zeng.")
+                text: /*% "Copyright © 2026 Xiangsong Zeng." */ qsTrId("craftward.about.copyright")
                 font.pixelSize: 12
                 horizontalAlignment: Text.AlignHCenter
             }
@@ -120,7 +124,7 @@ Page {
             Label {
                 Layout.fillWidth: true
                 Layout.topMargin: 10
-                text: qsTr("Licensed under the GNU General Public License,\nversion 3 or later.")
+                text: /*% "Licensed under the GNU General Public License,\nversion 3 or later." */ qsTrId("craftward.about.license_summary")
                 font.pixelSize: 12
                 color: root.palette.placeholderText
                 horizontalAlignment: Text.AlignHCenter
@@ -132,7 +136,7 @@ Page {
             Label {
                 Layout.fillWidth: true
                 Layout.topMargin: 8
-                text: qsTr("This program comes with absolutely no warranty.")
+                text: /*% "This program comes with absolutely no warranty." */ qsTrId("craftward.about.no_warranty")
                 font.pixelSize: 12
                 color: root.palette.placeholderText
                 horizontalAlignment: Text.AlignHCenter

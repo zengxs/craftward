@@ -4,6 +4,7 @@
 #include "applicationcontroller.h"
 #include "applicationiconprovider.h"
 #include "applicationmenus.h"
+#include "localization/localizationcontroller.h"
 #include "ward/codex/codexhistorycontroller.h"
 #include "ward/coreffierror.h"
 #include "ward/realm/realmcontroller.h"
@@ -15,6 +16,7 @@
 #include <QObject>
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
+#include <QSettings>
 #include <QUrl>
 #include <QVariantMap>
 #include <QtQml/QQmlExtensionPlugin>
@@ -88,10 +90,21 @@ main(int argc, char* argv[])
         return 1;
     }
 
+    QQmlApplicationEngine engine;
+    QSettings settings;
+    LocalizationController localizationController(engine, settings);
     CodexHistoryController codexHistoryController(runtime.get(), codexExecutionTarget.get());
     RealmController realmController;
     ApplicationController applicationController(app, realmController);
-    QQmlApplicationEngine engine;
+
+    QObject::connect(&localizationController,
+                     &LocalizationController::effectiveLanguageChanged,
+                     codexHistoryController.conversation()->timeline(),
+                     &CodexTimelineModel::retranslate);
+    QObject::connect(&localizationController,
+                     &LocalizationController::effectiveLanguageChanged,
+                     &realmController,
+                     &RealmController::retranslate);
 
     auto applicationIconProvider = createApplicationIconProvider();
     engine.addImageProvider(QStringLiteral("application-icon"), applicationIconProvider.release());
@@ -101,6 +114,8 @@ main(int argc, char* argv[])
                              QUrl(QStringLiteral("image://application-icon/app")));
     initialProperties.insert(QStringLiteral("buildNumber"), QStringLiteral(CRAFTWARD_BUILD_NUMBER));
     initialProperties.insert(QStringLiteral("commitHash"), QStringLiteral(CRAFTWARD_COMMIT_HASH));
+    initialProperties.insert(QStringLiteral("localizationController"),
+                             QVariant::fromValue(static_cast<QObject*>(&localizationController)));
     initialProperties.insert(QStringLiteral("applicationController"),
                              QVariant::fromValue(static_cast<QObject*>(&applicationController)));
     initialProperties.insert(QStringLiteral("codexHistoryController"),

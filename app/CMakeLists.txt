@@ -67,12 +67,16 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-find_package(Qt6 6.11 REQUIRED COMPONENTS Protobuf Qml Quick QuickControls2 QuickDialogs2 Svg)
+find_package(Qt6 6.11 REQUIRED COMPONENTS LinguistTools Protobuf Qml Quick QuickControls2 QuickDialogs2 Svg)
 if(BUILD_TESTING)
     find_package(Qt6 6.11 REQUIRED COMPONENTS Test)
 endif()
 
-qt_standard_project_setup(REQUIRES 6.11)
+qt_standard_project_setup(
+    REQUIRES 6.11
+    I18N_SOURCE_LANGUAGE en
+    I18N_TRANSLATED_LANGUAGES en zh_CN
+)
 
 set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
 
@@ -119,6 +123,7 @@ if(CRAFTWARD_COMMIT_HASH STREQUAL "")
 endif()
 
 add_subdirectory(third_party)
+add_subdirectory(src/localization)
 add_subdirectory(src/ward)
 add_subdirectory(qml/Craftward/Components)
 add_subdirectory(qml/Craftward/Editor)
@@ -128,3 +133,32 @@ add_subdirectory(qml/Craftward/Pages)
 add_subdirectory(qml/Craftward/App)
 # Assets attach resources directly to the Craftward executable.
 add_subdirectory(assets)
+
+set(craftward_translation_consumers Craftward)
+if(BUILD_TESTING)
+    list(APPEND craftward_translation_consumers
+        CraftwardCodexHistoryControllerTest
+        CraftwardLocalizationControllerTest
+        CraftwardRealmControllerTest
+    )
+endif()
+
+qt_add_translations(
+    TARGETS ${craftward_translation_consumers}
+    SOURCE_TARGETS
+        Craftward
+        CraftwardCodex
+        CraftwardComponents
+        CraftwardFeaturesLegal
+        CraftwardFeaturesRealm
+        CraftwardLocalization
+        CraftwardPages
+        CraftwardRealm
+    TS_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/translations/craftward_en.ts"
+        "${CMAKE_CURRENT_SOURCE_DIR}/translations/craftward_zh_CN.ts"
+    RESOURCE_PREFIX /i18n
+    LUPDATE_OPTIONS -warnings-are-errors
+    LRELEASE_OPTIONS -fail-on-invalid -fail-on-unfinished
+    MERGE_QT_TRANSLATIONS
+)

@@ -3,6 +3,8 @@
 
 #include "ward/codex/codexconversationcontroller.h"
 
+#include <QtTranslation>
+
 #include <utility>
 
 bool
@@ -14,7 +16,8 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
     switch (event.kind()) {
         case HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_UPDATED: {
             if (!event.hasModelCatalog()) {
-                finishModelCatalogLoading(tr("Ward Core returned a model update without a catalog."));
+                finishModelCatalogLoading(/*% "Ward Core returned a model update without a catalog." */ qtTrId(
+                  "craftward.codex.error.invalid_event.model_catalog_missing"));
                 return true;
             }
             auto models = event.modelCatalog().models();
@@ -26,14 +29,17 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_MODEL_CATALOG_ERROR: {
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            finishModelCatalogLoading(message.isEmpty() ? tr("The Codex model catalog could not be loaded.") : message);
+            finishModelCatalogLoading(message.isEmpty() ? /*% "The Codex model catalog could not be loaded." */ qtTrId(
+                                                            "craftward.codex.error.model_catalog_load")
+                                                        : message);
             return true;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_MODEL_CHANGED: {
             if (threadId.isEmpty() || !event.hasThreadModelState() ||
                 event.threadModelState().model().trimmed().isEmpty()) {
                 if (threadId.isEmpty() || threadId == threadId_)
-                    setErrorMessage(tr("Ward Core returned a thread model update without a model."));
+                    setErrorMessage(/*% "Ward Core returned a thread model update without a model." */ qtTrId(
+                      "craftward.codex.error.invalid_event.thread_model_missing"));
                 return true;
             }
             const auto& state = event.threadModelState();
@@ -45,7 +51,8 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
             if (threadId != threadId_)
                 return true;
             if (!event.hasConversation()) {
-                finishLoading(tr("Ward Core returned a conversation update without a conversation."));
+                finishLoading(/*% "Ward Core returned a conversation update without a conversation." */ qtTrId(
+                  "craftward.codex.error.invalid_event.conversation_missing"));
                 return true;
             }
             const auto& conversation = event.conversation();
@@ -65,7 +72,9 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
             if (threadId != threadId_)
                 return true;
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            finishLoading(message.isEmpty() ? tr("The Codex conversation could not be observed.") : message);
+            finishLoading(message.isEmpty() ? /*% "The Codex conversation could not be observed." */ qtTrId(
+                                                "craftward.codex.error.conversation_observe")
+                                            : message);
             return true;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_STARTED:
@@ -85,7 +94,9 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
                 return true;
             setSteeringTurn(false);
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            setErrorMessage(message.isEmpty() ? tr("The Codex turn could not be guided.") : message);
+            setErrorMessage(message.isEmpty()
+                              ? /*% "The Codex turn could not be guided." */ qtTrId("craftward.codex.error.turn_steer")
+                              : message);
             return true;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_ERROR: {
@@ -93,7 +104,9 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
                 return true;
             setSteeringTurn(false);
             const QString message = event.hasErrorMessage() ? event.errorMessage() : QString();
-            setErrorMessage(message.isEmpty() ? tr("The Codex turn failed.") : message);
+            setErrorMessage(message.isEmpty()
+                              ? /*% "The Codex turn failed." */ qtTrId("craftward.codex.error.turn_failed")
+                              : message);
             return true;
         }
         case HistoryEventKind::HISTORY_EVENT_KIND_TURN_NOTICE: {
@@ -110,7 +123,8 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
                 return true;
             if (!event.hasThreadWriteState()) {
                 setWriteAvailability(WriteAvailability::Unavailable,
-                                     tr("Ward Core returned a write-state update without a state."));
+                                     /*% "Ward Core returned a write-state update without a state." */ qtTrId(
+                                       "craftward.codex.error.invalid_event.write_state_missing"));
                 return true;
             }
             const auto& state = event.threadWriteState();
@@ -135,7 +149,8 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_UNSPECIFIED:
                 default:
                     setWriteAvailability(WriteAvailability::Unavailable,
-                                         tr("Ward Core returned an unsupported write state."));
+                                         /*% "Ward Core returned an unsupported write state." */ qtTrId(
+                                           "craftward.codex.error.invalid_event.write_state_unsupported"));
                     break;
             }
             return true;
@@ -145,7 +160,8 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
                 return true;
             if (!event.hasThreadRuntimeState()) {
                 setTurnState(TurnState::Unknown);
-                setErrorMessage(tr("Ward Core returned a runtime update without a state."));
+                setErrorMessage(/*% "Ward Core returned a runtime update without a state." */ qtTrId(
+                  "craftward.codex.error.invalid_event.runtime_state_missing"));
                 return true;
             }
             const auto& state = event.threadRuntimeState();
@@ -196,7 +212,8 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
             if (threadId != threadId_)
                 return true;
             if (!event.hasPendingInteractions()) {
-                setErrorMessage(tr("Ward Core returned an interaction update without its interactions."));
+                setErrorMessage(/*% "Ward Core returned an interaction update without its interactions." */ qtTrId(
+                  "craftward.codex.error.invalid_event.interactions_missing"));
                 return true;
             }
             auto interactions = event.pendingInteractions().interactions();

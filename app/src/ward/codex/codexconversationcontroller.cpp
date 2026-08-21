@@ -11,6 +11,7 @@
 
 #include <QByteArray>
 #include <QtProtobuf/QProtobufSerializer>
+#include <QtTranslation>
 
 #include <utility>
 
@@ -24,6 +25,7 @@ attachmentDescriptorMap(const CodexAttachmentDescriptor& attachment)
         { QStringLiteral("mimeType"), attachment.mimeType },
         { QStringLiteral("kind"), CodexAttachmentInput::kindName(attachment.kind) },
         { QStringLiteral("managed"), attachment.managed },
+        { QStringLiteral("nameKind"), CodexAttachmentInput::nameKindName(attachment.nameKind) },
     };
 }
 
@@ -320,7 +322,9 @@ CodexConversationController::acquireWriteAccess()
         writeAvailability_ == WriteAvailability::Checking || writeAvailability_ == WriteAvailability::Writable)
         return;
     if (observer_ == nullptr) {
-        setWriteAvailability(WriteAvailability::Unavailable, tr("The Codex history observer is unavailable."));
+        setWriteAvailability(WriteAvailability::Unavailable,
+                             /*% "The Codex history observer is unavailable." */ qtTrId(
+                               "craftward.codex.error.history_observer_unavailable"));
         return;
     }
 
@@ -329,7 +333,8 @@ CodexConversationController::acquireWriteAccess()
     if (!ward_core_codex_history_observer_acquire_write_async(observer_, threadId.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("Writing access could not be checked for this conversation.");
+            message = /*% "Writing access could not be checked for this conversation." */ qtTrId(
+              "craftward.codex.error.write_access_check");
         setWriteAvailability(WriteAvailability::Unavailable, message);
         return;
     }
@@ -353,7 +358,8 @@ CodexConversationController::releaseWriteAccess()
     if (!ward_core_codex_history_observer_release_write_async(observer_, threadId.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("Writing access could not be released for this conversation.");
+            message = /*% "Writing access could not be released for this conversation." */ qtTrId(
+              "craftward.codex.error.write_access_release");
         setWriteAvailability(WriteAvailability::Unavailable, message);
         return;
     }
@@ -368,7 +374,8 @@ CodexConversationController::startTurn(const QString& prompt, const QList<QUrl>&
         mutationInFlight() || writeAvailability_ != WriteAvailability::Writable)
         return false;
     if (observer_ == nullptr) {
-        setErrorMessage(tr("The Codex history observer is unavailable."));
+        setErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
         return false;
     }
 
@@ -405,7 +412,7 @@ CodexConversationController::startTurn(const QString& prompt, const QList<QUrl>&
           &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex turn could not be started.");
+            message = /*% "The Codex turn could not be started." */ qtTrId("craftward.codex.error.turn_start");
         setErrorMessage(message);
         return false;
     }
@@ -574,7 +581,8 @@ CodexConversationController::steerTurn(const QString& prompt)
         writeAvailability_ != WriteAvailability::Writable)
         return false;
     if (observer_ == nullptr) {
-        setErrorMessage(tr("The Codex history observer is unavailable."));
+        setErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
         return false;
     }
 
@@ -586,7 +594,7 @@ CodexConversationController::steerTurn(const QString& prompt)
           observer_, threadId.constData(), turnId.constData(), encodedPrompt.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex turn could not be guided.");
+            message = /*% "The Codex turn could not be guided." */ qtTrId("craftward.codex.error.turn_steer");
         setErrorMessage(message);
         return false;
     }
@@ -608,7 +616,7 @@ CodexConversationController::interruptTurn()
     if (!ward_core_codex_history_observer_interrupt_turn_async(observer_, threadId.constData(), &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex turn could not be stopped.");
+            message = /*% "The Codex turn could not be stopped." */ qtTrId("craftward.codex.error.turn_stop");
         setErrorMessage(message);
         return false;
     }
@@ -787,7 +795,9 @@ CodexConversationController::sendInteractionResponse(const QString& interactionI
     QProtobufSerializer serializer;
     const QByteArray encoded = response.serialize(&serializer);
     if (serializer.lastError() != QAbstractProtobufSerializer::Error::None) {
-        setErrorMessage(tr("The Codex response could not be encoded: %1").arg(serializer.lastErrorString()));
+        setErrorMessage(
+          /*% "The Codex response could not be encoded: %1" */ qtTrId("craftward.codex.error.response_encode")
+            .arg(serializer.lastErrorString()));
         return false;
     }
 
@@ -799,7 +809,7 @@ CodexConversationController::sendInteractionResponse(const QString& interactionI
           &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
-            message = tr("The Codex response could not be sent.");
+            message = /*% "The Codex response could not be sent." */ qtTrId("craftward.codex.error.response_send");
         setErrorMessage(message);
         return false;
     }

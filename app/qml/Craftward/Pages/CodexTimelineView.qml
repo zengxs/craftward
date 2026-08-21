@@ -30,7 +30,7 @@ Control {
         const completedAt = Number(activity.completedAtUnixMilliseconds);
         const endAt = completedAt > 0 ? completedAt : root.wallClockUnixMilliseconds;
         const elapsedSeconds = Math.max(0, Math.floor((endAt - startedAt) / 1000));
-        return qsTr("Processed %1 s").arg(elapsedSeconds);
+        return /*% "Processed %1 s" */ qsTrId("craftward.codex.timeline.processed_seconds").arg(elapsedSeconds);
     }
 
     function followLatest() {
@@ -185,7 +185,7 @@ Control {
                     spacing: 6
 
                     Label {
-                        text: timelineDelegate.fromUser ? qsTr("You") : (timelineDelegate.commentary ? qsTr("Codex · Commentary") : qsTr("Codex"))
+                        text: timelineDelegate.fromUser ? /*% "You" */ qsTrId("craftward.codex.timeline.author.you") : (timelineDelegate.commentary ? /*% "Codex · Commentary" */ qsTrId("craftward.codex.timeline.author.commentary") : /*% "Codex" */ qsTrId("craftward.codex.name"))
                         color: root.palette.placeholderText
                         font.pixelSize: 11
                         font.weight: Font.DemiBold
@@ -251,7 +251,7 @@ Control {
                             }
 
                             Label {
-                                text: qsTr("× %1").arg(timelineDelegate.activityCount)
+                                text: /*% "× %1" */ qsTrId("craftward.codex.timeline.activity_count").arg(timelineDelegate.activityCount)
                                 color: root.palette.placeholderText
                                 font.pixelSize: 11
                                 visible: timelineDelegate.activityCount > 1
@@ -365,7 +365,7 @@ Control {
                 enabled: root.forkEnabled
                 font.pixelSize: 11
                 implicitHeight: 24
-                text: qsTr("Fork from here")
+                text: /*% "Fork from here" */ qsTrId("craftward.codex.timeline.fork.action")
                 visible: timelineDelegate.forkBoundary && root.showForkActions
                 onClicked: root.forkRequested(timelineDelegate.turnId)
             }
@@ -374,7 +374,7 @@ Control {
         Label {
             anchors.centerIn: parent
             width: Math.min(parent.width - 48, 360)
-            text: root.controller.loading ? qsTr("Loading conversation…") : (root.controller.threadId ? qsTr("This conversation contains no displayable history.") : qsTr("Select a conversation to read it."))
+            text: root.controller.loading ? /*% "Loading conversation…" */ qsTrId("craftward.codex.timeline.loading") : (root.controller.threadId ? /*% "This conversation contains no displayable history." */ qsTrId("craftward.codex.timeline.empty") : /*% "Select a conversation to read it." */ qsTrId("craftward.codex.timeline.no_selection"))
             color: root.palette.placeholderText
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap

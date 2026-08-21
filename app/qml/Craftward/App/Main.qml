@@ -3,6 +3,7 @@
 
 import QtQuick
 import Craftward.Features.Realm
+import Craftward.Localization
 import Craftward.Realm
 
 MainWindow {
@@ -12,6 +13,7 @@ MainWindow {
     property string buildNumber
     property string commitHash
     required property ApplicationController applicationController
+    required property LocalizationController localizationController
     required property RealmController realmController
 
     readonly property RealmManagerWindow realmManagerWindow: RealmManagerWindow {
@@ -27,6 +29,7 @@ MainWindow {
         applicationIconSource: root.applicationIconSource
         buildNumber: root.buildNumber
         commitHash: root.commitHash
+        localizationController: root.localizationController
         transientParent: null
     }
 

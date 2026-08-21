@@ -49,6 +49,7 @@ class CodexTimelineModel : public QAbstractListModel
 
     void reconcileTimeline(QList<CodexTimelineItem> timeline, const QStringList& forkableTurnIds);
     void clear();
+    void retranslate();
 
   private:
     enum class ActivityPresentationKind

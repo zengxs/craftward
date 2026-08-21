@@ -50,7 +50,7 @@ ModalDialog {
             }
 
             Button {
-                text: qsTr("Close")
+                text: /*% "Close" */ qsTrId("craftward.action.close")
                 onClicked: root.close()
             }
         }

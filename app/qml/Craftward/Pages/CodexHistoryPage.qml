@@ -33,7 +33,7 @@ Page {
     FolderDialog {
         id: workingDirectoryDialog
 
-        title: qsTr("Choose a working directory for the new conversation")
+        title: /*% "Choose a working directory for the new conversation" */ qsTrId("craftward.codex.history.new.working_directory_dialog.title")
         onAccepted: root.controller.startThread(selectedFolder)
     }
 
@@ -51,9 +51,9 @@ Page {
     ConfirmationDialog {
         id: archiveDialog
 
-        title: qsTr("Archive conversation?")
-        message: qsTr("This conversation will move out of Active history. You can restore it later from Archived.")
-        acceptText: qsTr("Archive")
+        title: /*% "Archive conversation?" */ qsTrId("craftward.codex.history.archive_confirmation.title")
+        message: /*% "This conversation will move out of Active history. You can restore it later from Archived." */ qsTrId("craftward.codex.history.archive_confirmation.message")
+        acceptText: /*% "Archive" */ qsTrId("craftward.action.archive")
         onAccepted: root.controller.archiveSelectedThread()
     }
 
@@ -95,7 +95,7 @@ Page {
 
                     Label {
                         Layout.fillWidth: true
-                        text: qsTr("Codex")
+                        text: /*% "Codex" */ qsTrId("craftward.codex.name")
                         font.pixelSize: 20
                         font.weight: Font.DemiBold
                     }
@@ -108,14 +108,14 @@ Page {
                     }
 
                     Button {
-                        text: qsTr("New…")
+                        text: /*% "New…" */ qsTrId("craftward.codex.history.new.action")
                         visible: !root.controller.showingArchived
                         enabled: historyActionState.canStartThread
                         onClicked: workingDirectoryDialog.open()
                     }
 
                     Button {
-                        text: qsTr("Refresh")
+                        text: /*% "Refresh" */ qsTrId("craftward.action.refresh")
                         enabled: !historyActionState.busy
                         onClicked: root.controller.refresh()
                     }
@@ -123,7 +123,7 @@ Page {
 
                 Label {
                     Layout.fillWidth: true
-                    text: qsTr("Continue persisted conversations through the local Codex app-server.")
+                    text: /*% "Continue persisted conversations through the local Codex app-server." */ qsTrId("craftward.codex.history.description")
                     color: root.palette.placeholderText
                     wrapMode: Text.WordWrap
                 }
@@ -138,7 +138,7 @@ Page {
 
                     Button {
                         Layout.fillWidth: true
-                        text: qsTr("Active")
+                        text: /*% "Active" */ qsTrId("craftward.codex.history.scope.active")
                         checkable: true
                         checked: !root.controller.showingArchived
                         enabled: historyActionState.canSwitchScope
@@ -148,7 +148,7 @@ Page {
 
                     Button {
                         Layout.fillWidth: true
-                        text: qsTr("Archived")
+                        text: /*% "Archived" */ qsTrId("craftward.codex.history.scope.archived")
                         checkable: true
                         checked: root.controller.showingArchived
                         enabled: historyActionState.canSwitchScope
@@ -192,7 +192,7 @@ Page {
 
                             Label {
                                 Layout.fillWidth: true
-                                text: threadDelegate.title || qsTr("Untitled conversation")
+                                text: threadDelegate.title || /*% "Untitled conversation" */ qsTrId("craftward.codex.history.untitled")
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight
                             }
@@ -219,7 +219,7 @@ Page {
                     Label {
                         anchors.centerIn: parent
                         width: Math.min(parent.width - 32, 240)
-                        text: root.controller.startingThread ? qsTr("Starting a new conversation…") : (root.controller.loadingThreads ? qsTr("Loading conversations…") : (root.controller.showingArchived ? qsTr("No archived conversations were found.") : qsTr("No active conversations were found.")))
+                        text: root.controller.startingThread ? /*% "Starting a new conversation…" */ qsTrId("craftward.codex.history.new.starting") : (root.controller.loadingThreads ? /*% "Loading conversations…" */ qsTrId("craftward.codex.history.loading") : (root.controller.showingArchived ? /*% "No archived conversations were found." */ qsTrId("craftward.codex.history.empty.archived") : /*% "No active conversations were found." */ qsTrId("craftward.codex.history.empty.active")))
                         color: root.palette.placeholderText
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
@@ -245,21 +245,21 @@ Page {
 
                     Label {
                         Layout.fillWidth: true
-                        text: root.conversation.title || qsTr("Conversation")
+                        text: root.conversation.title || /*% "Conversation" */ qsTrId("craftward.codex.history.conversation.title")
                         font.pixelSize: 24
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
                     }
 
                     Button {
-                        text: qsTr("Rename…")
+                        text: /*% "Rename…" */ qsTrId("craftward.action.rename_ellipsis")
                         visible: root.conversation.threadId.length > 0 && !root.controller.showingArchived
                         enabled: renameDialog.renameAllowed
                         onClicked: renameDialog.begin()
                     }
 
                     Button {
-                        text: root.controller.showingArchived ? qsTr("Restore") : qsTr("Archive…")
+                        text: root.controller.showingArchived ? /*% "Restore" */ qsTrId("craftward.action.restore") : /*% "Archive…" */ qsTrId("craftward.action.archive_ellipsis")
                         visible: root.conversation.threadId.length > 0
                         enabled: root.controller.showingArchived ? historyActionState.canRestore : historyActionState.canArchive
                         onClicked: {
@@ -300,23 +300,23 @@ Page {
                             Label {
                                 text: {
                                     if (root.controller.showingArchived)
-                                        return qsTr("Archived · Read only");
+                                        return /*% "Archived · Read only" */ qsTrId("craftward.codex.runtime.archived_read_only");
                                     if (root.conversation.turnState === CodexConversationController.Starting)
-                                        return qsTr("Starting…");
+                                        return /*% "Starting…" */ qsTrId("craftward.codex.runtime.starting");
                                     if (root.conversation.turnState === CodexConversationController.Running) {
                                         if (root.conversation.waitingOnApproval)
-                                            return qsTr("Waiting for approval");
+                                            return /*% "Waiting for approval" */ qsTrId("craftward.codex.runtime.waiting_for_approval");
                                         if (root.conversation.waitingOnUserInput)
-                                            return qsTr("Waiting for input");
-                                        return qsTr("Running");
+                                            return /*% "Waiting for input" */ qsTrId("craftward.codex.runtime.waiting_for_input");
+                                        return /*% "Running" */ qsTrId("craftward.codex.runtime.running");
                                     }
                                     if (root.conversation.turnState === CodexConversationController.Idle)
-                                        return qsTr("Live · Idle");
+                                        return /*% "Live · Idle" */ qsTrId("craftward.codex.runtime.live_idle");
                                     if (root.conversation.turnState === CodexConversationController.SystemError)
-                                        return qsTr("Runtime error");
+                                        return /*% "Runtime error" */ qsTrId("craftward.codex.runtime.error");
                                     if (root.conversation.turnState === CodexConversationController.Unknown)
-                                        return qsTr("Status unknown");
-                                    return qsTr("History only");
+                                        return /*% "Status unknown" */ qsTrId("craftward.codex.runtime.unknown");
+                                    return /*% "History only" */ qsTrId("craftward.codex.runtime.history_only");
                                 }
                                 color: root.conversation.turnState === CodexConversationController.SystemError ? "#B4232A" : root.palette.placeholderText
                                 font.pixelSize: 11
@@ -379,7 +379,7 @@ Page {
 
                         IconButton {
                             icon.source: "qrc:///icons/phosphor/x-circle.svg"
-                            toolTipText: qsTr("Dismiss error")
+                            toolTipText: /*% "Dismiss error" */ qsTrId("craftward.error.dismiss")
                             onClicked: root.controller.clearError()
                         }
                     }
@@ -387,7 +387,7 @@ Page {
 
                 Label {
                     Layout.fillWidth: true
-                    text: qsTr("Some runtime activity may be unavailable in persisted history.")
+                    text: /*% "Some runtime activity may be unavailable in persisted history." */ qsTrId("craftward.codex.history.runtime_activity_notice")
                     color: root.palette.placeholderText
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap

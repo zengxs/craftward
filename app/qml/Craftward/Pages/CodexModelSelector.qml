@@ -26,21 +26,21 @@ CodexCatalogSelector {
         if (selectedModel.length > 0)
             return selectedModel;
         if (loading)
-            return qsTr("Loading models…");
+            return /*% "Loading models…" */ qsTrId("craftward.codex.model.loading");
         if (errorMessage.length > 0)
-            return qsTr("Models unavailable");
+            return /*% "Models unavailable" */ qsTrId("craftward.codex.model.unavailable");
         if (count > 0)
-            return qsTr("Current model");
-        return qsTr("No models available");
+            return /*% "Current model" */ qsTrId("craftward.codex.model.current");
+        return /*% "No models available" */ qsTrId("craftward.codex.model.empty");
     }
-    Accessible.name: qsTr("Conversation model")
+    Accessible.name: /*% "Conversation model" */ qsTrId("craftward.codex.model.accessible_name")
     onValueSelected: value => root.modelSelected(value)
 
     toolTipText: {
         if (errorMessage.length > 0)
             return errorMessage;
         if (selectedModel.length > 0 && !selectedModelIsListed)
-            return qsTr("This conversation uses a model that is not in the current catalog.");
-        return qsTr("The selected model is applied when the next turn starts and remains active for later turns.");
+            return /*% "This conversation uses a model that is not in the current catalog." */ qsTrId("craftward.codex.model.not_in_catalog");
+        return /*% "The selected model is applied when the next turn starts and remains active for later turns." */ qsTrId("craftward.codex.model.selection_description");
     }
 }

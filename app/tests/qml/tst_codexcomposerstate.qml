@@ -15,13 +15,14 @@ Item {
     property var state
     property int integratedAcquireCount: 0
 
-    function attachment(url, name, kind) {
+    function attachment(url, name, kind, nameKind) {
         return {
             "url": url,
             "name": name,
             "mimeType": kind === "localImage" ? "image/png" : (kind === "localAudio" ? "audio/wav" : "application/pdf"),
             "kind": kind,
-            "managed": false
+            "managed": false,
+            "nameKind": nameKind || "fileName"
         };
     }
 
@@ -121,7 +122,7 @@ Item {
         }
 
         function test_attachmentsFollowTheirConversationWithoutDuplicates() {
-            const firstImage = suite.attachment("file:///workspace/first.png", "first.png", "localImage");
+            const firstImage = suite.attachment("file:///workspace/first.png", "first.png", "localImage", "pastedImage");
             const requirements = suite.attachment("file:///workspace/requirements.pdf", "requirements.pdf", "mention");
             suite.state.threadId = "thread-1";
             suite.state.addAttachments([firstImage, firstImage, requirements]);
@@ -137,6 +138,7 @@ Item {
             compare(suite.state.attachments.length, 2);
             compare(String(suite.state.attachments[0].url), "file:///workspace/first.png");
             compare(suite.state.attachments[0].kind, "localImage");
+            compare(suite.state.attachments[0].nameKind, "pastedImage");
             suite.state.removeAttachment(0);
             compare(suite.state.attachments.length, 1);
             compare(String(suite.state.attachments[0].url), "file:///workspace/requirements.pdf");

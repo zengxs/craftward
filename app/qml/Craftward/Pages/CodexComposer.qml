@@ -16,6 +16,7 @@ Pane {
     required property bool readOnly
     required property bool startingThread
     readonly property bool attachmentIntakeEnabled: turnControlState.attachmentInputEnabled && !root.readOnly
+    readonly property string pastedImageName: /*% "Pasted image.png" */ qsTrId("craftward.clipboard_image.default_filename")
     property string attachmentNotice
 
     signal turnSubmitted
@@ -43,8 +44,10 @@ Pane {
                 localFiles.push(candidate);
         }
         if (localFiles.length === 0) {
-            if (candidates.length > 0)
-                root.showAttachmentNotice(qsTr("Only local files can be attached."));
+            if (candidates.length > 0) {
+                //% "Only local files can be attached."
+                root.showAttachmentNotice(qsTrId("craftward.codex.attachment.local_only"));
+            }
             return false;
         }
         return root.addDescribedAttachments(root.controller.describeAttachments(localFiles));
@@ -80,9 +83,9 @@ Pane {
     FileDialog {
         id: attachmentDialog
 
-        title: qsTr("Attach local files")
+        title: /*% "Attach local files" */ qsTrId("craftward.codex.composer.file_dialog.title")
         fileMode: FileDialog.OpenFiles
-        nameFilters: [qsTr("All files (*)")]
+        nameFilters: [/*% "All files (*)" */ qsTrId("craftward.file_filter.all")]
         onAccepted: root.addLocalAttachments(selectedFiles)
     }
 
@@ -111,7 +114,7 @@ Pane {
                 spacing: 6
 
                 Label {
-                    text: qsTr("Model")
+                    text: /*% "Model" */ qsTrId("craftward.codex.composer.model.label")
                     color: root.palette.placeholderText
                     font.pixelSize: 11
                 }
@@ -136,7 +139,7 @@ Pane {
                 spacing: 6
 
                 Label {
-                    text: qsTr("Reasoning")
+                    text: /*% "Reasoning" */ qsTrId("craftward.codex.composer.reasoning.label")
                     color: root.palette.placeholderText
                     font.pixelSize: 11
                 }
@@ -159,7 +162,7 @@ Pane {
                 spacing: 6
 
                 Label {
-                    text: qsTr("Mode")
+                    text: /*% "Mode" */ qsTrId("craftward.codex.composer.mode.label")
                     color: root.palette.placeholderText
                     font.pixelSize: 11
                 }
@@ -172,11 +175,13 @@ Pane {
                     valueRole: "value"
                     model: [
                         {
-                            text: qsTr("Default"),
+                            //% "Default"
+                            text: qsTrId("craftward.codex.composer.mode.default"),
                             value: CodexConversationController.DefaultMode
                         },
                         {
-                            text: qsTr("Plan"),
+                            //% "Plan"
+                            text: qsTrId("craftward.codex.composer.mode.plan"),
                             value: CodexConversationController.PlanMode
                         }
                     ]
@@ -184,12 +189,12 @@ Pane {
                     onActivated: root.controller.turnMode = currentValue
 
                     ToolTip.delay: 500
-                    ToolTip.text: currentValue === CodexConversationController.PlanMode ? qsTr("Plan mode can pause to ask structured questions before acting.") : qsTr("Default mode is optimized for carrying out the requested work.")
+                    ToolTip.text: currentValue === CodexConversationController.PlanMode ? /*% "Plan mode can pause to ask structured questions before acting." */ qsTrId("craftward.codex.composer.mode.plan.description") : /*% "Default mode is optimized for carrying out the requested work." */ qsTrId("craftward.codex.composer.mode.default.description")
                     ToolTip.visible: hovered
                 }
 
                 Label {
-                    text: qsTr("Permissions")
+                    text: /*% "Permissions" */ qsTrId("craftward.codex.composer.permissions.label")
                     color: root.palette.placeholderText
                     font.pixelSize: 11
                 }
@@ -202,15 +207,18 @@ Pane {
                     valueRole: "value"
                     model: [
                         {
-                            text: qsTr("Current"),
+                            //% "Current"
+                            text: qsTrId("craftward.codex.composer.permissions.current"),
                             value: CodexConversationController.InheritPermissions
                         },
                         {
-                            text: qsTr("Ask"),
+                            //% "Ask"
+                            text: qsTrId("craftward.codex.composer.permissions.ask"),
                             value: CodexConversationController.RequestApproval
                         },
                         {
-                            text: qsTr("Read only"),
+                            //% "Read only"
+                            text: qsTrId("craftward.codex.composer.permissions.read_only"),
                             value: CodexConversationController.ReadOnlyPermissions
                         }
                     ]
@@ -220,10 +228,10 @@ Pane {
                     ToolTip.delay: 500
                     ToolTip.text: {
                         if (currentValue === CodexConversationController.RequestApproval)
-                            return qsTr("Allow workspace edits and ask before network access or sandbox escalation.");
+                            return /*% "Allow workspace edits and ask before network access or sandbox escalation." */ qsTrId("craftward.codex.composer.permissions.ask.description");
                         if (currentValue === CodexConversationController.ReadOnlyPermissions)
-                            return qsTr("Keep the turn read-only and ask before an escalation.");
-                        return qsTr("Keep the permission settings already associated with this conversation.");
+                            return /*% "Keep the turn read-only and ask before an escalation." */ qsTrId("craftward.codex.composer.permissions.read_only.description");
+                        return /*% "Keep the permission settings already associated with this conversation." */ qsTrId("craftward.codex.composer.permissions.current.description");
                     }
                     ToolTip.visible: hovered
                 }
@@ -238,7 +246,7 @@ Pane {
                 spacing: 8
 
                 Button {
-                    text: qsTr("Attach")
+                    text: /*% "Attach" */ qsTrId("craftward.codex.composer.attachment.action")
                     enabled: root.attachmentIntakeEnabled
                     onClicked: {
                         root.controller.acquireWriteAccess();
@@ -246,7 +254,7 @@ Pane {
                     }
 
                     ToolTip.delay: 500
-                    ToolTip.text: qsTr("Attach local files to the next turn.")
+                    ToolTip.text: /*% "Attach local files to the next turn." */ qsTrId("craftward.codex.composer.attachment.tooltip")
                     ToolTip.visible: hovered
                 }
 
@@ -255,7 +263,7 @@ Pane {
 
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(Math.max(contentHeight + topPadding + bottomPadding, 44), 120)
-                    placeholderText: root.controller.turnRunning ? qsTr("Guide Codex while it works…") : qsTr("Ask Codex to continue this conversation…")
+                    placeholderText: root.controller.turnRunning ? /*% "Guide Codex while it works…" */ qsTrId("craftward.codex.composer.placeholder.guide") : /*% "Ask Codex to continue this conversation…" */ qsTrId("craftward.codex.composer.placeholder.continue")
                     enabled: turnControlState.inputEnabled
                     wrapMode: TextEdit.Wrap
                     selectByMouse: true
@@ -341,7 +349,7 @@ Pane {
 
                         Label {
                             Layout.maximumWidth: 180
-                            text: attachmentDelegate.modelData.name
+                            text: attachmentDelegate.modelData.nameKind === "pastedImage" ? root.pastedImageName : attachmentDelegate.modelData.name
                             elide: Text.ElideMiddle
                         }
 
@@ -350,8 +358,8 @@ Pane {
                             enabled: root.attachmentIntakeEnabled
                             onClicked: composerState.removeAttachment(attachmentDelegate.index)
 
-                            Accessible.name: qsTr("Remove attachment")
-                            ToolTip.text: qsTr("Remove attachment")
+                            Accessible.name: /*% "Remove attachment" */ qsTrId("craftward.codex.composer.attachment.remove")
+                            ToolTip.text: /*% "Remove attachment" */ qsTrId("craftward.codex.composer.attachment.remove")
                             ToolTip.visible: hovered
                         }
                     }
@@ -383,12 +391,12 @@ Pane {
                     Layout.fillWidth: true
                     text: {
                         if (root.controller.writeAvailability === CodexConversationController.Checking)
-                            return qsTr("Checking whether this conversation is available for writing…");
+                            return /*% "Checking whether this conversation is available for writing…" */ qsTrId("craftward.codex.composer.write_state.checking");
                         if (root.controller.writeAvailabilityMessage.length > 0)
                             return root.controller.writeAvailabilityMessage;
                         if (root.controller.writeAvailability === CodexConversationController.Busy)
-                            return qsTr("This conversation is open in another Codex client. Your draft is kept here.");
-                        return qsTr("Writing is currently unavailable for this conversation.");
+                            return /*% "This conversation is open in another Codex client. Your draft is kept here." */ qsTrId("craftward.codex.composer.write_state.busy");
+                        return /*% "Writing is currently unavailable for this conversation." */ qsTrId("craftward.codex.composer.write_state.unavailable");
                     }
                     color: root.controller.writeAvailability === CodexConversationController.Busy ? root.palette.placeholderText : root.palette.text
                     font.pixelSize: 11
@@ -396,7 +404,7 @@ Pane {
                 }
 
                 Button {
-                    text: qsTr("Retry")
+                    text: /*% "Retry" */ qsTrId("craftward.action.retry")
                     visible: root.controller.writeAvailability === CodexConversationController.Busy || root.controller.writeAvailability === CodexConversationController.Unavailable
                     onClicked: root.controller.acquireWriteAccess()
                 }
@@ -417,7 +425,7 @@ Pane {
             Label {
                 anchors.centerIn: parent
                 visible: attachmentDropArea.containsDrag
-                text: qsTr("Drop files to attach")
+                text: /*% "Drop files to attach" */ qsTrId("craftward.codex.composer.drop_files")
                 color: root.palette.highlight
                 font.bold: true
             }

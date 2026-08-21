@@ -4,16 +4,22 @@
 #include "ward/codex/codexhistorycontroller.h"
 #include "ward/codex/codexattachmentinput.h"
 
+#include <QCoreApplication>
 #include <QDirIterator>
 #include <QFile>
 #include <QImage>
+#include <QMimeData>
 #include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QTranslator>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
 namespace {
 using Conversation = ward::codex::v1::Conversation;
+using Activity = ward::codex::v1::Activity;
+using ActivityKind = ward::codex::v1::ActivityKindGadget::ActivityKind;
+using ActivityStatus = ward::codex::v1::ActivityStatusGadget::ActivityStatus;
 using HistoryEvent = ward::codex::v1::HistoryEvent;
 using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKind;
 using Message = ward::codex::v1::Message;
@@ -98,6 +104,20 @@ messageItem(const QString& turnId, const QString& messageId, MessageRole role, M
     return item;
 }
 
+TimelineItem
+activityItem(const QString& turnId, const QString& activityId, ActivityKind kind, ActivityStatus status)
+{
+    Activity activity;
+    activity.setActivityId(activityId);
+    activity.setKind(kind);
+    activity.setStatus(status);
+
+    TimelineItem item;
+    item.setTurnId(turnId);
+    item.setActivity(std::move(activity));
+    return item;
+}
+
 HistoryEvent
 conversationEvent(HistoryEventKind kind,
                   QList<TimelineItem> timeline,
@@ -162,6 +182,9 @@ class CodexHistoryControllerTest : public QObject
     Q_OBJECT
 
   private slots:
+    void initTestCase();
+    void cleanupTestCase();
+    void retranslatesTimelinePresentationWhenRequested();
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
     void marksOnlyAuthoritativeTurnEndsAsForkBoundaries();
     void confirmsAcceptedTurnGuidance();
@@ -180,9 +203,64 @@ class CodexHistoryControllerTest : public QObject
     void appliesModelCatalogUpdatesAndErrors();
     void keepsInferenceSelectionScopedToTheConversationUntilAccepted();
     void describesAndClassifiesLocalAttachmentsByContent();
+    void describesClipboardImagesWithSemanticNames();
     void storesClipboardImagesByBlake3Content();
     void rejectsInvalidLocalAttachments();
+
+  private:
+    QTranslator englishTranslator_;
 };
+
+void
+CodexHistoryControllerTest::initTestCase()
+{
+    QVERIFY(englishTranslator_.load(QStringLiteral(":/i18n/craftward_en.qm")));
+    QVERIFY(QCoreApplication::installTranslator(&englishTranslator_));
+}
+
+void
+CodexHistoryControllerTest::cleanupTestCase()
+{
+    QVERIFY(QCoreApplication::removeTranslator(&englishTranslator_));
+}
+
+void
+CodexHistoryControllerTest::retranslatesTimelinePresentationWhenRequested()
+{
+    CodexTimelineModel model;
+    model.reconcileTimeline({ activityItem(QStringLiteral("turn-1"),
+                                           QStringLiteral("activity-1"),
+                                           ActivityKind::ACTIVITY_KIND_REASONING,
+                                           ActivityStatus::ACTIVITY_STATUS_IN_PROGRESS) },
+                            {});
+    const QModelIndex row = model.index(0);
+    QCOMPARE(model.data(row, CodexTimelineModel::ActivityLabelRole).toString(), QStringLiteral("Reasoning"));
+    QCOMPARE(model.data(row, CodexTimelineModel::ActivityItemsRole)
+               .toList()
+               .constFirst()
+               .toMap()
+               .value(QStringLiteral("statusLabel"))
+               .toString(),
+             QStringLiteral("In progress"));
+    QSignalSpy dataSpy(&model, &QAbstractItemModel::dataChanged);
+    QTranslator simplifiedChinese;
+    QVERIFY(simplifiedChinese.load(QStringLiteral(":/i18n/craftward_zh_CN.qm")));
+
+    QVERIFY(QCoreApplication::installTranslator(&simplifiedChinese));
+    model.retranslate();
+
+    QVERIFY(dataSpy.count() > 0);
+    QCOMPARE(model.data(row, CodexTimelineModel::ActivityLabelRole).toString(), QStringLiteral("推理"));
+    QCOMPARE(model.data(row, CodexTimelineModel::ActivityItemsRole)
+               .toList()
+               .constFirst()
+               .toMap()
+               .value(QStringLiteral("statusLabel"))
+               .toString(),
+             QStringLiteral("进行中"));
+
+    QVERIFY(QCoreApplication::removeTranslator(&simplifiedChinese));
+}
 
 void
 CodexHistoryControllerTest::describesAndClassifiesLocalAttachmentsByContent()
@@ -218,6 +296,9 @@ CodexHistoryControllerTest::describesAndClassifiesLocalAttachmentsByContent()
     QCOMPARE((*described)[0].name, QStringLiteral("visual.dat"));
     QCOMPARE((*described)[0].url, QUrl::fromLocalFile(QFileInfo(imagePath).canonicalFilePath()));
     QVERIFY(!(*described)[0].managed);
+    QCOMPARE((*described)[0].nameKind, CodexAttachmentNameKind::FileName);
+    QCOMPARE(CodexAttachmentInput::nameKindName(CodexAttachmentNameKind::FileName), QStringLiteral("fileName"));
+    QCOMPARE(CodexAttachmentInput::nameKindName(CodexAttachmentNameKind::PastedImage), QStringLiteral("pastedImage"));
     QCOMPARE((*described)[1].kind, CodexAttachmentKind::LocalAudio);
     QVERIFY((*described)[1].mimeType.startsWith(QStringLiteral("audio/")));
     QCOMPARE((*described)[2].kind, CodexAttachmentKind::Mention);
@@ -239,6 +320,27 @@ CodexHistoryControllerTest::describesAndClassifiesLocalAttachmentsByContent()
     QCOMPARE((*prepared)[2].kind, CodexAttachmentKind::Mention);
     QCOMPARE((*prepared)[2].name, QByteArrayLiteral("requirements.dat"));
     QCOMPARE((*prepared)[2].path, QFileInfo(documentPath).canonicalFilePath().toUtf8());
+}
+
+void
+CodexHistoryControllerTest::describesClipboardImagesWithSemanticNames()
+{
+    QTemporaryDir dataDirectory;
+    QVERIFY(dataDirectory.isValid());
+    QImage image(2, 2, QImage::Format_RGBA8888);
+    image.fill(QColorConstants::Red);
+    QMimeData mimeData;
+    mimeData.setImageData(image);
+    QString errorMessage;
+
+    const QList<CodexAttachmentDescriptor> described =
+      CodexAttachmentInput::fromMimeData(mimeData, dataDirectory.path(), &errorMessage);
+
+    QVERIFY2(errorMessage.isEmpty(), qPrintable(errorMessage));
+    QCOMPARE(described.size(), 1);
+    QVERIFY(described.constFirst().managed);
+    QCOMPARE(described.constFirst().kind, CodexAttachmentKind::LocalImage);
+    QCOMPARE(described.constFirst().nameKind, CodexAttachmentNameKind::PastedImage);
 }
 
 void
@@ -856,6 +958,6 @@ CodexHistoryControllerTest::keepsArchivedConversationsReadOnly()
     QVERIFY(controller.errorMessage().isEmpty());
 }
 
-QTEST_APPLESS_MAIN(CodexHistoryControllerTest)
+QTEST_GUILESS_MAIN(CodexHistoryControllerTest)
 
 #include "codexhistorycontrollertest.moc"

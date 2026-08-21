@@ -26,25 +26,25 @@ Page {
     FolderDialog {
         id: bundleDialog
 
-        title: qsTr("Choose an installed Realm bundle")
+        title: /*% "Choose an installed Realm bundle" */ qsTrId("craftward.realm.bundle_dialog.title")
         onAccepted: root.controller.bundleUrl = selectedFolder
     }
 
     ConfirmationDialog {
         id: forceStopDialog
 
-        title: qsTr("Force stop this Realm?")
-        message: qsTr("The guest will not have a chance to shut down. Unsaved data may be lost and its disk may be damaged.")
-        acceptText: qsTr("Force Stop")
+        title: /*% "Force stop this Realm?" */ qsTrId("craftward.realm.force_stop_confirmation.title")
+        message: /*% "The guest will not have a chance to shut down. Unsaved data may be lost and its disk may be damaged." */ qsTrId("craftward.realm.force_stop_confirmation.message")
+        acceptText: /*% "Force Stop" */ qsTrId("craftward.realm.force_stop_confirmation.action")
         onAccepted: root.controller.forceStop()
     }
 
     ConfirmationDialog {
         id: discardSavedStateDialog
 
-        title: qsTr("Discard this Realm's suspended state?")
-        message: qsTr("The next start will boot macOS normally. Work that existed only in the guest's memory will be lost.")
-        acceptText: qsTr("Discard State")
+        title: /*% "Discard this Realm's suspended state?" */ qsTrId("craftward.realm.discard_state_confirmation.title")
+        message: /*% "The next start will boot macOS normally. Work that existed only in the guest's memory will be lost." */ qsTrId("craftward.realm.discard_state_confirmation.message")
+        acceptText: /*% "Discard State" */ qsTrId("craftward.realm.discard_state_confirmation.action")
         onAccepted: root.controller.discardSavedState()
     }
 
@@ -64,14 +64,14 @@ Page {
 
             Label {
                 Layout.fillWidth: true
-                text: qsTr("Realm")
+                text: /*% "Realm" */ qsTrId("craftward.realm.name")
                 font.pixelSize: 32
                 font.weight: Font.DemiBold
             }
 
             Label {
                 Layout.fillWidth: true
-                text: qsTr("Run an isolated development environment from an installed bundle.")
+                text: /*% "Run an isolated development environment from an installed bundle." */ qsTrId("craftward.realm.description")
                 color: root.palette.placeholderText
                 font.pixelSize: 15
                 wrapMode: Text.WordWrap
@@ -104,7 +104,7 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: root.controller.displayName || qsTr("No Realm selected")
+                            text: root.controller.displayName || /*% "No Realm selected" */ qsTrId("craftward.realm.no_selection")
                             font.pixelSize: 20
                             font.weight: Font.DemiBold
                             elide: Text.ElideMiddle
@@ -112,20 +112,20 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: root.controller.bundlePath || qsTr("Choose the bundle created by the macOS installer.")
+                            text: root.controller.bundlePath || /*% "Choose the bundle created by the macOS installer." */ qsTrId("craftward.realm.bundle_hint")
                             color: root.palette.placeholderText
                             elide: Text.ElideMiddle
                         }
                     }
 
                     Button {
-                        text: qsTr("Choose Bundle…")
+                        text: /*% "Choose Bundle…" */ qsTrId("craftward.realm.choose_bundle.action")
                         enabled: root.controller.canSelectBundle
                         onClicked: bundleDialog.open()
                     }
 
                     Button {
-                        text: root.controller.displayWindow ? qsTr("Show Display") : qsTr("Open Display")
+                        text: root.controller.displayWindow ? /*% "Show Display" */ qsTrId("craftward.realm.display.show") : /*% "Open Display" */ qsTrId("craftward.realm.display.open")
                         enabled: root.controller.bundlePath.length > 0
                         onClicked: root.displayRequested()
                     }
@@ -155,7 +155,7 @@ Page {
                     }
 
                     PrimaryButton {
-                        text: root.controller.canRestore ? qsTr("Resume") : qsTr("Start")
+                        text: root.controller.canRestore ? /*% "Resume" */ qsTrId("craftward.realm.action.resume") : /*% "Start" */ qsTrId("craftward.realm.action.start")
                         enabled: root.controller.canStart || root.controller.canRestore
                         onClicked: {
                             if (root.controller.canRestore)
@@ -166,7 +166,7 @@ Page {
                     }
 
                     Button {
-                        text: root.controller.canResume ? qsTr("Resume") : qsTr("Pause")
+                        text: root.controller.canResume ? /*% "Resume" */ qsTrId("craftward.realm.action.resume") : /*% "Pause" */ qsTrId("craftward.realm.action.pause")
                         enabled: root.controller.canPause || root.controller.canResume
                         onClicked: {
                             if (root.controller.canResume)
@@ -177,13 +177,13 @@ Page {
                     }
 
                     Button {
-                        text: qsTr("Suspend")
+                        text: /*% "Suspend" */ qsTrId("craftward.realm.action.suspend")
                         enabled: root.controller.canSuspend
                         onClicked: root.controller.suspend()
                     }
 
                     Button {
-                        text: qsTr("Shut Down")
+                        text: /*% "Shut Down" */ qsTrId("craftward.realm.action.shut_down")
                         enabled: root.controller.canRequestStop
                         onClicked: root.controller.requestStop()
                     }
@@ -192,7 +192,7 @@ Page {
                         id: moreButton
 
                         icon.source: "qrc:///icons/phosphor/dots-three-circle.svg"
-                        toolTipText: qsTr("More Realm actions")
+                        toolTipText: /*% "More Realm actions" */ qsTrId("craftward.realm.more_actions")
                         enabled: root.controller.canForceStop || root.controller.canDiscardSavedState
                         onClicked: realmActions.open()
 
@@ -202,14 +202,14 @@ Page {
                             y: moreButton.height
 
                             MenuItem {
-                                text: qsTr("Force Stop…")
+                                text: /*% "Force Stop…" */ qsTrId("craftward.realm.action.force_stop")
                                 enabled: root.controller.canForceStop
                                 visible: enabled
                                 onTriggered: forceStopDialog.open()
                             }
 
                             MenuItem {
-                                text: qsTr("Discard Suspended State…")
+                                text: /*% "Discard Suspended State…" */ qsTrId("craftward.realm.action.discard_state")
                                 enabled: root.controller.canDiscardSavedState
                                 visible: enabled
                                 onTriggered: discardSavedStateDialog.open()
@@ -246,7 +246,7 @@ Page {
 
                 IconButton {
                     icon.source: "qrc:///icons/phosphor/x-circle.svg"
-                    toolTipText: qsTr("Dismiss error")
+                    toolTipText: /*% "Dismiss error" */ qsTrId("craftward.error.dismiss")
                     onClicked: root.controller.clearError()
                 }
             }
@@ -254,7 +254,7 @@ Page {
 
         Label {
             Layout.fillWidth: true
-            text: qsTr("Pause keeps guest memory allocated. Suspend saves a host-bound runtime state and releases the virtual machine resources. Shut Down exits macOS normally.")
+            text: /*% "Pause keeps guest memory allocated. Suspend saves a host-bound runtime state and releases the virtual machine resources. Shut Down exits macOS normally." */ qsTrId("craftward.realm.lifecycle_help")
             color: root.palette.placeholderText
             wrapMode: Text.WordWrap
         }
