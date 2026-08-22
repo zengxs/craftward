@@ -16,6 +16,54 @@ Page {
 
     required property CodexHistoryController controller
     readonly property CodexConversationController conversation: root.controller.conversation
+    property alias sidebarExpanded: layoutState.sidebarExpanded
+    readonly property bool fullScreen: root.ApplicationWindow.window !== null && root.ApplicationWindow.window.visibility === Window.FullScreen
+    readonly property bool trafficLightsVisible: Qt.platform.os === "osx" && !root.fullScreen
+    readonly property int titleBarMotionDuration: 160
+    readonly property real titleBarHeight: Math.max(28, root.SafeArea.margins.top)
+    readonly property real titleBarLeadingInset: root.trafficLightsVisible ? Math.max(78, root.SafeArea.margins.left) : Math.max(0, root.SafeArea.margins.left)
+    property real animatedTitleBarLeadingInset: root.titleBarLeadingInset
+    readonly property bool titleBarLeadingInsetAnimating: Math.abs(root.animatedTitleBarLeadingInset - root.titleBarLeadingInset) > 0.01
+    readonly property string runtimeStatusText: {
+        if (root.controller.showingArchived)
+            return /*% "Archived · Read only" */ qsTrId("craftward.codex.runtime.archived_read_only");
+        if (root.conversation.turnState === CodexConversationController.Starting)
+            return /*% "Starting…" */ qsTrId("craftward.codex.runtime.starting");
+        if (root.conversation.turnState === CodexConversationController.Running) {
+            if (root.conversation.waitingOnApproval)
+                return /*% "Waiting for approval" */ qsTrId("craftward.codex.runtime.waiting_for_approval");
+            if (root.conversation.waitingOnUserInput)
+                return /*% "Waiting for input" */ qsTrId("craftward.codex.runtime.waiting_for_input");
+            return /*% "Running" */ qsTrId("craftward.codex.runtime.running");
+        }
+        if (root.conversation.turnState === CodexConversationController.Idle)
+            return /*% "Live · Idle" */ qsTrId("craftward.codex.runtime.live_idle");
+        if (root.conversation.turnState === CodexConversationController.SystemError)
+            return /*% "Runtime error" */ qsTrId("craftward.codex.runtime.error");
+        if (root.conversation.turnState === CodexConversationController.Unknown)
+            return /*% "Status unknown" */ qsTrId("craftward.codex.runtime.unknown");
+        return /*% "History only" */ qsTrId("craftward.codex.runtime.history_only");
+    }
+    readonly property color runtimeIndicatorColor: {
+        if (root.conversation.turnState === CodexConversationController.SystemError)
+            return Theme.dangerForeground;
+        if (root.conversation.turnState === CodexConversationController.Running || root.conversation.turnState === CodexConversationController.Starting)
+            return root.palette.highlight;
+        return root.palette.mid;
+    }
+
+    Behavior on animatedTitleBarLeadingInset {
+        NumberAnimation {
+            duration: root.titleBarMotionDuration
+            easing.type: Easing.OutCubic
+        }
+    }
+
+    CodexHistoryLayoutState {
+        id: layoutState
+
+        titleBarLeadingInset: root.animatedTitleBarLeadingInset
+    }
 
     CodexHistoryActionState {
         id: historyActionState
@@ -62,32 +110,41 @@ Page {
         color: root.palette.window
     }
 
-    WindowMoveHandler {
-        targetWindow: root.ApplicationWindow.window
-    }
-
     SplitView {
+        id: contentSplit
+
         anchors {
-            fill: parent
-            topMargin: root.SafeArea.margins.top + 20
-            leftMargin: Math.max(24, root.SafeArea.margins.left)
-            rightMargin: Math.max(24, root.SafeArea.margins.right)
-            bottomMargin: Math.max(24, root.SafeArea.margins.bottom)
+            top: parent.top
+            left: parent.left
+            right: parent.right
+            bottom: statusBar.top
         }
         orientation: Qt.Horizontal
+        handle: Rectangle {
+            implicitWidth: 1
+            color: root.palette.windowText
+            opacity: 0.14
+        }
 
         Rectangle {
-            SplitView.minimumWidth: 240
-            SplitView.preferredWidth: 310
-            SplitView.maximumWidth: 420
-            radius: 12
-            color: root.palette.base
-            border.color: root.palette.mid
+            id: sidebarPane
+
+            objectName: "codexSidebar"
+            SplitView.minimumWidth: layoutState.sidebarExpanded ? layoutState.minimumSidebarWidth : 0
+            SplitView.preferredWidth: layoutState.bodySidebarWidth
+            SplitView.maximumWidth: layoutState.sidebarExpanded ? layoutState.maximumSidebarWidth : 0
+            visible: layoutState.sidebarExpanded
+            color: Theme.sidebarSurface
+            onWidthChanged: if (visible)
+                layoutState.rememberSidebarWidth(width)
 
             ColumnLayout {
                 anchors {
                     fill: parent
-                    margins: 14
+                    topMargin: root.titleBarHeight + 10
+                    leftMargin: 14
+                    rightMargin: 14
+                    bottomMargin: 14
                 }
                 spacing: 10
 
@@ -106,19 +163,6 @@ Page {
                         Layout.preferredHeight: 20
                         running: root.controller.loadingThreads || root.controller.startingThread || root.controller.forkingThread
                         visible: running
-                    }
-
-                    Button {
-                        text: /*% "New…" */ qsTrId("craftward.codex.history.new.action")
-                        visible: !root.controller.showingArchived
-                        enabled: historyActionState.canStartThread
-                        onClicked: workingDirectoryDialog.open()
-                    }
-
-                    Button {
-                        text: /*% "Refresh" */ qsTrId("craftward.action.refresh")
-                        enabled: !historyActionState.busy
-                        onClicked: root.controller.refresh()
                     }
                 }
 
@@ -231,13 +275,18 @@ Page {
         }
 
         Item {
+            id: mainPane
+
             SplitView.minimumWidth: 360
             SplitView.fillWidth: true
 
             ColumnLayout {
                 anchors {
                     fill: parent
+                    topMargin: root.titleBarHeight + 14
                     leftMargin: 22
+                    rightMargin: Math.max(22, root.SafeArea.margins.right)
+                    bottomMargin: 14
                 }
                 spacing: 12
 
@@ -289,36 +338,11 @@ Page {
                                 Layout.preferredWidth: 7
                                 Layout.preferredHeight: 7
                                 radius: width / 2
-                                color: {
-                                    if (root.conversation.turnState === CodexConversationController.SystemError)
-                                        return Theme.dangerForeground;
-                                    if (root.conversation.turnState === CodexConversationController.Running || root.conversation.turnState === CodexConversationController.Starting)
-                                        return root.palette.highlight;
-                                    return root.palette.mid;
-                                }
+                                color: root.runtimeIndicatorColor
                             }
 
                             Label {
-                                text: {
-                                    if (root.controller.showingArchived)
-                                        return /*% "Archived · Read only" */ qsTrId("craftward.codex.runtime.archived_read_only");
-                                    if (root.conversation.turnState === CodexConversationController.Starting)
-                                        return /*% "Starting…" */ qsTrId("craftward.codex.runtime.starting");
-                                    if (root.conversation.turnState === CodexConversationController.Running) {
-                                        if (root.conversation.waitingOnApproval)
-                                            return /*% "Waiting for approval" */ qsTrId("craftward.codex.runtime.waiting_for_approval");
-                                        if (root.conversation.waitingOnUserInput)
-                                            return /*% "Waiting for input" */ qsTrId("craftward.codex.runtime.waiting_for_input");
-                                        return /*% "Running" */ qsTrId("craftward.codex.runtime.running");
-                                    }
-                                    if (root.conversation.turnState === CodexConversationController.Idle)
-                                        return /*% "Live · Idle" */ qsTrId("craftward.codex.runtime.live_idle");
-                                    if (root.conversation.turnState === CodexConversationController.SystemError)
-                                        return /*% "Runtime error" */ qsTrId("craftward.codex.runtime.error");
-                                    if (root.conversation.turnState === CodexConversationController.Unknown)
-                                        return /*% "Status unknown" */ qsTrId("craftward.codex.runtime.unknown");
-                                    return /*% "History only" */ qsTrId("craftward.codex.runtime.history_only");
-                                }
+                                text: root.runtimeStatusText
                                 color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerForeground : root.palette.placeholderText
                                 font.pixelSize: 11
                             }
@@ -379,7 +403,7 @@ Page {
                         }
 
                         IconButton {
-                            icon.source: "qrc:///icons/phosphor/x-circle.svg"
+                            icon.source: "qrc:///icons/fluent/dismiss-circle-20-regular.svg"
                             toolTipText: /*% "Dismiss error" */ qsTrId("craftward.error.dismiss")
                             onClicked: root.controller.clearError()
                         }
@@ -415,6 +439,259 @@ Page {
                     visible: historyActionState.composerVisible
                     onTurnSubmitted: timelineView.followLatest()
                 }
+            }
+        }
+    }
+
+    Item {
+        id: titleBar
+
+        objectName: "codexTitleBar"
+        anchors {
+            top: parent.top
+            left: parent.left
+            right: parent.right
+        }
+        height: root.titleBarHeight
+        z: 10
+
+        WindowMoveHandler {
+            targetWindow: root.ApplicationWindow.window
+        }
+
+        Rectangle {
+            id: navigationChrome
+
+            anchors {
+                top: parent.top
+                bottom: parent.bottom
+                left: parent.left
+            }
+            width: Math.min(parent.width, layoutState.navigationChromeWidth)
+            color: layoutState.sidebarExpanded ? Theme.sidebarSurface : root.palette.window
+
+            Behavior on width {
+                enabled: !root.titleBarLeadingInsetAnimating && !contentSplit.resizing
+
+                NumberAnimation {
+                    duration: root.titleBarMotionDuration
+                    easing.type: Easing.OutCubic
+                }
+            }
+        }
+
+        Rectangle {
+            id: titleBarSidebarDivider
+
+            x: navigationChrome.width
+            anchors {
+                top: parent.top
+                bottom: parent.bottom
+            }
+            width: 1
+            color: root.palette.windowText
+            opacity: layoutState.sidebarExpanded ? 0.14 : 0
+            z: 2
+        }
+
+        IconButton {
+            id: sidebarToggle
+
+            objectName: "codexSidebarToggle"
+            x: layoutState.sidebarExpanded ? navigationChrome.width - width : layoutState.collapsedSidebarToggleX
+            anchors {
+                verticalCenter: parent.verticalCenter
+            }
+            activeFocusOnTab: true
+            padding: 6
+            backgroundInset: 2
+            icon.source: "qrc:///icons/fluent/panel-left-tall-20-regular-emphasized.svg"
+            icon.width: 16
+            icon.height: 16
+            toolTipText: layoutState.sidebarExpanded ? /*% "Hide Sidebar" */ qsTrId("craftward.navigation.sidebar.hide") : /*% "Show Sidebar" */ qsTrId("craftward.navigation.sidebar.show")
+            onClicked: layoutState.toggleSidebar()
+
+            Behavior on x {
+                enabled: !root.titleBarLeadingInsetAnimating && !contentSplit.resizing
+
+                NumberAnimation {
+                    duration: root.titleBarMotionDuration
+                    easing.type: Easing.OutCubic
+                }
+            }
+        }
+
+        Row {
+            id: historyActions
+
+            x: layoutState.leadingActionsX
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 0
+
+            Behavior on x {
+                enabled: !root.titleBarLeadingInsetAnimating
+
+                NumberAnimation {
+                    duration: root.titleBarMotionDuration
+                    easing.type: Easing.OutCubic
+                }
+            }
+
+            IconButton {
+                id: newConversationButton
+
+                objectName: "codexNewConversationButton"
+                activeFocusOnTab: true
+                padding: 6
+                backgroundInset: 2
+                icon.source: "qrc:///icons/fluent/chat-add-20-regular-emphasized.svg"
+                icon.width: 16
+                icon.height: 16
+                toolTipText: /*% "New…" */ qsTrId("craftward.codex.history.new.action")
+                visible: !root.controller.showingArchived
+                enabled: historyActionState.canStartThread
+                onClicked: workingDirectoryDialog.open()
+            }
+
+            IconButton {
+                id: refreshButton
+
+                objectName: "codexRefreshButton"
+                activeFocusOnTab: true
+                padding: 6
+                backgroundInset: 2
+                icon.source: "qrc:///icons/fluent/arrow-sync-20-regular-emphasized.svg"
+                icon.width: 16
+                icon.height: 16
+                toolTipText: /*% "Refresh" */ qsTrId("craftward.action.refresh")
+                enabled: !historyActionState.busy
+                onClicked: root.controller.refresh()
+            }
+        }
+
+        Item {
+            id: tabStrip
+
+            objectName: "codexTabStrip"
+            anchors {
+                top: parent.top
+                bottom: parent.bottom
+                left: navigationChrome.right
+                right: parent.right
+                rightMargin: Math.max(0, root.SafeArea.margins.right)
+            }
+            clip: true
+            z: 1
+
+            Rectangle {
+                id: conversationTab
+
+                anchors {
+                    top: parent.top
+                    bottom: parent.bottom
+                    left: parent.left
+                }
+                width: Math.min(240, Math.max(112, conversationTabLabel.implicitWidth + 24))
+                color: Theme.navigationSelectionBackground
+
+                Label {
+                    id: conversationTabLabel
+
+                    anchors {
+                        fill: parent
+                        leftMargin: 12
+                        rightMargin: 12
+                    }
+                    text: /*% "Conversation" */ qsTrId("craftward.codex.history.conversation.title")
+                    font.pixelSize: 13
+                    font.weight: Font.DemiBold
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+
+                Rectangle {
+                    anchors {
+                        left: parent.left
+                        right: parent.right
+                        bottom: parent.bottom
+                    }
+                    height: 2
+                    color: Theme.navigationSelectionForeground
+                    z: 1
+                }
+            }
+        }
+
+        Rectangle {
+            anchors {
+                left: layoutState.sidebarExpanded ? navigationChrome.right : parent.left
+                right: parent.right
+                bottom: parent.bottom
+            }
+            height: 1
+            color: root.palette.windowText
+            opacity: 0.14
+        }
+    }
+
+    Rectangle {
+        id: statusBar
+
+        objectName: "codexStatusBar"
+        anchors {
+            left: parent.left
+            right: parent.right
+            bottom: parent.bottom
+        }
+        height: 24 + Math.max(0, root.SafeArea.margins.bottom)
+        color: root.palette.window
+        z: 9
+
+        Rectangle {
+            anchors {
+                top: parent.top
+                left: parent.left
+                right: parent.right
+            }
+            height: 1
+            color: root.palette.windowText
+            opacity: 0.14
+        }
+
+        RowLayout {
+            anchors {
+                top: parent.top
+                left: parent.left
+                right: parent.right
+                leftMargin: 10
+                rightMargin: 10
+            }
+            height: 24
+            spacing: 7
+
+            Label {
+                text: /*% "Codex" */ qsTrId("craftward.codex.name")
+                color: root.palette.placeholderText
+                font.pixelSize: 11
+            }
+
+            Item {
+                Layout.fillWidth: true
+            }
+
+            Rectangle {
+                Layout.preferredWidth: 6
+                Layout.preferredHeight: 6
+                radius: width / 2
+                color: root.runtimeIndicatorColor
+                visible: root.conversation.threadId.length > 0
+            }
+
+            Label {
+                text: root.runtimeStatusText
+                color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerForeground : root.palette.placeholderText
+                font.pixelSize: 11
+                visible: root.conversation.threadId.length > 0
             }
         }
     }

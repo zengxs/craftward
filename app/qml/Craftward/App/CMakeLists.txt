@@ -78,6 +78,36 @@ target_compile_definitions(Craftward
         CRAFTWARD_VERSION="${PROJECT_VERSION}"
 )
 
+if(BUILD_TESTING)
+    qt_add_executable(CraftwardApplicationControllerTest
+        "${PROJECT_SOURCE_DIR}/src/app/applicationcontroller.cpp"
+        "${PROJECT_SOURCE_DIR}/src/app/applicationcontroller.h"
+        "${PROJECT_SOURCE_DIR}/src/app/macos/applicationcontroller.mm"
+        "${PROJECT_SOURCE_DIR}/src/app/tests/applicationcontrollertest.mm"
+    )
+    target_include_directories(CraftwardApplicationControllerTest
+        PRIVATE
+            "${PROJECT_SOURCE_DIR}/src"
+            "${PROJECT_SOURCE_DIR}/src/app"
+    )
+    target_link_libraries(CraftwardApplicationControllerTest
+        PRIVATE
+            CraftwardRealm
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Test
+            "${CRAFTWARD_APPKIT_FRAMEWORK}"
+    )
+    target_compile_options(CraftwardApplicationControllerTest
+        PRIVATE
+            "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+    )
+    add_test(
+        NAME CraftwardApplicationControllerTest
+        COMMAND CraftwardApplicationControllerTest
+    )
+endif()
+
 set_target_properties(Craftward PROPERTIES
     MACOSX_BUNDLE TRUE
     MACOSX_BUNDLE_BUNDLE_NAME "Craftward"

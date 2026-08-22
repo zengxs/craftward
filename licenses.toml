@@ -34,22 +34,16 @@ license-url = "https://raw.githubusercontent.com/clap-rs/clap/4a622b4340d5e1ffff
 website = "https://github.com/clap-rs/clap"
 
 [[component]]
+name = "fluentui-system-icons"
+spdx-identifier = "MIT"
+license-url = "https://github.com/microsoft/fluentui-system-icons/raw/refs/tags/1.1.338/LICENSE"
+website = "https://github.com/microsoft/fluentui-system-icons"
+
+[[component]]
 name = "Lilex"
 spdx-identifier = "OFL-1.1"
 license-url = "https://raw.githubusercontent.com/mishamyrt/Lilex/43cbe3f9e5b9214fdcf48d22fddcbb84d48c65cf/OFL.txt"
 website = "https://github.com/mishamyrt/Lilex"
-
-[[component]]
-name = "Phosphor Icons"
-spdx-identifier = "MIT"
-license-url = "https://raw.githubusercontent.com/phosphor-icons/core/2b75f3ad12b420c9504ef05df8d2564a28f8500e/LICENSE"
-website = "https://phosphoricons.com/"
-notice-text = '''
-Craftward uses icons from the Phosphor Icons project.
-
-Phosphor Icons project:
-https://phosphoricons.com/
-'''
 
 [[component]]
 name = "prost"
@@ -96,6 +90,12 @@ name = "serde_with"
 spdx-identifier = "MIT"
 license-url = "https://raw.githubusercontent.com/jonasbb/serde_with/88f576a17c5cd45cea6a30252ef10653dde69fa8/LICENSE-MIT"
 website = "https://github.com/jonasbb/serde_with"
+
+[[component]]
+name = "simple-icons"
+spdx-identifier = "CC0-1.0"
+license-url = "https://github.com/simple-icons/simple-icons/raw/refs/tags/v2.17.1/LICENSE.md"
+website = "https://github.com/simple-icons/simple-icons"
 
 [[component]]
 name = "thiserror"

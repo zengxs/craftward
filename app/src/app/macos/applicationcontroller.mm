@@ -5,6 +5,8 @@
 
 #import <AppKit/AppKit.h>
 
+#include <QWindow>
+
 void
 ApplicationController::requestBringAllWindowsToFront()
 {
@@ -26,5 +28,21 @@ ApplicationController::requestZoomActiveWindow()
 {
     @autoreleasepool {
         [NSApplication.sharedApplication.keyWindow performZoom:nil];
+    }
+}
+
+void
+ApplicationController::applyNativeWindowTitleVisibility(QWindow* window, bool visible)
+{
+    if (!window || !window->handle())
+        return;
+
+    @autoreleasepool {
+        NSView* view = (__bridge NSView*)(reinterpret_cast<void*>(window->winId()));
+        NSWindow* nativeWindow = view.window;
+        if (!nativeWindow)
+            return;
+
+        nativeWindow.titleVisibility = visible ? NSWindowTitleVisible : NSWindowTitleHidden;
     }
 }

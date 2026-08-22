@@ -75,18 +75,18 @@
         <translation>关于 Craftward</translation>
     </message>
     <message id="craftward.settings.general.title">
-        <location filename="../qml/Craftward/App/SettingsWindow.qml" line="132"/>
-        <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="45"/>
+        <location filename="../qml/Craftward/App/SettingsWindow.qml" line="133"/>
+        <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="46"/>
         <source>General</source>
         <translation>通用</translation>
     </message>
     <message id="craftward.settings.about.title">
-        <location filename="../qml/Craftward/App/SettingsWindow.qml" line="142"/>
+        <location filename="../qml/Craftward/App/SettingsWindow.qml" line="143"/>
         <source>About</source>
         <translation>关于</translation>
     </message>
     <message id="craftward.legal.application_license.title">
-        <location filename="../qml/Craftward/App/SettingsWindow.qml" line="193"/>
+        <location filename="../qml/Craftward/App/SettingsWindow.qml" line="194"/>
         <source>Craftward License</source>
         <translation>Craftward 许可证</translation>
     </message>
@@ -98,27 +98,27 @@
     </message>
     <message id="craftward.action.close">
         <location filename="../qml/Craftward/Features/Legal/LicenseTextDialog.qml" line="53"/>
-        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="207"/>
+        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="208"/>
         <source>Close</source>
         <translation>关闭</translation>
     </message>
     <message id="craftward.legal.error.catalog_invalid">
-        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="30"/>
+        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="31"/>
         <source>The legal document catalog is invalid.</source>
         <translation>法律文档目录无效。</translation>
     </message>
     <message id="craftward.legal.third_party.empty">
-        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="35"/>
+        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="36"/>
         <source>No third-party software licenses are available.</source>
         <translation>没有可用的第三方软件许可证。</translation>
     </message>
     <message id="craftward.legal.third_party.title">
-        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="67"/>
+        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="68"/>
         <source>Third-Party Component Licenses</source>
         <translation>第三方组件许可证</translation>
     </message>
     <message id="craftward.legal.third_party.open_website">
-        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="174"/>
+        <location filename="../qml/Craftward/Features/Legal/ThirdPartyLicensesDialog.qml" line="175"/>
         <source>Open Project Website</source>
         <translation>打开项目网站</translation>
     </message>
@@ -158,124 +158,124 @@
         <translation>继续工作</translation>
     </message>
     <message id="craftward.realm.bundle_dialog.title">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="29"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="30"/>
         <source>Choose an installed Realm bundle</source>
         <translation>选择已安装的 Realm 套件</translation>
     </message>
     <message id="craftward.realm.force_stop_confirmation.title">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="36"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="37"/>
         <source>Force stop this Realm?</source>
         <translation>强制停止此 Realm？</translation>
     </message>
     <message id="craftward.realm.force_stop_confirmation.message">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="37"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="38"/>
         <source>The guest will not have a chance to shut down. Unsaved data may be lost and its disk may be damaged.</source>
         <translation>虚拟机将无法正常关机。未保存的数据可能丢失，其磁盘也可能受损。</translation>
     </message>
     <message id="craftward.realm.force_stop_confirmation.action">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="38"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="39"/>
         <source>Force Stop</source>
         <translation>强制停止</translation>
     </message>
     <message id="craftward.realm.discard_state_confirmation.title">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="45"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="46"/>
         <source>Discard this Realm&apos;s suspended state?</source>
         <translation>丢弃此 Realm 的挂起状态？</translation>
     </message>
     <message id="craftward.realm.discard_state_confirmation.message">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="46"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="47"/>
         <source>The next start will boot macOS normally. Work that existed only in the guest&apos;s memory will be lost.</source>
         <translation>下次启动时，macOS 将正常引导。仅存在于虚拟机内存中的工作将会丢失。</translation>
     </message>
     <message id="craftward.realm.discard_state_confirmation.action">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="47"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="48"/>
         <source>Discard State</source>
         <translation>丢弃状态</translation>
     </message>
     <message id="craftward.realm.name">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="67"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="68"/>
         <source>Realm</source>
         <translation>Realm</translation>
     </message>
     <message id="craftward.realm.description">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="74"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="75"/>
         <source>Run an isolated development environment from an installed bundle.</source>
         <translation>从已安装的套件运行隔离的开发环境。</translation>
     </message>
     <message id="craftward.realm.no_selection">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="107"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="108"/>
         <source>No Realm selected</source>
         <translation>未选择 Realm</translation>
     </message>
     <message id="craftward.realm.bundle_hint">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="115"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="116"/>
         <source>Choose the bundle created by the macOS installer.</source>
         <translation>选择由 macOS 安装器创建的套件。</translation>
     </message>
     <message id="craftward.realm.choose_bundle.action">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="122"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="123"/>
         <source>Choose Bundle…</source>
         <translation>选择套件…</translation>
     </message>
     <message id="craftward.realm.display.show">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="128"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="129"/>
         <source>Show Display</source>
         <translation>显示画面</translation>
     </message>
     <message id="craftward.realm.display.open">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="128"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="129"/>
         <source>Open Display</source>
         <translation>打开画面</translation>
     </message>
     <message id="craftward.realm.action.resume">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="158"/>
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="169"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="159"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="170"/>
         <source>Resume</source>
         <translation>恢复</translation>
     </message>
     <message id="craftward.realm.action.start">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="158"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="159"/>
         <source>Start</source>
         <translation>启动</translation>
     </message>
     <message id="craftward.realm.action.pause">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="169"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="170"/>
         <source>Pause</source>
         <translation>暂停</translation>
     </message>
     <message id="craftward.realm.action.suspend">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="180"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="181"/>
         <source>Suspend</source>
         <translation>挂起</translation>
     </message>
     <message id="craftward.realm.action.shut_down">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="186"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="187"/>
         <source>Shut Down</source>
         <translation>关机</translation>
     </message>
     <message id="craftward.realm.more_actions">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="195"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="196"/>
         <source>More Realm actions</source>
         <translation>更多 Realm 操作</translation>
     </message>
     <message id="craftward.realm.action.force_stop">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="205"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="206"/>
         <source>Force Stop…</source>
         <translation>强制停止…</translation>
     </message>
     <message id="craftward.realm.action.discard_state">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="212"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="213"/>
         <source>Discard Suspended State…</source>
         <translation>丢弃挂起状态…</translation>
     </message>
     <message id="craftward.error.dismiss">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="249"/>
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="382"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="250"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="407"/>
         <source>Dismiss error</source>
         <translation>关闭错误</translation>
     </message>
     <message id="craftward.realm.lifecycle_help">
-        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="257"/>
+        <location filename="../qml/Craftward/Features/Realm/RealmPage.qml" line="258"/>
         <source>Pause keeps guest memory allocated. Suspend saves a host-bound runtime state and releases the virtual machine resources. Shut Down exits macOS normally.</source>
         <translation>暂停会保留虚拟机内存。挂起会保存与当前主机绑定的运行时状态并释放虚拟机资源。关机会正常退出 macOS。</translation>
     </message>
@@ -305,165 +305,165 @@
         <translation>GitHub</translation>
     </message>
     <message id="craftward.about.license.action">
-        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="106"/>
+        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="109"/>
         <source>License</source>
         <translation>许可证</translation>
     </message>
     <message id="craftward.about.third_party_licenses.action">
-        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="111"/>
+        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="114"/>
         <source>Third-Party Licenses</source>
         <translation>第三方许可证</translation>
     </message>
     <message id="craftward.about.copyright">
-        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="119"/>
+        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="122"/>
         <source>Copyright © 2026 Xiangsong Zeng.</source>
         <translation>版权所有 © 2026 Xiangsong Zeng。</translation>
     </message>
     <message id="craftward.about.license_summary">
-        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="127"/>
+        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="130"/>
         <source>Licensed under the GNU General Public License,
 version 3 or later.</source>
         <translation>依据 GNU General Public License 第 3 版或更高版本授权。</translation>
     </message>
     <message id="craftward.about.no_warranty">
-        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="139"/>
+        <location filename="../qml/Craftward/Pages/AboutPage.qml" line="142"/>
         <source>This program comes with absolutely no warranty.</source>
         <translation>本程序不提供任何担保。</translation>
     </message>
     <message id="craftward.codex.attachment.local_only">
         <location filename="../src/ward/codex/codexattachmentinput.cpp" line="82"/>
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="49"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="50"/>
         <source>Only local files can be attached.</source>
         <translation>只能添加本地文件。</translation>
     </message>
     <message id="craftward.codex.composer.file_dialog.title">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="86"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="87"/>
         <source>Attach local files</source>
         <translation>添加本地文件</translation>
     </message>
     <message id="craftward.file_filter.all">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="88"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="89"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>
     <message id="craftward.codex.composer.model.label">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="117"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="118"/>
         <source>Model</source>
         <translation>模型</translation>
     </message>
     <message id="craftward.codex.composer.reasoning.label">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="142"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="143"/>
         <source>Reasoning</source>
         <translation>推理</translation>
     </message>
     <message id="craftward.codex.composer.mode.label">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="165"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="166"/>
         <source>Mode</source>
         <translation>模式</translation>
     </message>
     <message id="craftward.codex.composer.mode.default">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="179"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="180"/>
         <source>Default</source>
         <translation>默认</translation>
     </message>
     <message id="craftward.codex.composer.mode.plan">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="184"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="185"/>
         <source>Plan</source>
         <translation>计划</translation>
     </message>
     <message id="craftward.codex.composer.mode.plan.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="192"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="193"/>
         <source>Plan mode can pause to ask structured questions before acting.</source>
         <translation>计划模式可以在执行前暂停并提出结构化问题。</translation>
     </message>
     <message id="craftward.codex.composer.mode.default.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="192"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="193"/>
         <source>Default mode is optimized for carrying out the requested work.</source>
         <translation>默认模式针对执行所请求的工作进行了优化。</translation>
     </message>
     <message id="craftward.codex.composer.permissions.label">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="197"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="198"/>
         <source>Permissions</source>
         <translation>权限</translation>
     </message>
     <message id="craftward.codex.composer.permissions.current">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="211"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="212"/>
         <source>Current</source>
         <translation>保持当前</translation>
     </message>
     <message id="craftward.codex.composer.permissions.ask">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="216"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="217"/>
         <source>Ask</source>
         <translation>询问</translation>
     </message>
     <message id="craftward.codex.composer.permissions.read_only">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="221"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="222"/>
         <source>Read only</source>
         <translation>只读</translation>
     </message>
     <message id="craftward.codex.composer.permissions.ask.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="231"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="232"/>
         <source>Allow workspace edits and ask before network access or sandbox escalation.</source>
         <translation>允许编辑工作区，并在访问网络或提升沙盒权限前询问。</translation>
     </message>
     <message id="craftward.codex.composer.permissions.read_only.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="233"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="234"/>
         <source>Keep the turn read-only and ask before an escalation.</source>
         <translation>保持本轮只读，并在提升权限前询问。</translation>
     </message>
     <message id="craftward.codex.composer.permissions.current.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="234"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="235"/>
         <source>Keep the permission settings already associated with this conversation.</source>
         <translation>保留此对话当前关联的权限设置。</translation>
     </message>
     <message id="craftward.codex.composer.attachment.action">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="249"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="250"/>
         <source>Attach</source>
         <translation>添加附件</translation>
     </message>
     <message id="craftward.codex.composer.attachment.tooltip">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="257"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="258"/>
         <source>Attach local files to the next turn.</source>
         <translation>将本地文件添加到下一轮。</translation>
     </message>
     <message id="craftward.codex.composer.placeholder.guide">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="266"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="267"/>
         <source>Guide Codex while it works…</source>
         <translation>在 Codex 工作时提供引导…</translation>
     </message>
     <message id="craftward.codex.composer.placeholder.continue">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="266"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="267"/>
         <source>Ask Codex to continue this conversation…</source>
         <translation>让 Codex 继续此对话…</translation>
     </message>
     <message id="craftward.codex.composer.attachment.remove">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="361"/>
         <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="362"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="363"/>
         <source>Remove attachment</source>
         <translation>移除附件</translation>
     </message>
     <message id="craftward.codex.composer.write_state.checking">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="394"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="395"/>
         <source>Checking whether this conversation is available for writing…</source>
         <translation>正在检查此对话是否可写…</translation>
     </message>
     <message id="craftward.codex.composer.write_state.busy">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="398"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="399"/>
         <source>This conversation is open in another Codex client. Your draft is kept here.</source>
         <translation>此对话已在另一个 Codex 客户端中打开。你的草稿会保留在这里。</translation>
     </message>
     <message id="craftward.codex.composer.write_state.unavailable">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="399"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="400"/>
         <source>Writing is currently unavailable for this conversation.</source>
         <translation>此对话当前不可写。</translation>
     </message>
     <message id="craftward.action.retry">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="407"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="408"/>
         <source>Retry</source>
         <translation>重试</translation>
     </message>
     <message id="craftward.codex.composer.drop_files">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="428"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="429"/>
         <source>Drop files to attach</source>
         <translation>拖放文件以添加附件</translation>
     </message>
@@ -484,148 +484,160 @@ version 3 or later.</source>
         <translation>重命名</translation>
     </message>
     <message id="craftward.codex.history.new.working_directory_dialog.title">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="36"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="85"/>
         <source>Choose a working directory for the new conversation</source>
         <translation>为新对话选择工作目录</translation>
     </message>
     <message id="craftward.codex.history.archive_confirmation.title">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="54"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="103"/>
         <source>Archive conversation?</source>
         <translation>归档对话？</translation>
     </message>
     <message id="craftward.codex.history.archive_confirmation.message">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="55"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="104"/>
         <source>This conversation will move out of Active history. You can restore it later from Archived.</source>
         <translation>此对话将从活跃历史中移出。你可以稍后从已归档历史中恢复它。</translation>
     </message>
     <message id="craftward.action.archive">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="56"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="105"/>
         <source>Archive</source>
         <translation>归档</translation>
     </message>
     <message id="craftward.codex.name">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="98"/>
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="188"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="156"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="673"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="189"/>
         <source>Codex</source>
         <translation>Codex</translation>
     </message>
     <message id="craftward.codex.history.new.action">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="111"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="550"/>
         <source>New…</source>
         <translation>新建…</translation>
     </message>
     <message id="craftward.action.refresh">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="118"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="566"/>
         <source>Refresh</source>
         <translation>刷新</translation>
     </message>
     <message id="craftward.codex.history.description">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="126"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="171"/>
         <source>Continue persisted conversations through the local Codex app-server.</source>
         <translation>通过本地 Codex app-server 继续已保存的对话。</translation>
     </message>
     <message id="craftward.codex.history.scope.active">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="141"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="186"/>
         <source>Active</source>
         <translation>活跃</translation>
     </message>
     <message id="craftward.codex.history.scope.archived">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="151"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="196"/>
         <source>Archived</source>
         <translation>已归档</translation>
     </message>
     <message id="craftward.codex.history.untitled">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="195"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="240"/>
         <source>Untitled conversation</source>
         <translation>未命名对话</translation>
     </message>
     <message id="craftward.codex.history.new.starting">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="222"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="267"/>
         <source>Starting a new conversation…</source>
         <translation>正在启动新对话…</translation>
     </message>
     <message id="craftward.codex.history.loading">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="222"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="267"/>
         <source>Loading conversations…</source>
         <translation>正在加载对话…</translation>
     </message>
     <message id="craftward.codex.history.empty.archived">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="222"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="267"/>
         <source>No archived conversations were found.</source>
         <translation>未找到已归档的对话。</translation>
     </message>
     <message id="craftward.codex.history.empty.active">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="222"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="267"/>
         <source>No active conversations were found.</source>
         <translation>未找到活跃对话。</translation>
     </message>
     <message id="craftward.codex.history.conversation.title">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="248"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="298"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="605"/>
         <source>Conversation</source>
         <translation>对话</translation>
     </message>
     <message id="craftward.action.rename_ellipsis">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="255"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="305"/>
         <source>Rename…</source>
         <translation>重命名…</translation>
     </message>
     <message id="craftward.action.restore">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="262"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="312"/>
         <source>Restore</source>
         <translation>恢复</translation>
     </message>
     <message id="craftward.action.archive_ellipsis">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="262"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="312"/>
         <source>Archive…</source>
         <translation>归档…</translation>
     </message>
+    <message id="craftward.navigation.sidebar.hide">
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="511"/>
+        <source>Hide Sidebar</source>
+        <translation>隐藏侧边栏</translation>
+    </message>
+    <message id="craftward.navigation.sidebar.show">
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="511"/>
+        <source>Show Sidebar</source>
+        <translation>显示侧边栏</translation>
+    </message>
     <message id="craftward.codex.runtime.archived_read_only">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="303"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="29"/>
         <source>Archived · Read only</source>
         <translation>已归档 · 只读</translation>
     </message>
     <message id="craftward.codex.runtime.starting">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="305"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="31"/>
         <source>Starting…</source>
         <translation>正在启动…</translation>
     </message>
     <message id="craftward.codex.runtime.waiting_for_approval">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="308"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="34"/>
         <source>Waiting for approval</source>
         <translation>等待审批</translation>
     </message>
     <message id="craftward.codex.runtime.waiting_for_input">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="310"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="36"/>
         <source>Waiting for input</source>
         <translation>等待输入</translation>
     </message>
     <message id="craftward.codex.runtime.running">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="311"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="37"/>
         <source>Running</source>
         <translation>运行中</translation>
     </message>
     <message id="craftward.codex.runtime.live_idle">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="314"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="40"/>
         <source>Live · Idle</source>
         <translation>在线 · 空闲</translation>
     </message>
     <message id="craftward.codex.runtime.error">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="316"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="42"/>
         <source>Runtime error</source>
         <translation>运行时错误</translation>
     </message>
     <message id="craftward.codex.runtime.unknown">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="318"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="44"/>
         <source>Status unknown</source>
         <translation>状态未知</translation>
     </message>
     <message id="craftward.codex.runtime.history_only">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="319"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="45"/>
         <source>History only</source>
         <translation>仅历史记录</translation>
     </message>
     <message id="craftward.codex.history.runtime_activity_notice">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="390"/>
+        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="415"/>
         <source>Some runtime activity may be unavailable in persisted history.</source>
         <translation>已保存的历史中可能缺少部分运行时活动。</translation>
     </message>
@@ -755,42 +767,42 @@ version 3 or later.</source>
         <translation>所选推理强度将在下一轮开始时应用，并在后续轮次中保持有效。</translation>
     </message>
     <message id="craftward.codex.timeline.processed_seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="33"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="34"/>
         <source>Processed %1 s</source>
         <translation>已处理 %1 秒</translation>
     </message>
     <message id="craftward.codex.timeline.author.you">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="188"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="189"/>
         <source>You</source>
         <translation>你</translation>
     </message>
     <message id="craftward.codex.timeline.author.commentary">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="188"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="189"/>
         <source>Codex · Commentary</source>
         <translation>Codex · 过程说明</translation>
     </message>
     <message id="craftward.codex.timeline.activity_count">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="254"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="255"/>
         <source>× %1</source>
         <translation>× %1</translation>
     </message>
     <message id="craftward.codex.timeline.fork.action">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="368"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="369"/>
         <source>Fork from here</source>
         <translation>从此处分叉</translation>
     </message>
     <message id="craftward.codex.timeline.loading">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="377"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="378"/>
         <source>Loading conversation…</source>
         <translation>正在加载对话…</translation>
     </message>
     <message id="craftward.codex.timeline.empty">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="377"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="378"/>
         <source>This conversation contains no displayable history.</source>
         <translation>此对话没有可显示的历史记录。</translation>
     </message>
     <message id="craftward.codex.timeline.no_selection">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="377"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="378"/>
         <source>Select a conversation to read it.</source>
         <translation>选择一个对话以查看内容。</translation>
     </message>
@@ -825,13 +837,13 @@ version 3 or later.</source>
         <translation>停止</translation>
     </message>
     <message id="craftward.settings.language.system">
-        <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="15"/>
+        <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="16"/>
         <source>System</source>
         <translation>跟随系统</translation>
     </message>
     <message id="craftward.settings.language.label">
-        <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="57"/>
-        <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="75"/>
+        <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="58"/>
+        <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="76"/>
         <source>Language</source>
         <translation>语言</translation>
     </message>
@@ -879,7 +891,7 @@ version 3 or later.</source>
         <translation>无法读取剪贴板图片。</translation>
     </message>
     <message id="craftward.clipboard_image.default_filename">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="19"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="20"/>
         <source>Pasted image.png</source>
         <translation>粘贴的图片.png</translation>
     </message>

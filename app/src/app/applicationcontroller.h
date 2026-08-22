@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <QHash>
 #include <QObject>
+#include <QWindow>
 #include <QtQml/qqmlregistration.h>
 
 class QEvent;
@@ -24,6 +26,7 @@ class ApplicationController : public QObject
     Q_INVOKABLE void requestMinimizeActiveWindow();
     Q_INVOKABLE void requestQuit();
     Q_INVOKABLE void requestZoomActiveWindow();
+    Q_INVOKABLE void setNativeWindowTitleVisible(QWindow* window, bool visible);
 
   signals:
     void quitBlocked();
@@ -33,8 +36,10 @@ class ApplicationController : public QObject
     bool eventFilter(QObject* watched, QEvent* event) override;
 
   private:
+    void applyNativeWindowTitleVisibility(QWindow* window, bool visible);
     void requestReopenIfNeeded();
 
     QGuiApplication& application_;
     RealmController& realmController_;
+    QHash<QWindow*, bool> nativeWindowTitleVisibility_;
 };

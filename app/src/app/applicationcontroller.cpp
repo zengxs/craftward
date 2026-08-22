@@ -7,6 +7,7 @@
 
 #include <QEvent>
 #include <QGuiApplication>
+#include <QPlatformSurfaceEvent>
 #include <QTimer>
 #include <QWindow>
 
@@ -41,9 +42,34 @@ ApplicationController::requestQuit()
     application_.quit();
 }
 
+void
+ApplicationController::setNativeWindowTitleVisible(QWindow* window, bool visible)
+{
+    if (!window)
+        return;
+
+    const bool alreadyTracked = nativeWindowTitleVisibility_.contains(window);
+    nativeWindowTitleVisibility_.insert(window, visible);
+    if (!alreadyTracked) {
+        connect(window, &QObject::destroyed, this, [this, window] { nativeWindowTitleVisibility_.remove(window); });
+    }
+
+    applyNativeWindowTitleVisibility(window, visible);
+}
+
 bool
 ApplicationController::eventFilter(QObject* watched, QEvent* event)
 {
+    if (event->type() == QEvent::PlatformSurface) {
+        const auto* surfaceEvent = static_cast<QPlatformSurfaceEvent*>(event);
+        if (surfaceEvent->surfaceEventType() == QPlatformSurfaceEvent::SurfaceCreated) {
+            auto* window = qobject_cast<QWindow*>(watched);
+            const auto visibility = nativeWindowTitleVisibility_.constFind(window);
+            if (visibility != nativeWindowTitleVisibility_.constEnd())
+                applyNativeWindowTitleVisibility(window, visibility.value());
+        }
+    }
+
     if (watched == &application_ && event->type() == QEvent::Quit && realmController_.requiresStopBeforeExit()) {
         emit quitBlocked();
         return true;

@@ -192,7 +192,7 @@ Page {
                     IconButton {
                         id: moreButton
 
-                        icon.source: "qrc:///icons/phosphor/dots-three-circle.svg"
+                        icon.source: "qrc:///icons/fluent/more-circle-20-regular.svg"
                         toolTipText: /*% "More Realm actions" */ qsTrId("craftward.realm.more_actions")
                         enabled: root.controller.canForceStop || root.controller.canDiscardSavedState
                         onClicked: realmActions.open()
@@ -246,7 +246,7 @@ Page {
                 }
 
                 IconButton {
-                    icon.source: "qrc:///icons/phosphor/x-circle.svg"
+                    icon.source: "qrc:///icons/fluent/dismiss-circle-20-regular.svg"
                     toolTipText: /*% "Dismiss error" */ qsTrId("craftward.error.dismiss")
                     onClicked: root.controller.clearError()
                 }

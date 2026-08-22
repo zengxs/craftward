@@ -99,6 +99,9 @@ Page {
 
                 Button {
                     text: /*% "GitHub" */ qsTrId("craftward.about.github.action")
+                    icon.source: "qrc:///icons/simple-icons/github.svg"
+                    icon.width: 16
+                    icon.height: 16
                     onClicked: Qt.openUrlExternally("https://github.com/zengxs/craftward")
                 }
 

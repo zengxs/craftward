@@ -82,6 +82,7 @@ tasks:
       - >-
         cmake --build "{{.BUILD_DIR}}"
         --target
+        CraftwardApplicationControllerTest
         CraftwardCoreFfiSupportTest
         CraftwardCodexHistoryControllerTest
         CraftwardLocalizationControllerTest
@@ -90,7 +91,7 @@ tasks:
       - >-
         ctest --test-dir "{{.BUILD_DIR}}"
         --output-on-failure
-        -R '^Craftward(CoreFfiSupport|CodexHistoryController|LocalizationController|RealmController)Test$'
+        -R '^Craftward(ApplicationController|CoreFfiSupport|CodexHistoryController|LocalizationController|RealmController)Test$'
 
   configure:
     label: "app:configure:{{.BUILD_TYPE}}:testing={{.BUILD_TESTING}}"

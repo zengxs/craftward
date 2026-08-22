@@ -5,6 +5,7 @@ ToolButton {
     id: control
 
     property string toolTipText
+    property real backgroundInset: 0
 
     implicitWidth: 28
     implicitHeight: 28
@@ -16,6 +17,8 @@ ToolButton {
     Accessible.name: toolTipText
 
     background: Rectangle {
+        anchors.fill: parent
+        anchors.margins: control.backgroundInset
         radius: 5
         color: {
             const foreground = control.palette.buttonText;

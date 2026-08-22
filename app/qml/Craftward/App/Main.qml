@@ -33,6 +33,8 @@ MainWindow {
         transientParent: null
     }
 
+    Component.onCompleted: root.applicationController.setNativeWindowTitleVisible(root, false)
+
     onBringAllWindowsToFrontRequested: root.applicationController.requestBringAllWindowsToFront()
     onCloseWindowRequested: root.applicationController.requestCloseActiveWindow()
     onMinimizeActiveWindowRequested: root.applicationController.requestMinimizeActiveWindow()
