@@ -21,6 +21,12 @@ Development data that can be attached to and moved between Realms without defini
 their identity.
 _Avoid_: Realm, Realm Bundle
 
+**Project Location**:
+A filesystem root through which a software project is accessible within one host or
+Realm. It identifies an access location rather than the project's durable data or
+conversation state.
+_Avoid_: Workspace, Working Copy, Checkout
+
 **Saved State**:
 Optional execution state captured when a Realm is suspended so that its prior
 execution can resume. It is neither durable Workspace data nor a branchable Realm
