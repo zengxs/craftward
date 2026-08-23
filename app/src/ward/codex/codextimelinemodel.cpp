@@ -28,6 +28,12 @@ CodexTimelineModel::rowCount(const QModelIndex& parent) const
     return parent.isValid() ? 0 : rows_.size();
 }
 
+QString
+CodexTimelineModel::entryIdAt(int row) const
+{
+    return row >= 0 && row < rows_.size() ? rows_.at(row).entryId : QString();
+}
+
 QVariant
 CodexTimelineModel::data(const QModelIndex& index, int role) const
 {
@@ -56,6 +62,9 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
             return !row.activityGroup && row.message.phase() == MessagePhase::MESSAGE_PHASE_FINAL_ANSWER;
         case TextRole:
             return row.activityGroup ? QString() : row.message.text();
+        case MarkupDocumentRole:
+            return row.activityGroup ? QVariant()
+                                     : QVariant::fromValue(static_cast<QObject*>(ensureMarkupDocument(row)));
         case ActivityLabelRole:
             return row.activityGroup ? activityGroupLabel(row.activityKind) : QString();
         case ActivityCountRole:
@@ -83,6 +92,7 @@ CodexTimelineModel::roleNames() const
         { CommentaryRole, "commentary" },
         { FinalAnswerRole, "finalAnswer" },
         { TextRole, "text" },
+        { MarkupDocumentRole, "markupDocument" },
         { ActivityLabelRole, "activityLabel" },
         { ActivityCountRole, "activityCount" },
         { ActivityItemsRole, "activityItems" },
@@ -133,6 +143,12 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline, const QSet<QStr
     for (qsizetype index = 0; index < rows.size(); ++index) {
         rows[index].forkBoundary = forkableTurnIds.contains(rows[index].turnId) &&
                                    (index + 1 == rows.size() || rows[index + 1].turnId != rows[index].turnId);
+    }
+    const QString lastTurnId = rows.isEmpty() ? QString() : rows.constLast().turnId;
+    using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
+    for (TimelineRow& row : rows) {
+        row.markupFinalized = !row.activityGroup && (row.message.role() == MessageRole::MESSAGE_ROLE_USER ||
+                                                     row.turnId != lastTurnId || forkableTurnIds.contains(row.turnId));
     }
     return rows;
 }
@@ -393,7 +409,28 @@ CodexTimelineModel::rowsEqual(const TimelineRow& left, const TimelineRow& right)
 {
     return left.entryId == right.entryId && left.turnId == right.turnId && left.forkBoundary == right.forkBoundary &&
            left.activityGroup == right.activityGroup && left.message == right.message &&
-           left.activityKind == right.activityKind && left.activities == right.activities;
+           left.markupFinalized == right.markupFinalized && left.activityKind == right.activityKind &&
+           left.activities == right.activities;
+}
+
+MarkupDocumentModel::SourceFormat
+CodexTimelineModel::messageSourceFormat(const CodexMessage& message)
+{
+    using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
+    return message.role() == MessageRole::MESSAGE_ROLE_AGENT ? MarkupDocumentModel::SourceFormat::Markdown
+                                                             : MarkupDocumentModel::SourceFormat::PlainText;
+}
+
+MarkupDocumentModel*
+CodexTimelineModel::ensureMarkupDocument(const TimelineRow& row) const
+{
+    if (row.activityGroup)
+        return nullptr;
+    if (!row.markupDocument) {
+        row.markupDocument = std::make_shared<MarkupDocumentModel>(const_cast<CodexTimelineModel*>(this));
+        row.markupDocument->reconcileSource(row.message.text(), messageSourceFormat(row.message), row.markupFinalized);
+    }
+    return row.markupDocument.get();
 }
 
 void
@@ -417,6 +454,16 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline, const Q
     if (commonPrefix != sharedSize) {
         replaceRows(std::move(rows));
         return;
+    }
+
+    for (qsizetype index = 0; index < commonPrefix; ++index) {
+        if (rows[index].activityGroup)
+            continue;
+        rows[index].markupDocument = rows_[index].markupDocument;
+        if (rows[index].markupDocument) {
+            rows[index].markupDocument->reconcileSource(
+              rows[index].message.text(), messageSourceFormat(rows[index].message), rows[index].markupFinalized);
+        }
     }
 
     qsizetype firstChanged = -1;

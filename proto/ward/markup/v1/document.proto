@@ -1,0 +1,46 @@
+// Copyright (C) 2026 Xiangsong Zeng
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+syntax = "proto3";
+
+package ward.markup.v1;
+
+// The source syntax used to produce a render document.
+enum SourceFormat {
+  SOURCE_FORMAT_UNSPECIFIED = 0;
+  SOURCE_FORMAT_PLAIN_TEXT = 1;
+  SOURCE_FORMAT_MARKDOWN = 2;
+}
+
+// A bounded textual source fragment rendered through one native text document.
+// Version 1 preserves source and plain text rather than resolved inline
+// semantics, so references spanning independently rendered blocks are not
+// guaranteed to resolve.
+message ProseBlock {
+  string source = 1;
+  string plain_text = 2;
+}
+
+// A code block rendered independently from surrounding prose.
+message CodeBlock {
+  string code = 1;
+  optional string language = 2;
+}
+
+// One independently renderable block and its UTF-8 source byte range.
+message Block {
+  string block_id = 1;
+  uint64 source_start = 2;
+  uint64 source_end = 3;
+
+  oneof body {
+    ProseBlock prose = 4;
+    CodeBlock code_block = 5;
+  }
+}
+
+// A parsed source document represented as stable render blocks.
+message Document {
+  SourceFormat source_format = 1;
+  repeated Block blocks = 2;
+}

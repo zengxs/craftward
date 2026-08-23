@@ -4,6 +4,7 @@
 #pragma once
 
 #include "history.qpb.h"
+#include "ward/markup/markupdocumentmodel.h"
 
 #include <QAbstractListModel>
 #include <QList>
@@ -13,6 +14,8 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
+
+#include <memory>
 
 using CodexActivity = ward::codex::v1::Activity;
 using CodexMessage = ward::codex::v1::Message;
@@ -34,6 +37,7 @@ class CodexTimelineModel : public QAbstractListModel
         CommentaryRole,
         FinalAnswerRole,
         TextRole,
+        MarkupDocumentRole,
         ActivityLabelRole,
         ActivityCountRole,
         ActivityItemsRole,
@@ -44,6 +48,7 @@ class CodexTimelineModel : public QAbstractListModel
     explicit CodexTimelineModel(QObject* parent = nullptr);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
+    Q_INVOKABLE [[nodiscard]] QString entryIdAt(int row) const;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
@@ -80,6 +85,8 @@ class CodexTimelineModel : public QAbstractListModel
         bool forkBoundary = false;
         bool activityGroup = false;
         CodexMessage message;
+        bool markupFinalized = false;
+        mutable std::shared_ptr<MarkupDocumentModel> markupDocument;
         ActivityPresentationKind activityKind = ActivityPresentationKind::Activity;
         QList<CodexActivity> activities;
     };
@@ -97,6 +104,8 @@ class CodexTimelineModel : public QAbstractListModel
     [[nodiscard]] bool rowFailed(const TimelineRow& row) const;
     [[nodiscard]] bool rowRunning(const TimelineRow& row) const;
     [[nodiscard]] bool rowsEqual(const TimelineRow& left, const TimelineRow& right) const;
+    [[nodiscard]] static MarkupDocumentModel::SourceFormat messageSourceFormat(const CodexMessage& message);
+    [[nodiscard]] MarkupDocumentModel* ensureMarkupDocument(const TimelineRow& row) const;
     void replaceRows(QList<TimelineRow> rows);
 
     QList<TimelineRow> rows_;

@@ -46,5 +46,6 @@ if(BUILD_TESTING)
     )
 endif()
 
+add_subdirectory(markup)
 add_subdirectory(codex)
 add_subdirectory(realm)

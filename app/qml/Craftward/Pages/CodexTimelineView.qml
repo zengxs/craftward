@@ -35,116 +35,26 @@ Control {
     }
 
     function followLatest() {
-        timelineList.followLiveTail = true;
-        Qt.callLater(timelineList.positionViewAtEnd);
+        timelineViewport.followLatest();
     }
 
     padding: 0
 
-    contentItem: ListView {
-        id: timelineList
+    contentItem: CodexTimelineViewport {
+        id: timelineViewport
 
-        readonly property bool conversationLoading: root.controller.loading
-        readonly property string selectedThreadId: root.controller.threadId
-        property bool initialPositionActive: false
-        property bool initialPositionScheduled: false
-        property string pendingInitialPositionThreadId
-        property bool followLiveTail: true
-
-        function cancelInitialPosition() {
-            initialPositionActive = false;
-            initialPositionScheduled = false;
-            pendingInitialPositionThreadId = "";
-            initialPositionStabilityTimer.stop();
-        }
-
-        function applyInitialPosition() {
-            initialPositionScheduled = false;
-            if (conversationLoading || pendingInitialPositionThreadId !== selectedThreadId)
-                return;
-            if (count === 0) {
-                cancelInitialPosition();
-                return;
-            }
-
-            initialPositionActive = true;
-            forceLayout();
-            positionViewAtEnd();
-            initialPositionStabilityTimer.restart();
-        }
-
-        function scheduleInitialPosition() {
-            if (conversationLoading || !pendingInitialPositionThreadId || pendingInitialPositionThreadId !== selectedThreadId || initialPositionScheduled)
-                return;
-            initialPositionScheduled = true;
-            Qt.callLater(timelineList.applyInitialPosition);
-        }
-
-        function finishInitialPosition() {
-            if (!initialPositionActive || conversationLoading || pendingInitialPositionThreadId !== selectedThreadId)
-                return;
-
-            forceLayout();
-            positionViewAtEnd();
-            Qt.callLater(timelineList.completeInitialPosition);
-        }
-
-        function completeInitialPosition() {
-            if (!initialPositionActive || conversationLoading || pendingInitialPositionThreadId !== selectedThreadId)
-                return;
-            if (initialPositionStabilityTimer.running)
-                return;
-
-            forceLayout();
-            positionViewAtEnd();
-            if (initialPositionStabilityTimer.running)
-                return;
-
-            initialPositionActive = false;
-            pendingInitialPositionThreadId = "";
-        }
-
+        loading: root.controller.loading
+        layoutKey: root.controller.threadId
+        rowKeyProvider: row => root.controller.timeline.entryIdAt(row)
         clip: true
-        spacing: 10
+        rowSpacing: 10
         model: root.controller.timeline
-        // Temporary mitigation for ListView's variable-height content estimate.
-        // Replace this with cached row heights and anchored scrolling.
-        cacheBuffer: Math.max(height * 4, 2048)
         ScrollBar.vertical: OverlayScrollBar {}
-
-        onContentHeightChanged: {
-            if (initialPositionActive) {
-                initialPositionStabilityTimer.restart();
-                scheduleInitialPosition();
-            } else if (followLiveTail) {
-                Qt.callLater(timelineList.positionViewAtEnd);
-            }
-        }
-        onConversationLoadingChanged: scheduleInitialPosition()
-        onDraggingChanged: {
-            if (dragging) {
-                cancelInitialPosition();
-                followLiveTail = false;
-            }
-        }
-        onMovementEnded: followLiveTail = atYEnd
-        onSelectedThreadIdChanged: {
-            cancelInitialPosition();
-            followLiveTail = true;
-            pendingInitialPositionThreadId = selectedThreadId;
-            scheduleInitialPosition();
-        }
-
-        Timer {
-            id: initialPositionStabilityTimer
-
-            interval: 100
-            onTriggered: timelineList.finishInitialPosition()
-        }
 
         delegate: Item {
             id: timelineDelegate
 
+            required property int row
             required property string entryId
             required property string turnId
             required property bool forkBoundary
@@ -153,15 +63,44 @@ Control {
             required property bool commentary
             required property bool finalAnswer
             required property string text
+            required property var markupDocument
             required property string activityLabel
             required property int activityCount
             required property var activityItems
             required property bool failed
             required property bool running
-            property bool groupExpanded: activityItems.length > 0 && activityItems[0].reasoning
+            readonly property var viewport: TableView.view
+            property bool groupExpanded: shouldExpandGroup()
 
-            width: ListView.view.width
+            function shouldExpandGroup() {
+                return activityItems && activityItems.length > 0 && activityItems[0].reasoning;
+            }
+
+            function reportHeight() {
+                heightReportTimer.restart();
+            }
+
+            width: TableView.view.width
             implicitHeight: (activityGroup ? activityCard.implicitHeight : messageCard.implicitHeight) + (forkAction.visible ? forkAction.implicitHeight + 2 : 0)
+
+            Component.onCompleted: reportHeight()
+            onEntryIdChanged: reportHeight()
+            onImplicitHeightChanged: reportHeight()
+            onWidthChanged: reportHeight()
+            TableView.onReused: {
+                groupExpanded = Qt.binding(timelineDelegate.shouldExpandGroup);
+                reportHeight();
+            }
+
+            Timer {
+                id: heightReportTimer
+
+                interval: 16
+                onTriggered: {
+                    if (timelineDelegate.viewport)
+                        timelineDelegate.viewport.recordRowHeight(timelineDelegate.row, timelineDelegate.entryId, timelineDelegate.implicitHeight);
+                }
+            }
 
             Rectangle {
                 id: messageCard
@@ -192,15 +131,12 @@ Control {
                         font.weight: Font.DemiBold
                     }
 
-                    TextEdit {
+                    MarkupDocumentView {
                         Layout.fillWidth: true
-                        text: timelineDelegate.text
-                        color: root.palette.text
+                        documentModel: timelineDelegate.markupDocument
+                        textColor: root.palette.text
                         font: root.font
-                        readOnly: true
-                        selectByMouse: true
-                        wrapMode: TextEdit.Wrap
-                        textFormat: TextEdit.MarkdownText
+                        codeFont: Typography.codeFont
                     }
                 }
             }
@@ -379,7 +315,7 @@ Control {
             color: root.palette.placeholderText
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            visible: timelineList.count === 0
+            visible: timelineViewport.rows === 0
         }
     }
 

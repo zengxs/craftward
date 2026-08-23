@@ -10,6 +10,7 @@ qt_add_qml_module(CraftwardComponents
         ConfirmationDialog.qml
         IconButton.qml
         MenuComboBox.qml
+        MarkupDocumentView.qml
         ModalDialog.qml
         OverlayScrollBar.qml
         PrimaryButton.qml

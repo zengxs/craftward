@@ -3,7 +3,8 @@
 
 use std::{env, io, path::PathBuf};
 
-const PROTO_FILES: &[&str] = &["ward/codex/v1/history.proto"];
+const CORE_PROTO_FILES: &[&str] = &["ward/codex/v1/history.proto"];
+const APP_PROTO_FILES: &[&str] = &["ward/markup/v1/document.proto"];
 
 fn main() -> io::Result<()> {
     let manifest_dir = PathBuf::from(
@@ -14,7 +15,11 @@ fn main() -> io::Result<()> {
         .and_then(|core_dir| core_dir.parent())
         .expect("ward-core must be located under <repository>/core");
     let proto_root = repository_root.join("proto");
-    let proto_files = PROTO_FILES
+    let mut proto_paths = CORE_PROTO_FILES.to_vec();
+    if env::var_os("CARGO_FEATURE_APP").is_some() {
+        proto_paths.extend(APP_PROTO_FILES);
+    }
+    let proto_files = proto_paths
         .iter()
         .map(|path| proto_root.join(path))
         .collect::<Vec<_>>();

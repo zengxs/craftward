@@ -1,2 +1,3 @@
 module Craftward.Components
+MarkupDocumentView 1.0 MarkupDocumentView.qml
 MenuComboBox 1.0 MenuComboBox.qml

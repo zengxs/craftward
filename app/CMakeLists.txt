@@ -67,7 +67,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-find_package(Qt6 6.11 REQUIRED COMPONENTS LinguistTools Protobuf Qml Quick QuickControls2 QuickDialogs2 Svg)
+find_package(Qt6 6.11 REQUIRED COMPONENTS Concurrent LinguistTools Protobuf Qml Quick QuickControls2 QuickDialogs2 Svg)
 if(BUILD_TESTING)
     find_package(Qt6 6.11 REQUIRED COMPONENTS Test)
 endif()

@@ -39,6 +39,12 @@ typedef enum WardCodexPermissionPreset {
     WardCodexPermissionPresetReadOnly = 2,
 } WardCodexPermissionPreset;
 
+// A source syntax accepted by Ward Core's app-only markup interface.
+typedef enum WardMarkupSourceFormat {
+    WardMarkupSourceFormatPlainText = 0,
+    WardMarkupSourceFormatMarkdown = 1,
+} WardMarkupSourceFormat;
+
 // A Realm lifecycle state passed through Ward Core's private C interface.
 typedef enum WardRealmState {
     WardRealmStateStopped = 0,
@@ -54,7 +60,7 @@ typedef enum WardRealmState {
     WardRealmStateSuspended = 10,
 } WardRealmState;
 
-// An opaque serialized payload passed through Ward Core's private C interface.
+// An opaque borrowed serialized payload passed through Ward Core's private C interface.
 typedef struct WardBuffer WardBuffer;
 
 // An opaque Codex execution target passed through Ward Core's private C
@@ -76,6 +82,9 @@ typedef struct WardCodexHistoryObserver WardCodexHistoryObserver;
 // [`ward_core_error_destroy`]. Final failures for accepted asynchronous
 // operations are delivered through their event callback instead of this type.
 typedef struct WardError WardError;
+
+// An opaque owned serialized payload returned through Ward Core's app-only interface.
+typedef struct WardOwnedBuffer WardOwnedBuffer;
 
 // An opaque realm handle passed through Ward Core's private C interface.
 typedef struct WardRealm WardRealm;
@@ -161,14 +170,14 @@ bool ward_core_blake3_hash_file(const char *path,
 //
 // # Safety
 //
-// `buffer` must be null or a valid borrowed handle supplied by Ward Core.
+// `buffer` must be null or a valid borrowed buffer supplied by Ward Core.
 const uint8_t *ward_core_buffer_data(const struct WardBuffer *buffer);
 
 // Returns the number of bytes in a serialized Ward buffer.
 //
 // # Safety
 //
-// `buffer` must be null or a valid borrowed handle supplied by Ward Core.
+// `buffer` must be null or a valid borrowed buffer supplied by Ward Core.
 size_t ward_core_buffer_size(const struct WardBuffer *buffer);
 
 // Dispatches process arguments through Ward's embedded CLI.
@@ -535,6 +544,45 @@ void ward_core_error_destroy(struct WardError *error);
 //
 // `error` must be null or a live error returned by this interface.
 const char *ward_core_error_message(const struct WardError *error);
+
+// Parses source text into an owned serialized render document on the calling thread.
+//
+// The returned buffer is a `ward.markup.v1.Document` payload. The caller owns
+// it and must destroy it with [`ward_core_owned_buffer_destroy`].
+//
+// # Safety
+//
+// `source` must point to `source_size` readable bytes when `source_size` is
+// positive. The bytes must be UTF-8. `output_error`, when non-null, must be
+// writable.
+struct WardOwnedBuffer *ward_core_markup_parse(enum WardMarkupSourceFormat format,
+                                               const uint8_t *source,
+                                               size_t source_size,
+                                               struct WardError **output_error);
+
+// Returns the borrowed bytes in an owned Ward buffer.
+//
+// The returned pointer remains valid until the owned buffer is destroyed.
+//
+// # Safety
+//
+// `buffer` must be null or a valid live owned buffer returned by Ward Core.
+const uint8_t *ward_core_owned_buffer_data(const struct WardOwnedBuffer *buffer);
+
+// Destroys an owned Ward buffer returned directly from Ward Core.
+//
+// # Safety
+//
+// `buffer` must be null or a valid live owned buffer returned by Ward Core,
+// and ownership may be transferred only once.
+void ward_core_owned_buffer_destroy(struct WardOwnedBuffer *buffer);
+
+// Returns the number of bytes in an owned Ward buffer.
+//
+// # Safety
+//
+// `buffer` must be null or a valid live owned buffer returned by Ward Core.
+size_t ward_core_owned_buffer_size(const struct WardOwnedBuffer *buffer);
 
 // Attaches a display frontend and returns its borrowed native view.
 //

@@ -8,6 +8,10 @@ license.workspace = true
 [lib]
 crate-type = ["rlib", "staticlib"]
 
+[features]
+default = []
+app = ["dep:ward-markup"]
+
 [dependencies]
 blake3 = { workspace = true }
 prost = { workspace = true }
@@ -15,6 +19,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 ward-cli = { workspace = true }
 ward-codex = { workspace = true }
+ward-markup = { workspace = true, optional = true }
 ward-realm = { workspace = true }
 ward-realm-vz = { workspace = true }
 ward-runtime = { workspace = true }

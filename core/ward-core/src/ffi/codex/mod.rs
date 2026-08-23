@@ -3,17 +3,13 @@
 
 use std::ffi::{CStr, c_char};
 
+pub(super) use super::buffer::WardBuffer;
 use super::error::{WardError, write_error};
 
 mod execution_target;
 mod live;
 mod observer;
 mod wire;
-
-/// An opaque serialized payload passed through Ward Core's private C interface.
-pub struct WardBuffer {
-    bytes: Box<[u8]>,
-}
 
 unsafe fn required_string(
     value: *const c_char,
@@ -31,28 +27,4 @@ unsafe fn required_string(
             .to_string_lossy()
             .into_owned(),
     )
-}
-
-/// Returns the borrowed bytes in a serialized Ward buffer.
-///
-/// The returned pointer remains valid for the lifetime of the borrowed buffer.
-///
-/// # Safety
-///
-/// `buffer` must be null or a valid borrowed handle supplied by Ward Core.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_buffer_data(buffer: *const WardBuffer) -> *const u8 {
-    // SAFETY: A non-null pointer names a valid borrowed handle.
-    unsafe { buffer.as_ref() }.map_or(std::ptr::null(), |buffer| buffer.bytes.as_ptr())
-}
-
-/// Returns the number of bytes in a serialized Ward buffer.
-///
-/// # Safety
-///
-/// `buffer` must be null or a valid borrowed handle supplied by Ward Core.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ward_core_buffer_size(buffer: *const WardBuffer) -> usize {
-    // SAFETY: A non-null pointer names a valid borrowed handle.
-    unsafe { buffer.as_ref() }.map_or(0, |buffer| buffer.bytes.len())
 }

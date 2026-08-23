@@ -56,6 +56,12 @@ spdx-identifier = "Apache-2.0"
 website = "https://github.com/tokio-rs/prost"
 
 [[component]]
+name = "pulldown-cmark"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/pulldown-cmark/pulldown-cmark/refs/tags/v0.13.4/LICENSE"
+website = "https://github.com/pulldown-cmark/pulldown-cmark"
+
+[[component]]
 name = "Qt"
 spdx-identifier = "GPL-3.0-only"
 website = "https://www.qt.io/"

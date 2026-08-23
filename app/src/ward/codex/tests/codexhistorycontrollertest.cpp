@@ -185,6 +185,7 @@ class CodexHistoryControllerTest : public QObject
     void initTestCase();
     void cleanupTestCase();
     void retranslatesTimelinePresentationWhenRequested();
+    void adaptsMessageFormatsAndPreservesMarkupModelsAcrossStreamingUpdates();
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
     void marksOnlyAuthoritativeTurnEndsAsForkBoundaries();
     void confirmsAcceptedTurnGuidance();
@@ -260,6 +261,90 @@ CodexHistoryControllerTest::retranslatesTimelinePresentationWhenRequested()
              QStringLiteral("进行中"));
 
     QVERIFY(QCoreApplication::removeTranslator(&simplifiedChinese));
+}
+
+void
+CodexHistoryControllerTest::adaptsMessageFormatsAndPreservesMarkupModelsAcrossStreamingUpdates()
+{
+    CodexHistoryController controller(nullptr, nullptr);
+    CodexConversationController* conversation = controller.conversation();
+    const QString markdownPrefix = QStringLiteral("Before\n\n```sh\necho ready\n```\n\n");
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, {}), {});
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
+                                                   {
+                                                     messageItem(QStringLiteral("turn-1"),
+                                                                 QStringLiteral("user-1"),
+                                                                 MessageRole::MESSAGE_ROLE_USER,
+                                                                 MessagePhase::MESSAGE_PHASE_UNSPECIFIED,
+                                                                 QStringLiteral("# Plain user input")),
+                                                     messageItem(QStringLiteral("turn-1"),
+                                                                 QStringLiteral("agent-1"),
+                                                                 MessageRole::MESSAGE_ROLE_AGENT,
+                                                                 MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                                                                 markdownPrefix + QStringLiteral("After")),
+                                                   }),
+                                 {});
+
+    CodexTimelineModel* timeline = conversation->timeline();
+    QCOMPARE(timeline->entryIdAt(0), QStringLiteral("message:turn-1:user-1"));
+    QCOMPARE(timeline->entryIdAt(1), QStringLiteral("message:turn-1:agent-1"));
+    QVERIFY(timeline->entryIdAt(-1).isEmpty());
+    QVERIFY(timeline->entryIdAt(timeline->rowCount()).isEmpty());
+    QCOMPARE(timeline->findChildren<MarkupDocumentModel*>().size(), 0);
+    auto* userDocument = qobject_cast<MarkupDocumentModel*>(
+      timeline->data(timeline->index(0), CodexTimelineModel::MarkupDocumentRole).value<QObject*>());
+    QCOMPARE(timeline->findChildren<MarkupDocumentModel*>().size(), 1);
+    auto* agentDocument = qobject_cast<MarkupDocumentModel*>(
+      timeline->data(timeline->index(1), CodexTimelineModel::MarkupDocumentRole).value<QObject*>());
+    QCOMPARE(timeline->findChildren<MarkupDocumentModel*>().size(), 2);
+    QVERIFY(userDocument != nullptr);
+    QVERIFY(agentDocument != nullptr);
+    QCOMPARE(userDocument->rowCount(), 1);
+    QVERIFY(!userDocument->data(userDocument->index(0), MarkupDocumentModel::MarkdownRole).toBool());
+    QTRY_COMPARE(agentDocument->rowCount(), 3);
+    QVERIFY(agentDocument->data(agentDocument->index(1), MarkupDocumentModel::CodeBlockRole).toBool());
+
+    const QString updatedMarkdown = markdownPrefix + QStringLiteral("After more");
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
+                                                   {
+                                                     messageItem(QStringLiteral("turn-1"),
+                                                                 QStringLiteral("user-1"),
+                                                                 MessageRole::MESSAGE_ROLE_USER,
+                                                                 MessagePhase::MESSAGE_PHASE_UNSPECIFIED,
+                                                                 QStringLiteral("# Plain user input")),
+                                                     messageItem(QStringLiteral("turn-1"),
+                                                                 QStringLiteral("agent-1"),
+                                                                 MessageRole::MESSAGE_ROLE_AGENT,
+                                                                 MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                                                                 updatedMarkdown),
+                                                   }),
+                                 {});
+
+    auto* updatedAgentDocument = qobject_cast<MarkupDocumentModel*>(
+      timeline->data(timeline->index(1), CodexTimelineModel::MarkupDocumentRole).value<QObject*>());
+    QCOMPARE(updatedAgentDocument, agentDocument);
+    QTRY_COMPARE(
+      updatedAgentDocument->data(updatedAgentDocument->index(2), MarkupDocumentModel::PlainTextRole).toString(),
+      QStringLiteral("After more"));
+
+    QSignalSpy finalizedSpy(agentDocument, &MarkupDocumentModel::documentReconciled);
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
+                                                   {
+                                                     messageItem(QStringLiteral("turn-1"),
+                                                                 QStringLiteral("user-1"),
+                                                                 MessageRole::MESSAGE_ROLE_USER,
+                                                                 MessagePhase::MESSAGE_PHASE_UNSPECIFIED,
+                                                                 QStringLiteral("# Plain user input")),
+                                                     messageItem(QStringLiteral("turn-1"),
+                                                                 QStringLiteral("agent-1"),
+                                                                 MessageRole::MESSAGE_ROLE_AGENT,
+                                                                 MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                                                                 updatedMarkdown),
+                                                   },
+                                                   QStringLiteral("New conversation"),
+                                                   { QStringLiteral("turn-1") }),
+                                 {});
+    QTRY_COMPARE(finalizedSpy.count(), 1);
 }
 
 void

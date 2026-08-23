@@ -38,6 +38,7 @@ target_include_directories(CraftwardCodex
 target_link_libraries(CraftwardCodex
     PRIVATE
         CraftwardCoreFfiSupport
+        CraftwardMarkup
         Qt6::Gui
         Qt6::Protobuf
         Qt6::Qml

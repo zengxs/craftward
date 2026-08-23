@@ -5,6 +5,7 @@ members = [
     "ward-codex",
     "ward-codex-test-support",
     "ward-core",
+    "ward-markup",
     "ward-realm",
     "ward-realm-vz",
     "ward-runtime",
@@ -22,6 +23,7 @@ ward-cli = { path = "ward-cli" }
 ward-codex = { path = "ward-codex" }
 ward-codex-test-support = { path = "ward-codex-test-support" }
 ward-core = { path = "ward-core" }
+ward-markup = { path = "ward-markup" }
 ward-realm = { path = "ward-realm" }
 ward-realm-vz = { path = "ward-realm-vz" }
 ward-runtime = { path = "ward-runtime" }
@@ -40,3 +42,4 @@ tokio-util = { version = "0.7", features = ["rt"] }
 uuid = "1"
 prost = "0.14"
 prost-build = "0.14"
+pulldown-cmark = { version = "0.13", default-features = false }
