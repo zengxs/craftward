@@ -458,6 +458,20 @@ pub enum TurnStatus {
     Unknown(String),
 }
 
+impl TurnStatus {
+    /// Returns whether the persisted turn has reached a known terminal state.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Interrupted | Self::Failed)
+    }
+
+    /// Returns whether the persisted turn is explicitly still in progress.
+    #[must_use]
+    pub fn is_in_progress(&self) -> bool {
+        matches!(self, Self::InProgress)
+    }
+}
+
 /// A persisted item relevant to rendering a conversation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -564,4 +578,28 @@ pub enum AgentMessagePhase {
     Commentary,
     FinalAnswer,
     Unknown(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TurnStatus;
+
+    #[test]
+    fn classifies_known_and_unknown_turn_statuses() {
+        for terminal in [
+            TurnStatus::Completed,
+            TurnStatus::Interrupted,
+            TurnStatus::Failed,
+        ] {
+            assert!(terminal.is_terminal());
+            assert!(!terminal.is_in_progress());
+        }
+
+        assert!(!TurnStatus::InProgress.is_terminal());
+        assert!(TurnStatus::InProgress.is_in_progress());
+
+        let unknown = TurnStatus::Unknown("futureStatus".to_owned());
+        assert!(!unknown.is_terminal());
+        assert!(!unknown.is_in_progress());
+    }
 }

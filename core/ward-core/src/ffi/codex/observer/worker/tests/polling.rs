@@ -112,7 +112,10 @@ async fn initial_read_grace_survives_switching_threads() {
 
     state.select_thread().await;
 
-    assert!(state.poll_conversation(&thread_id, &sink).await);
+    assert_ne!(
+        state.poll_conversation(&thread_id, &sink).await,
+        ConversationPollOutcome::Failed
+    );
     assert!(
         captured
             .lock()
@@ -134,11 +137,23 @@ async fn suppresses_repeated_identical_errors_for_each_target() {
         CodexHistoryCancellation::new(),
     );
 
-    assert!(!state.poll_threads(&sink).await);
-    assert!(!state.poll_threads(&sink).await);
+    assert_eq!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
+    assert_eq!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
     state.select_thread().await;
-    assert!(!state.poll_conversation("thread-1", &sink).await);
-    assert!(!state.poll_conversation("thread-1", &sink).await);
+    assert_eq!(
+        state.poll_conversation("thread-1", &sink).await,
+        ConversationPollOutcome::Failed
+    );
+    assert_eq!(
+        state.poll_conversation("thread-1", &sink).await,
+        ConversationPollOutcome::Failed
+    );
 
     let captured = captured.lock().unwrap();
     assert_eq!(captured.events.len(), 2);

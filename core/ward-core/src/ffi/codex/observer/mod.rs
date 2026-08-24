@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use prost::Message as _;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use ward_codex::{
     CodexHistoryCancellation, InferenceOverride, InteractionResponse, ReasoningEffort, TurnInput,
@@ -136,6 +137,7 @@ type WardCodexHistoryEventFn = unsafe extern "C" fn(context: *mut c_void, event:
 /// private C interface.
 pub struct WardCodexHistoryObserver {
     commands: Sender<ObserverCommand>,
+    polling_enabled: watch::Sender<bool>,
     cancellation: CodexHistoryCancellation,
     active_operation: Arc<ObserverOperationGate>,
     runtime: Handle,
@@ -192,6 +194,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
     };
 
     let (commands, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (polling_enabled, polling_enabled_updates) = watch::channel(true);
     let cancellation = CodexHistoryCancellation::new();
     let active_operation = Arc::new(ObserverOperationGate::new());
     let sink = HistoryEventSink::new(callback, callback_context);
@@ -201,12 +204,21 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_open(
         let cancellation = cancellation.clone();
         let active_operation = Arc::clone(&active_operation);
         async move {
-            run_observer(source, receiver, sink, cancellation, active_operation).await;
+            run_observer(
+                source,
+                receiver,
+                polling_enabled_updates,
+                sink,
+                cancellation,
+                active_operation,
+            )
+            .await;
         }
     });
 
     Box::into_raw(Box::new(WardCodexHistoryObserver {
         commands,
+        polling_enabled,
         cancellation,
         active_operation,
         runtime,
@@ -553,6 +565,45 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_refresh_async(
     };
 
     send_command(observer, ObserverCommand::Refresh, output_error)
+}
+
+/// Enables or suspends periodic persisted-history polling.
+///
+/// Disabling polling preserves the observer, its selected thread, live writer
+/// events, and explicit operations. Re-enabling polling schedules an immediate
+/// thread-list refresh and refreshes the selected conversation when present.
+///
+/// A `true` return means the command was accepted. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `output_error`, when non-null,
+/// must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_set_polling_enabled_async(
+    observer: *mut WardCodexHistoryObserver,
+    enabled: bool,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+
+    match observer.polling_enabled.send(enabled) {
+        Ok(()) => true,
+        Err(_) => {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex history observer has stopped") };
+            false
+        }
+    }
 }
 
 /// Attempts to acquire exclusive writing access for one persisted thread.

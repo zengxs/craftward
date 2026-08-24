@@ -147,6 +147,9 @@ fn handle_client_message(
     let Some(method) = message.get("method").and_then(Value::as_str) else {
         return Some(handle_client_response(&message, state));
     };
+    if method == "thread/read" {
+        state.lock().unwrap().thread_read_request_count += 1;
+    }
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
     Some(match method {
         "model/list" => vec![model_list_response(id, &params, state)],

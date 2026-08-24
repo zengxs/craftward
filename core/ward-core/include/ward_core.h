@@ -417,6 +417,25 @@ bool ward_core_codex_history_observer_restore_thread_async(struct WardCodexHisto
                                                            const char *thread_id,
                                                            struct WardError **output_error);
 
+// Enables or suspends periodic persisted-history polling.
+//
+// Disabling polling preserves the observer, its selected thread, live writer
+// events, and explicit operations. Re-enabling polling schedules an immediate
+// thread-list refresh and refreshes the selected conversation when present.
+//
+// A `true` return means the command was accepted. A `false` return means
+// immediate rejection, and `output_error` receives an owned error when
+// non-null.
+//
+// # Safety
+//
+// `observer` must point to a live handle returned by
+// [`ward_core_codex_history_observer_open`]. `output_error`, when non-null,
+// must be writable.
+bool ward_core_codex_history_observer_set_polling_enabled_async(struct WardCodexHistoryObserver *observer,
+                                                                bool enabled,
+                                                                struct WardError **output_error);
+
 // Switches the observer between active and archived persisted history.
 //
 // The next successful list read is emitted as a scope-tagged authoritative

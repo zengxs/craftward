@@ -114,6 +114,12 @@ impl FakeCodexAppServer {
     pub fn thread_list_requests(&self) -> Vec<FakeThreadListRequest> {
         self.state.lock().unwrap().thread_list_requests.clone()
     }
+
+    /// Returns the number of thread-read requests observed so far.
+    #[must_use]
+    pub fn thread_read_request_count(&self) -> usize {
+        self.state.lock().unwrap().thread_read_request_count
+    }
 }
 
 impl Default for FakeCodexAppServer {

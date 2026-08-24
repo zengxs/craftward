@@ -37,6 +37,7 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(bool startingThread READ startingThread NOTIFY startingThreadChanged)
     Q_PROPERTY(bool forkingThread READ forkingThread NOTIFY forkingThreadChanged)
     Q_PROPERTY(bool changingThreadLifecycle READ changingThreadLifecycle NOTIFY changingThreadLifecycleChanged)
+    Q_PROPERTY(bool pollingEnabled READ pollingEnabled WRITE setPollingEnabled NOTIFY pollingEnabledChanged)
 
   public:
     explicit CodexHistoryController(const WardRuntime* runtime,
@@ -52,6 +53,8 @@ class CodexHistoryController : public QObject
     [[nodiscard]] bool startingThread() const;
     [[nodiscard]] bool forkingThread() const;
     [[nodiscard]] bool changingThreadLifecycle() const;
+    [[nodiscard]] bool pollingEnabled() const;
+    void setPollingEnabled(bool enabled);
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE bool showArchivedThreads(bool archived);
@@ -70,6 +73,7 @@ class CodexHistoryController : public QObject
     void startingThreadChanged();
     void forkingThreadChanged();
     void changingThreadLifecycleChanged();
+    void pollingEnabledChanged();
 
   private:
     friend class CodexHistoryControllerTest;
@@ -111,4 +115,5 @@ class CodexHistoryController : public QObject
     QString pendingForkSourceThreadId_;
     bool changingThreadLifecycle_ = false;
     QString pendingLifecycleThreadId_;
+    bool pollingEnabled_ = true;
 };

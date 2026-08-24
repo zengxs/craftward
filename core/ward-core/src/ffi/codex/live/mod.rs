@@ -88,6 +88,15 @@ impl LiveThreadProjection {
         &self.forkable_turn_ids
     }
 
+    pub(crate) fn needs_persisted_reconciliation(&self) -> bool {
+        self.conversation
+            .as_ref()
+            .and_then(|thread| thread.turns.last())
+            .is_some_and(|turn| {
+                turn.status.is_terminal() && !self.forkable_turn_ids.contains(&turn.id)
+            })
+    }
+
     pub(crate) fn runtime(&self) -> LiveRuntimeState {
         self.runtime.clone().unwrap_or(LiveRuntimeState::Detached)
     }
@@ -365,7 +374,7 @@ fn terminal_turn_ids(thread: &Thread) -> Vec<String> {
     thread
         .turns
         .iter()
-        .filter(|turn| turn_status_is_terminal(&turn.status))
+        .filter(|turn| turn.status.is_terminal())
         .map(|turn| turn.id.clone())
         .collect()
 }
@@ -527,7 +536,7 @@ fn merge_retained_live_turn(mut snapshot: Thread, retained: &mut RetainedLiveTur
 }
 
 fn merge_snapshot_turn(mut snapshot: Turn, retained: &Turn) -> Turn {
-    let snapshot_is_terminal = turn_status_is_terminal(&snapshot.status);
+    let snapshot_is_terminal = snapshot.status.is_terminal();
     if !snapshot_is_terminal {
         snapshot.status = retained.status.clone();
     }
@@ -668,13 +677,6 @@ fn merge_snapshot_activity(
         }
     }
     snapshot
-}
-
-fn turn_status_is_terminal(status: &TurnStatus) -> bool {
-    matches!(
-        status,
-        TurnStatus::Completed | TurnStatus::Interrupted | TurnStatus::Failed
-    )
 }
 
 fn activity_status_is_terminal(status: &ActivityStatus) -> bool {

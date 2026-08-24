@@ -11,6 +11,7 @@ pub(super) struct FakeState {
     pub(super) next_fork_number: usize,
     pub(super) next_connection_id: u64,
     pub(super) thread_list_requests: Vec<FakeThreadListRequest>,
+    pub(super) thread_read_request_count: usize,
 }
 
 impl FakeState {
@@ -21,6 +22,7 @@ impl FakeState {
             next_fork_number: 1,
             next_connection_id: 1,
             thread_list_requests: vec![],
+            thread_read_request_count: 0,
         }
     }
 }

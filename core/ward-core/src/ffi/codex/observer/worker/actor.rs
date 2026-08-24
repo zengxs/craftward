@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc::Receiver;
+use tokio::sync::watch;
 use tokio::time::Instant as TokioInstant;
 use ward_codex::{CodexAppServerSource, CodexHistoryCancellation};
 
@@ -15,12 +16,21 @@ use super::super::commands::{
 };
 use super::super::events::HistoryEventSink;
 use super::operation::{OperationDrive, drive_operation};
+use super::polling::{ConversationPollOutcome, ThreadPagePollOutcome};
 use super::state::ObserverState;
-use super::writer::{LIVE_DELTA_EMIT_INTERVAL, ObserverWake, WriterStreamUpdate};
+use super::writer::{LIVE_DELTA_EMIT_INTERVAL, WriterStreamUpdate};
 
 const THREAD_PAGE_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const CONVERSATION_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const HISTORY_ERROR_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+
+enum ActorWake {
+    Cancelled,
+    Polling(Option<bool>),
+    Command(Option<ObserverCommand>),
+    Writer(Box<WriterStreamUpdate>),
+    Timer,
+}
 
 fn finish_exclusive_operation<T>(
     operation: OperationDrive<T>,
@@ -49,17 +59,37 @@ fn watch_created_thread(
     *live_emit_due = None;
 }
 
+fn apply_polling_state(
+    enabled: bool,
+    now: TokioInstant,
+    watched_thread: Option<&str>,
+    threads_due: &mut Option<TokioInstant>,
+    conversation_due: &mut Option<TokioInstant>,
+) {
+    if enabled {
+        *threads_due = Some(now);
+        if watched_thread.is_some() {
+            *conversation_due = Some(now);
+        }
+    } else {
+        *threads_due = None;
+        *conversation_due = None;
+    }
+}
+
 pub(in crate::ffi::codex::observer) async fn run_observer(
     source: CodexAppServerSource,
     mut receiver: Receiver<ObserverCommand>,
+    mut polling_enabled_updates: watch::Receiver<bool>,
     sink: HistoryEventSink,
     cancellation: CodexHistoryCancellation,
     active_operation: Arc<ObserverOperationGate>,
 ) {
     let mut state = ObserverState::new(source, cancellation.clone());
     let mut watched_thread: Option<String> = None;
+    let mut polling_enabled = *polling_enabled_updates.borrow_and_update();
     let mut model_catalog_due = Some(TokioInstant::now());
-    let mut threads_due = TokioInstant::now();
+    let mut threads_due = polling_enabled.then(TokioInstant::now);
     let mut conversation_due: Option<TokioInstant> = None;
     let mut live_emit_due: Option<TokioInstant> = None;
     let mut deferred_update = None;
@@ -67,26 +97,51 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
     'observer: loop {
         if deferred_update.is_none() {
             let now = TokioInstant::now();
+            if polling_enabled_updates.has_changed().unwrap_or(false) {
+                polling_enabled = *polling_enabled_updates.borrow_and_update();
+                apply_polling_state(
+                    polling_enabled,
+                    now,
+                    watched_thread.as_deref(),
+                    &mut threads_due,
+                    &mut conversation_due,
+                );
+            }
             if live_emit_due.is_some_and(|due| now >= due) {
                 if let Some(thread_id) = watched_thread.as_deref() {
                     state.flush_pending_live_conversation(thread_id, &sink);
                 }
                 live_emit_due = None;
             }
-            if now >= threads_due {
+            if threads_due.is_some_and(|due| now >= due) {
                 let OperationDrive::Completed {
-                    output: succeeded,
+                    output: outcome,
                     deferred,
-                } = drive_operation(state.poll_threads(&sink), &mut receiver, &cancellation).await
+                } = drive_operation(
+                    state.poll_threads(watched_thread.as_deref(), &sink),
+                    &mut receiver,
+                    &cancellation,
+                )
+                .await
                 else {
                     break;
                 };
-                threads_due = TokioInstant::now()
-                    + if succeeded {
-                        THREAD_PAGE_POLL_INTERVAL
-                    } else {
-                        HISTORY_ERROR_RETRY_INTERVAL
-                    };
+                threads_due = polling_enabled.then(|| {
+                    TokioInstant::now()
+                        + match outcome {
+                            ThreadPagePollOutcome::Failed => HISTORY_ERROR_RETRY_INTERVAL,
+                            ThreadPagePollOutcome::Stable
+                            | ThreadPagePollOutcome::Updated { .. } => THREAD_PAGE_POLL_INTERVAL,
+                        }
+                });
+                if matches!(
+                    outcome,
+                    ThreadPagePollOutcome::Updated {
+                        watched_thread_changed: true
+                    }
+                ) {
+                    conversation_due = Some(TokioInstant::now());
+                }
                 deferred_update = deferred;
             }
             if deferred_update.is_none() && model_catalog_due.is_some_and(|due| now >= due) {
@@ -113,7 +168,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
             {
                 let thread_id = thread_id.to_owned();
                 let OperationDrive::Completed {
-                    output: succeeded,
+                    output: outcome,
                     deferred,
                 } = drive_operation(
                     state.poll_conversation(&thread_id, &sink),
@@ -124,14 +179,19 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                 else {
                     break;
                 };
-                conversation_due = Some(
-                    TokioInstant::now()
-                        + if succeeded {
-                            CONVERSATION_POLL_INTERVAL
-                        } else {
-                            HISTORY_ERROR_RETRY_INTERVAL
-                        },
-                );
+                conversation_due = if !polling_enabled {
+                    None
+                } else {
+                    match outcome {
+                        ConversationPollOutcome::Failed => {
+                            Some(TokioInstant::now() + HISTORY_ERROR_RETRY_INTERVAL)
+                        }
+                        ConversationPollOutcome::FollowUp => {
+                            Some(TokioInstant::now() + CONVERSATION_POLL_INTERVAL)
+                        }
+                        ConversationPollOutcome::Settled => None,
+                    }
+                };
                 deferred_update = deferred;
             }
         }
@@ -141,29 +201,48 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
         } else {
             let next_due = [
                 model_catalog_due,
-                Some(threads_due),
+                threads_due,
                 conversation_due,
                 live_emit_due,
             ]
             .into_iter()
             .flatten()
-            .min()
-            .expect("the thread poll always has a deadline");
-            let sleep = tokio::time::sleep_until(next_due);
+            .min();
+            let sleep = async {
+                if let Some(due) = next_due {
+                    tokio::time::sleep_until(due).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
             tokio::pin!(sleep);
             let wake = tokio::select! {
                 biased;
-                _ = cancellation.cancelled() => ObserverWake::Cancelled,
-                command = receiver.recv() => ObserverWake::Command(command),
-                update = state.next_writer_update() => ObserverWake::Writer(Box::new(update)),
-                () = &mut sleep => ObserverWake::Timer,
+                _ = cancellation.cancelled() => ActorWake::Cancelled,
+                changed = polling_enabled_updates.changed() => {
+                    ActorWake::Polling(changed.ok().map(|()| {
+                        *polling_enabled_updates.borrow_and_update()
+                    }))
+                }
+                command = receiver.recv() => ActorWake::Command(command),
+                update = state.next_writer_update() => ActorWake::Writer(Box::new(update)),
+                () = &mut sleep => ActorWake::Timer,
             };
             match wake {
-                ObserverWake::Cancelled | ObserverWake::Command(None) => None,
-                ObserverWake::Command(Some(command)) => {
-                    Some(drain_commands(command, &mut receiver))
+                ActorWake::Cancelled | ActorWake::Polling(None) | ActorWake::Command(None) => None,
+                ActorWake::Polling(Some(enabled)) => {
+                    polling_enabled = enabled;
+                    apply_polling_state(
+                        enabled,
+                        TokioInstant::now(),
+                        watched_thread.as_deref(),
+                        &mut threads_due,
+                        &mut conversation_due,
+                    );
+                    continue;
                 }
-                ObserverWake::Writer(update) => {
+                ActorWake::Command(Some(command)) => Some(drain_commands(command, &mut receiver)),
+                ActorWake::Writer(update) => {
                     match *update {
                         WriterStreamUpdate::Event { thread_id, event } => {
                             if watched_thread.as_deref() == Some(thread_id.as_str()) {
@@ -187,7 +266,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                     }
                     continue;
                 }
-                ObserverWake::Timer => continue,
+                ActorWake::Timer => continue,
             }
         };
         match drained {
@@ -234,7 +313,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                             following.merge(deferred);
                         }
                         watched_thread = None;
-                        threads_due = now;
+                        threads_due = Some(now);
                         conversation_due = None;
                         live_emit_due = None;
                     }
@@ -259,7 +338,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                         state.refresh_model_catalog();
                         state.refresh();
                         model_catalog_due = Some(now);
-                        threads_due = now;
+                        threads_due = Some(now);
                         if watched_thread.is_some() {
                             conversation_due = Some(now);
                         }
@@ -282,7 +361,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                             following.merge(deferred);
                         }
                         if renamed {
-                            threads_due = now;
+                            threads_due = Some(now);
                             if watched_thread.as_deref() == Some(renamed_thread_id.as_str()) {
                                 conversation_due = Some(now);
                             }
@@ -301,7 +380,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                         ) else {
                             break 'observer;
                         };
-                        threads_due = now;
+                        threads_due = Some(now);
                         if let Some(thread_id) = forked_thread_id {
                             watch_created_thread(
                                 thread_id,
@@ -347,7 +426,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                                 conversation_due = None;
                                 live_emit_due = None;
                             }
-                            threads_due = now;
+                            threads_due = Some(now);
                         }
                     }
                     if let Some(request) = write_access {
@@ -401,7 +480,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                         };
                         if let Some(thread_id) = started_thread_id {
                             let now = TokioInstant::now();
-                            threads_due = now;
+                            threads_due = Some(now);
                             watch_created_thread(
                                 thread_id,
                                 now,
@@ -440,7 +519,7 @@ pub(in crate::ffi::codex::observer) async fn run_observer(
                         if let Some(update) = deferred {
                             following.merge(update);
                         }
-                        threads_due = TokioInstant::now();
+                        threads_due = Some(TokioInstant::now());
                         conversation_due = Some(
                             TokioInstant::now()
                                 + if succeeded {

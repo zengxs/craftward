@@ -3,6 +3,101 @@
 
 use super::*;
 
+struct ObserverHarness {
+    app_server: FakeCodexAppServer,
+    cancellation: CodexHistoryCancellation,
+    captured: Arc<Mutex<CapturedEvent>>,
+    commands: mpsc::Sender<ObserverCommand>,
+    polling_enabled: watch::Sender<bool>,
+    worker: tokio::task::JoinHandle<()>,
+    event_cursor: usize,
+}
+
+impl ObserverHarness {
+    fn start(app_server: FakeCodexAppServer, cancellation: CodexHistoryCancellation) -> Self {
+        let captured = Arc::new(Mutex::new(CapturedEvent::default()));
+        let sink = event_sink(&captured);
+        let (commands, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+        let (polling_enabled, polling_enabled_updates) = watch::channel(true);
+        let worker = tokio::spawn(run_observer(
+            app_server.source(),
+            receiver,
+            polling_enabled_updates,
+            sink,
+            cancellation.clone(),
+            Arc::new(ObserverOperationGate::new()),
+        ));
+        Self {
+            app_server,
+            cancellation,
+            captured,
+            commands,
+            polling_enabled,
+            worker,
+            event_cursor: 0,
+        }
+    }
+
+    fn empty(options: FakeCodexAppServerOptions) -> Self {
+        Self::start(
+            FakeCodexAppServer::new(options),
+            CodexHistoryCancellation::new(),
+        )
+    }
+
+    async fn with_idle_thread(options: FakeCodexAppServerOptions) -> (Self, String) {
+        let app_server = FakeCodexAppServer::new(options);
+        let cancellation = CodexHistoryCancellation::new();
+        let (writer, _) = CodexThreadWriter::start_on(
+            &app_server.source(),
+            cancellation.clone(),
+            PathBuf::from("/workspace").as_path(),
+            ThreadStartOptions::default(),
+        )
+        .await
+        .expect("the fake app-server should seed persisted history");
+        let thread_id = writer.thread_id().to_owned();
+        writer.shutdown().await;
+        (Self::start(app_server, cancellation), thread_id)
+    }
+
+    fn source(&self) -> ward_codex::CodexAppServerSource {
+        self.app_server.source()
+    }
+
+    fn cancellation(&self) -> CodexHistoryCancellation {
+        self.cancellation.clone()
+    }
+
+    fn app_server(&self) -> &FakeCodexAppServer {
+        &self.app_server
+    }
+
+    async fn send(&self, command: ObserverCommand) {
+        self.commands.send(command).await.unwrap();
+    }
+
+    fn set_polling_enabled(&self, enabled: bool) {
+        self.polling_enabled.send(enabled).unwrap();
+    }
+
+    async fn wait_for_thread_page(&mut self, archived: bool, thread_ids: &[&str]) {
+        wait_for_thread_page(&self.captured, &mut self.event_cursor, archived, thread_ids).await;
+    }
+
+    async fn wait_for_event(&mut self, kind: wire::HistoryEventKind) -> wire::HistoryEvent {
+        wait_for_event_kind(&self.captured, &mut self.event_cursor, kind).await
+    }
+
+    async fn stop(self) {
+        self.commands.send(ObserverCommand::Stop).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), self.worker)
+            .await
+            .expect("the observer should stop after its stop command")
+            .expect("the observer task should not panic");
+    }
+}
+
 #[tokio::test]
 async fn applies_history_scope_and_lifecycle_commands_through_the_observer_actor() {
     let fake_app_server = FakeCodexAppServer::default();
@@ -23,9 +118,11 @@ async fn applies_history_scope_and_lifecycle_commands_through_the_observer_actor
     let captured = Arc::new(Mutex::new(CapturedEvent::default()));
     let sink = event_sink(&captured);
     let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (_polling_enabled, polling_enabled_updates) = watch::channel(true);
     let worker = tokio::spawn(run_observer(
         source,
         receiver,
+        polling_enabled_updates,
         sink,
         cancellation.clone(),
         Arc::new(ObserverOperationGate::new()),
@@ -109,9 +206,11 @@ async fn publishes_all_paginated_threads_for_active_and_archived_scopes() {
     let captured = Arc::new(Mutex::new(CapturedEvent::default()));
     let sink = event_sink(&captured);
     let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (_polling_enabled, polling_enabled_updates) = watch::channel(true);
     let worker = tokio::spawn(run_observer(
         source,
         receiver,
+        polling_enabled_updates,
         sink,
         cancellation,
         Arc::new(ObserverOperationGate::new()),
@@ -147,15 +246,235 @@ async fn publishes_all_paginated_threads_for_active_and_archived_scopes() {
 }
 
 #[tokio::test]
+async fn pauses_periodic_history_polling_until_it_is_enabled_again() {
+    let mut observer = ObserverHarness::empty(FakeCodexAppServerOptions::default());
+
+    observer.wait_for_thread_page(false, &[]).await;
+    observer.set_polling_enabled(false);
+    observer
+        .send(ObserverCommand::SetThreadListScope(
+            ThreadListScope::Archived,
+        ))
+        .await;
+    observer.wait_for_thread_page(true, &[]).await;
+
+    let requests_while_hidden = observer.app_server().thread_list_requests().len();
+    tokio::time::sleep(Duration::from_millis(2_100)).await;
+    assert_eq!(
+        observer.app_server().thread_list_requests().len(),
+        requests_while_hidden,
+        "a hidden history page should not run the periodic thread-list poll"
+    );
+
+    observer.set_polling_enabled(true);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if observer.app_server().thread_list_requests().len() > requests_while_hidden {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("showing the history page should refresh its thread list immediately");
+
+    observer.stop().await;
+}
+
+#[tokio::test]
+async fn does_not_reread_an_idle_watched_conversation() {
+    let (mut observer, thread_id) =
+        ObserverHarness::with_idle_thread(FakeCodexAppServerOptions::default()).await;
+
+    observer.wait_for_thread_page(false, &[&thread_id]).await;
+    observer.send(ObserverCommand::Watch(thread_id)).await;
+    observer
+        .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
+        .await;
+    let reads_after_load = observer.app_server().thread_read_request_count();
+
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    let reads_after_idle = observer.app_server().thread_read_request_count();
+
+    observer.stop().await;
+    assert_eq!(
+        reads_after_idle, reads_after_load,
+        "an idle observer should not repeatedly fetch the complete conversation"
+    );
+}
+
+#[tokio::test]
+async fn does_not_reread_the_watched_conversation_when_another_thread_changes() {
+    let (mut observer, thread_id) =
+        ObserverHarness::with_idle_thread(FakeCodexAppServerOptions::default()).await;
+
+    observer.wait_for_thread_page(false, &[&thread_id]).await;
+    observer
+        .send(ObserverCommand::Watch(thread_id.clone()))
+        .await;
+    observer
+        .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
+        .await;
+    let reads_before_unrelated_change = observer.app_server().thread_read_request_count();
+
+    let (fork_writer, fork_subscription) = CodexThreadWriter::fork_on(
+        &observer.source(),
+        observer.cancellation(),
+        &thread_id,
+        None,
+    )
+    .await
+    .expect("another client should create an unrelated thread");
+    let fork_id = fork_subscription.thread.summary.id;
+    fork_writer.shutdown().await;
+
+    observer
+        .wait_for_thread_page(false, &[&thread_id, &fork_id])
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        observer.app_server().thread_read_request_count(),
+        reads_before_unrelated_change,
+        "an unrelated thread-list change should not reread the selected conversation"
+    );
+
+    observer.stop().await;
+}
+
+#[tokio::test]
+async fn reloads_a_watched_conversation_after_an_external_turn() {
+    let (mut observer, thread_id) =
+        ObserverHarness::with_idle_thread(FakeCodexAppServerOptions::default()).await;
+
+    observer.wait_for_thread_page(false, &[&thread_id]).await;
+    observer
+        .send(ObserverCommand::Watch(thread_id.clone()))
+        .await;
+    observer
+        .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
+        .await;
+
+    let (mut external_writer, _) =
+        CodexThreadWriter::acquire_on(&observer.source(), observer.cancellation(), &thread_id)
+            .await
+            .expect("another client should acquire the idle thread");
+    external_writer
+        .begin_text_turn("External update", TurnOptions::default())
+        .await
+        .expect("the external turn should start");
+    loop {
+        if matches!(
+            external_writer
+                .next_subscription_event()
+                .await
+                .expect("the external turn should stream to completion"),
+            ThreadStreamEvent::TurnCompleted { .. }
+        ) {
+            break;
+        }
+    }
+    external_writer.shutdown().await;
+
+    let updated = observer
+        .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
+        .await;
+    let Some(wire::history_event::Body::Conversation(conversation)) = updated.body else {
+        panic!("the external update should carry the reloaded conversation");
+    };
+    assert_eq!(conversation.timeline.len(), 2);
+    let reads_after_update = observer.app_server().thread_read_request_count();
+
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    let reads_after_idle = observer.app_server().thread_read_request_count();
+
+    observer.stop().await;
+    assert_eq!(
+        reads_after_idle, reads_after_update,
+        "the observer should return to idle after loading the external turn"
+    );
+}
+
+#[tokio::test]
+async fn polls_an_external_active_turn_until_it_becomes_idle() {
+    let (mut observer, thread_id) = ObserverHarness::with_idle_thread(FakeCodexAppServerOptions {
+        turn_scenario: FakeTurnScenario::WaitForGuidance,
+        ..FakeCodexAppServerOptions::default()
+    })
+    .await;
+
+    observer.wait_for_thread_page(false, &[&thread_id]).await;
+    observer
+        .send(ObserverCommand::Watch(thread_id.clone()))
+        .await;
+    observer
+        .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
+        .await;
+
+    let (mut external_writer, _) =
+        CodexThreadWriter::acquire_on(&observer.source(), observer.cancellation(), &thread_id)
+            .await
+            .expect("another client should acquire the idle thread");
+    let started = external_writer
+        .begin_text_turn("External active turn", TurnOptions::default())
+        .await
+        .expect("the external turn should start");
+    let ThreadStreamEvent::TurnStarted { turn, .. } = started else {
+        panic!("the external writer should receive the started turn");
+    };
+
+    observer
+        .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
+        .await;
+    let reads_after_active_load = observer.app_server().thread_read_request_count();
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    assert!(
+        observer.app_server().thread_read_request_count() >= reads_after_active_load + 2,
+        "the observer should keep polling while another client owns an active turn"
+    );
+
+    external_writer
+        .steer_text_turn(&turn.id, "Finish now")
+        .await
+        .expect("guidance should complete the external turn");
+    loop {
+        if matches!(
+            external_writer
+                .next_subscription_event()
+                .await
+                .expect("the external turn should stream to completion"),
+            ThreadStreamEvent::TurnCompleted { .. }
+        ) {
+            break;
+        }
+    }
+    external_writer.shutdown().await;
+    observer
+        .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
+        .await;
+    let reads_after_completion = observer.app_server().thread_read_request_count();
+
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    let reads_after_idle = observer.app_server().thread_read_request_count();
+
+    observer.stop().await;
+    assert_eq!(
+        reads_after_idle, reads_after_completion,
+        "the observer should stop full reads after the external turn completes"
+    );
+}
+
+#[tokio::test]
 async fn publishes_the_complete_model_catalog_when_the_observer_starts() {
     let fake_app_server = FakeCodexAppServer::default();
     let cancellation = CodexHistoryCancellation::new();
     let captured = Arc::new(Mutex::new(CapturedEvent::default()));
     let sink = event_sink(&captured);
     let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (_polling_enabled, polling_enabled_updates) = watch::channel(true);
     let worker = tokio::spawn(run_observer(
         fake_app_server.source(),
         receiver,
+        polling_enabled_updates,
         sink,
         cancellation,
         Arc::new(ObserverOperationGate::new()),
@@ -199,9 +518,11 @@ async fn reports_and_recovers_from_a_model_catalog_error_without_blocking_histor
     let captured = Arc::new(Mutex::new(CapturedEvent::default()));
     let sink = event_sink(&captured);
     let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (_polling_enabled, polling_enabled_updates) = watch::channel(true);
     let worker = tokio::spawn(run_observer(
         fake_app_server.source(),
         receiver,
+        polling_enabled_updates,
         sink,
         cancellation,
         Arc::new(ObserverOperationGate::new()),
@@ -273,9 +594,11 @@ async fn forks_and_selects_a_thread_through_the_observer_actor() {
     let captured = Arc::new(Mutex::new(CapturedEvent::default()));
     let sink = event_sink(&captured);
     let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (_polling_enabled, polling_enabled_updates) = watch::channel(true);
     let worker = tokio::spawn(run_observer(
         source,
         receiver,
+        polling_enabled_updates,
         sink,
         cancellation.clone(),
         Arc::new(ObserverOperationGate::new()),

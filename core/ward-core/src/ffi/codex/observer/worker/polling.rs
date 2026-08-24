@@ -5,6 +5,20 @@ use std::collections::HashSet;
 
 use ward_codex::{CodexError, Thread, ThreadPoll};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ThreadPagePollOutcome {
+    Failed,
+    Stable,
+    Updated { watched_thread_changed: bool },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ConversationPollOutcome {
+    Failed,
+    Settled,
+    FollowUp,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum PollSample<T> {
     Updated(T),
@@ -43,6 +57,10 @@ impl InitialConversationReads {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub(super) fn is_pending(&self, thread_id: &str) -> bool {
+        self.pending.contains(thread_id)
     }
 }
 

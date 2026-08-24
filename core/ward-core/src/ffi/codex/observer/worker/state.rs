@@ -1,11 +1,13 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::collections::HashMap;
+
 use tokio::sync::mpsc::Receiver;
 use ward_codex::{
     CodexAppServerSource, CodexError, CodexHistoryCancellation, CodexHistorySession,
-    CodexThreadWriter, Thread, ThreadListOptions, ThreadPagePoll, ThreadPoll, ThreadStartOptions,
-    ThreadStreamEvent, ThreadSubscription,
+    CodexThreadWriter, Thread, ThreadListOptions, ThreadPage, ThreadPagePoll, ThreadPoll,
+    ThreadStartOptions, ThreadStreamEvent, ThreadSubscription, ThreadSummary,
 };
 
 use super::super::super::live::LiveRuntimeState;
@@ -16,7 +18,10 @@ use super::super::commands::{
 };
 use super::super::events::HistoryEventSink;
 use super::operation::OperationDrive;
-use super::polling::{InitialConversationReads, PollEffect, PollHealth, PollSample};
+use super::polling::{
+    ConversationPollOutcome, InitialConversationReads, PollEffect, PollHealth, PollSample,
+    ThreadPagePollOutcome,
+};
 use super::writer::{WriterRuntime, WriterStreamUpdate};
 
 const THREAD_LIST_PAGE_LIMIT: u32 = 100;
@@ -30,6 +35,8 @@ pub(super) struct ObserverState {
     thread_page_health: PollHealth,
     conversation_health: PollHealth,
     initial_conversation_reads: InitialConversationReads,
+    polled_conversation_is_active: bool,
+    thread_summaries: HashMap<String, ThreadSummary>,
     writer: WriterRuntime,
 }
 
@@ -57,6 +64,8 @@ impl ObserverState {
             thread_page_health: PollHealth::default(),
             conversation_health: PollHealth::default(),
             initial_conversation_reads: InitialConversationReads::default(),
+            polled_conversation_is_active: false,
+            thread_summaries: HashMap::new(),
         }
     }
 
@@ -86,6 +95,7 @@ impl ObserverState {
     pub(super) async fn select_thread(&mut self) {
         self.writer.reset().await;
         self.conversation_health.reset();
+        self.polled_conversation_is_active = false;
         if let Some(session) = self.session.as_mut() {
             session.reset_thread_baseline();
         }
@@ -101,6 +111,7 @@ impl ObserverState {
         }
         self.thread_list_scope = scope;
         self.thread_page_health.reset();
+        self.thread_summaries.clear();
         if let Some(session) = self.session.as_mut() {
             session.reset_thread_page_baseline();
         }
@@ -463,7 +474,11 @@ impl ObserverState {
         }
     }
 
-    pub(super) async fn poll_threads(&mut self, sink: &HistoryEventSink) -> bool {
+    pub(super) async fn poll_threads(
+        &mut self,
+        watched_thread: Option<&str>,
+        sink: &HistoryEventSink,
+    ) -> ThreadPagePollOutcome {
         let result = self.poll_all_threads().await.map(|poll| match poll {
             ThreadPagePoll::Baseline(page) | ThreadPagePoll::Changed(page) => {
                 PollSample::Updated(page)
@@ -473,27 +488,32 @@ impl ObserverState {
         let effect = self
             .thread_page_health
             .observe(result, self.cancellation.is_cancelled());
-        let succeeded = effect.is_successful();
         match effect {
             PollEffect::Updated(page) => {
+                let watched_thread_changed = self.update_thread_summaries(&page, watched_thread);
                 sink.emit_threads_updated(page, self.thread_list_scope.is_archived());
+                ThreadPagePollOutcome::Updated {
+                    watched_thread_changed,
+                }
             }
             PollEffect::Recovered => {
                 sink.emit_threads_recovered(self.thread_list_scope.is_archived());
+                ThreadPagePollOutcome::Stable
             }
             PollEffect::Error(message) => {
                 sink.emit_threads_error(&message, self.thread_list_scope.is_archived());
+                ThreadPagePollOutcome::Failed
             }
-            PollEffect::Unchanged | PollEffect::RepeatedError | PollEffect::Cancelled => {}
+            PollEffect::Unchanged => ThreadPagePollOutcome::Stable,
+            PollEffect::RepeatedError | PollEffect::Cancelled => ThreadPagePollOutcome::Failed,
         }
-        succeeded
     }
 
     pub(super) async fn poll_conversation(
         &mut self,
         thread_id: &str,
         sink: &HistoryEventSink,
-    ) -> bool {
+    ) -> ConversationPollOutcome {
         let result = self.poll_thread(thread_id).await;
         let result = self.initial_conversation_reads.classify(thread_id, result);
         let effect = self
@@ -501,12 +521,41 @@ impl ObserverState {
             .observe(result, self.cancellation.is_cancelled());
         let succeeded = effect.is_successful();
         match effect {
-            PollEffect::Updated(thread) => self.accept_polled_conversation(thread_id, thread, sink),
+            PollEffect::Updated(thread) => {
+                self.polled_conversation_is_active = thread
+                    .turns
+                    .last()
+                    .is_some_and(|turn| turn.status.is_in_progress());
+                self.accept_polled_conversation(thread_id, thread, sink);
+            }
             PollEffect::Recovered => sink.emit_conversation_recovered(thread_id),
             PollEffect::Error(message) => sink.emit_conversation_error(thread_id, &message),
             PollEffect::Unchanged | PollEffect::RepeatedError | PollEffect::Cancelled => {}
         }
-        succeeded
+        if !succeeded {
+            ConversationPollOutcome::Failed
+        } else if self.initial_conversation_reads.is_pending(thread_id)
+            || self.polled_conversation_is_active
+            || self.writer.needs_persisted_reconciliation()
+        {
+            ConversationPollOutcome::FollowUp
+        } else {
+            ConversationPollOutcome::Settled
+        }
+    }
+
+    fn update_thread_summaries(&mut self, page: &ThreadPage, watched_thread: Option<&str>) -> bool {
+        let watched_thread_changed = watched_thread.is_some_and(|thread_id| {
+            self.thread_summaries.get(thread_id)
+                != page.threads.iter().find(|thread| thread.id == thread_id)
+        });
+        self.thread_summaries = page
+            .threads
+            .iter()
+            .cloned()
+            .map(|thread| (thread.id.clone(), thread))
+            .collect();
+        watched_thread_changed
     }
 
     pub(super) fn accept_polled_conversation(

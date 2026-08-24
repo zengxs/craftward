@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use ward_codex::{
     Activity, ActivityKind, ActivityStatus, CodexError, CodexHistoryCancellation,
     CodexHistorySession, CodexThreadWriter, InferenceOverride, InteractionDecision, InteractionId,
@@ -18,7 +18,10 @@ use ward_codex_test_support::{FakeCodexAppServer, FakeCodexAppServerOptions, Fak
 use super::super::test_support::{CapturedEvent, event_sink, thread};
 use super::actor::run_observer;
 use super::operation::{OperationDrive, drive_operation};
-use super::polling::{InitialConversationReads, PollEffect, PollHealth, PollSample};
+use super::polling::{
+    ConversationPollOutcome, InitialConversationReads, PollEffect, PollHealth, PollSample,
+    ThreadPagePollOutcome,
+};
 use super::state::{
     ObserverState, ThreadStartEffect, WriteAccessEffect, classify_thread_start_result,
     classify_write_access_result,

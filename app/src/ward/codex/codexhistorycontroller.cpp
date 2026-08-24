@@ -130,6 +130,34 @@ CodexHistoryController::changingThreadLifecycle() const
 }
 
 bool
+CodexHistoryController::pollingEnabled() const
+{
+    return pollingEnabled_;
+}
+
+void
+CodexHistoryController::setPollingEnabled(bool enabled)
+{
+    if (pollingEnabled_ == enabled)
+        return;
+
+    if (historyObserver_ != nullptr) {
+        WardError* rawError = nullptr;
+        if (!ward_core_codex_history_observer_set_polling_enabled_async(historyObserver_, enabled, &rawError)) {
+            QString message = ward::coreffi::takeErrorMessage(rawError);
+            if (message.isEmpty())
+                message = /*% "The Codex history observer is unavailable." */ qtTrId(
+                  "craftward.codex.error.history_observer_unavailable");
+            setThreadErrorMessage(message);
+            return;
+        }
+    }
+
+    pollingEnabled_ = enabled;
+    emit pollingEnabledChanged();
+}
+
+bool
 CodexHistoryController::threadCreationInFlight() const
 {
     return startingThread_ || forkingThread_;

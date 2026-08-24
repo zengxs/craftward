@@ -17,6 +17,7 @@ Page {
     required property CodexHistoryController controller
     readonly property CodexConversationController conversation: root.controller.conversation
     property alias sidebarExpanded: layoutState.sidebarExpanded
+    readonly property bool historyPollingEnabled: root.visible && root.ApplicationWindow.window !== null && root.ApplicationWindow.window.visible && root.ApplicationWindow.window.visibility !== Window.Minimized
     readonly property bool fullScreen: root.ApplicationWindow.window !== null && root.ApplicationWindow.window.visibility === Window.FullScreen
     readonly property bool trafficLightsVisible: Qt.platform.os === "osx" && !root.fullScreen
     readonly property int titleBarMotionDuration: 160
@@ -57,6 +58,12 @@ Page {
             duration: root.titleBarMotionDuration
             easing.type: Easing.OutCubic
         }
+    }
+
+    Binding {
+        target: root.controller
+        property: "pollingEnabled"
+        value: root.historyPollingEnabled
     }
 
     CodexHistoryLayoutState {

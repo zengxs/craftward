@@ -69,8 +69,10 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
         );
     }
 
-    assert!(state.poll_conversation(&started_thread_id, &sink).await);
-    assert!(state.poll_conversation(&started_thread_id, &sink).await);
+    let pending = state.poll_conversation(&started_thread_id, &sink).await;
+    assert_eq!(pending, ConversationPollOutcome::FollowUp);
+    let reconciled = state.poll_conversation(&started_thread_id, &sink).await;
+    assert_eq!(reconciled, ConversationPollOutcome::Settled);
 
     {
         let captured = captured.lock().unwrap();
@@ -154,7 +156,10 @@ async fn steers_an_active_turn_and_reports_the_outcome() {
             deferred: None,
         }
     ));
-    assert!(state.poll_conversation(&thread_id, &sink).await);
+    assert_ne!(
+        state.poll_conversation(&thread_id, &sink).await,
+        ConversationPollOutcome::Failed
+    );
     {
         let captured = captured.lock().unwrap();
         let steered_index = captured

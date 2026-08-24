@@ -180,8 +180,14 @@ async fn renames_a_persisted_thread_and_refreshes_its_public_snapshots() {
             )
             .await
     );
-    assert!(state.poll_threads(&sink).await);
-    assert!(state.poll_conversation(&thread_id, &sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
+    assert_ne!(
+        state.poll_conversation(&thread_id, &sink).await,
+        ConversationPollOutcome::Failed
+    );
 
     {
         let captured = captured.lock().unwrap();
@@ -241,7 +247,10 @@ async fn forks_the_loaded_idle_thread_through_the_selected_turn() {
         snapshot.conversation_thread_id.as_deref(),
         Some("thread-fork-1")
     );
-    assert!(state.poll_threads(&sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
 
     {
         let captured = captured.lock().unwrap();
@@ -333,7 +342,10 @@ async fn preserves_the_source_writer_when_a_fork_response_is_lost() {
     let snapshot = state.test_snapshot();
     assert_eq!(snapshot.writer_thread_id.as_deref(), Some("thread-new"));
     assert_eq!(snapshot.runtime, LiveRuntimeState::Idle);
-    assert!(state.poll_threads(&sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
 
     {
         let captured = captured.lock().unwrap();
@@ -387,8 +399,14 @@ async fn refreshes_the_thread_page_after_a_fork_writer_conflict() {
     let captured = Mutex::new(CapturedEvent::default());
     let sink = event_sink(&captured);
     let mut state = ObserverState::new(source, cancellation);
-    assert!(state.poll_threads(&sink).await);
-    assert!(state.poll_conversation("thread-new", &sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
+    assert_ne!(
+        state.poll_conversation("thread-new", &sink).await,
+        ConversationPollOutcome::Failed
+    );
     captured.lock().unwrap().events.clear();
 
     assert_eq!(
@@ -403,7 +421,10 @@ async fn refreshes_the_thread_page_after_a_fork_writer_conflict() {
             .await,
         None
     );
-    assert!(state.poll_threads(&sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
 
     {
         let captured = captured.lock().unwrap();
@@ -540,7 +561,10 @@ async fn archives_and_restores_a_thread_with_scope_tagged_authoritative_snapshot
         .expect("the fake app-server should start a thread");
     captured.lock().unwrap().events.clear();
 
-    assert!(state.poll_threads(&sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
     assert_thread_page(&captured, false, &[thread_id.as_str()]);
 
     assert!(
@@ -554,11 +578,17 @@ async fn archives_and_restores_a_thread_with_scope_tagged_authoritative_snapshot
             )
             .await
     );
-    assert!(state.poll_threads(&sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
     assert_thread_page(&captured, false, &[]);
 
     state.set_thread_list_scope(ThreadListScope::Archived);
-    assert!(state.poll_threads(&sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
     assert_thread_page(&captured, true, &[thread_id.as_str()]);
 
     assert!(
@@ -572,11 +602,17 @@ async fn archives_and_restores_a_thread_with_scope_tagged_authoritative_snapshot
             )
             .await
     );
-    assert!(state.poll_threads(&sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
     assert_thread_page(&captured, true, &[]);
 
     state.set_thread_list_scope(ThreadListScope::Active);
-    assert!(state.poll_threads(&sink).await);
+    assert_ne!(
+        state.poll_threads(None, &sink).await,
+        ThreadPagePollOutcome::Failed
+    );
     assert_thread_page(&captured, false, &[thread_id.as_str()]);
 
     captured.lock().unwrap().events.clear();

@@ -33,7 +33,6 @@ pub(super) enum WriterStreamUpdate {
 }
 
 pub(super) enum ObserverWake {
-    Cancelled,
     Command(Option<ObserverCommand>),
     Writer(Box<WriterStreamUpdate>),
     Timer,
@@ -87,6 +86,10 @@ impl WriterRuntime {
 
     pub(super) fn forkable_turn_ids(&self) -> &[String] {
         self.live.forkable_turn_ids()
+    }
+
+    pub(super) fn needs_persisted_reconciliation(&self) -> bool {
+        self.live.needs_persisted_reconciliation()
     }
 
     pub(super) fn attach(&mut self, writer: CodexThreadWriter, subscription: ThreadSubscription) {
@@ -467,7 +470,6 @@ impl WriterRuntime {
                 _ = emit_interval.tick() => ObserverWake::Timer,
             };
             match wake {
-                ObserverWake::Cancelled => return OperationDrive::Stop,
                 ObserverWake::Command(None) => return OperationDrive::Stop,
                 ObserverWake::Command(Some(command)) => match drain_commands(command, receiver) {
                     DrainedCommands::Stop => return OperationDrive::Stop,

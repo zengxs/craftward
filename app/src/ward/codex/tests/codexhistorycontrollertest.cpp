@@ -184,6 +184,7 @@ class CodexHistoryControllerTest : public QObject
   private slots:
     void initTestCase();
     void cleanupTestCase();
+    void updatesPollingVisibilityState();
     void retranslatesTimelinePresentationWhenRequested();
     void adaptsMessageFormatsAndPreservesMarkupModelsAcrossStreamingUpdates();
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
@@ -223,6 +224,25 @@ void
 CodexHistoryControllerTest::cleanupTestCase()
 {
     QVERIFY(QCoreApplication::removeTranslator(&englishTranslator_));
+}
+
+void
+CodexHistoryControllerTest::updatesPollingVisibilityState()
+{
+    CodexHistoryController controller(nullptr, nullptr);
+    QSignalSpy changedSpy(&controller, &CodexHistoryController::pollingEnabledChanged);
+
+    QVERIFY(controller.pollingEnabled());
+    controller.setPollingEnabled(false);
+    QVERIFY(!controller.pollingEnabled());
+    QCOMPARE(changedSpy.count(), 1);
+
+    controller.setPollingEnabled(false);
+    QCOMPARE(changedSpy.count(), 1);
+
+    controller.setPollingEnabled(true);
+    QVERIFY(controller.pollingEnabled());
+    QCOMPARE(changedSpy.count(), 2);
 }
 
 void

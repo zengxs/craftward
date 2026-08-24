@@ -14,6 +14,8 @@ static_assert(std::is_same_v<decltype(&ward_core_codex_history_observer_open),
                                                            WardCodexHistoryEventCallback,
                                                            void*,
                                                            WardError**)>);
+static_assert(std::is_same_v<decltype(&ward_core_codex_history_observer_set_polling_enabled_async),
+                             bool (*)(WardCodexHistoryObserver*, bool, WardError**)>);
 static_assert(std::is_same_v<WardRealmEventCallback, void (*)(void*, const WardRealmEvent*)>);
 static_assert(std::is_same_v<decltype(&ward_core_realm_start_async), bool (*)(WardRealm*, WardError**)>);
 static_assert(

@@ -5,7 +5,7 @@ use std::ffi::CString;
 use std::sync::Arc;
 
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use ward_codex::{
     CodexHistoryCancellation, InferenceOverride, ReasoningEffort, TurnInput, TurnMode, TurnOptions,
     TurnPermissionPreset,
@@ -22,20 +22,55 @@ use super::{
     ward_core_codex_history_observer_fork_thread_async,
     ward_core_codex_history_observer_rename_thread_async,
     ward_core_codex_history_observer_restore_thread_async,
+    ward_core_codex_history_observer_set_polling_enabled_async,
     ward_core_codex_history_observer_show_archived_async,
     ward_core_codex_history_observer_start_turn_async,
 };
 
+fn test_observer(
+    commands: mpsc::Sender<ObserverCommand>,
+) -> (WardCodexHistoryObserver, watch::Receiver<bool>) {
+    let (polling_enabled, polling_enabled_updates) = watch::channel(true);
+    (
+        WardCodexHistoryObserver {
+            commands,
+            polling_enabled,
+            cancellation: CodexHistoryCancellation::new(),
+            active_operation: Arc::new(ObserverOperationGate::new()),
+            runtime: Handle::current(),
+            worker: None,
+        },
+        polling_enabled_updates,
+    )
+}
+
+#[tokio::test]
+async fn publishes_polling_visibility_independently_of_the_command_queue() {
+    let (commands, _receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    for _ in 0..COMMAND_QUEUE_CAPACITY {
+        commands.try_send(ObserverCommand::Refresh).unwrap();
+    }
+    let (observer, mut polling_enabled_updates) = test_observer(commands);
+    let mut error = std::ptr::null_mut();
+
+    // SAFETY: The observer remains live for the duration of the private C
+    // interface call, and the error output pointer is writable.
+    assert!(unsafe {
+        ward_core_codex_history_observer_set_polling_enabled_async(
+            std::ptr::from_ref(&observer).cast_mut(),
+            false,
+            &mut error,
+        )
+    });
+    assert!(error.is_null());
+    polling_enabled_updates.changed().await.unwrap();
+    assert!(!*polling_enabled_updates.borrow_and_update());
+}
+
 #[tokio::test]
 async fn queues_a_thread_fork_through_the_private_c_interface() {
     let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
-    let observer = WardCodexHistoryObserver {
-        commands,
-        cancellation: CodexHistoryCancellation::new(),
-        active_operation: Arc::new(ObserverOperationGate::new()),
-        runtime: Handle::current(),
-        worker: None,
-    };
+    let (observer, _polling_enabled_updates) = test_observer(commands);
     let thread_id = CString::new("thread-1").expect("the thread ID is valid");
     let last_turn_id = CString::new("turn-2").expect("the turn ID is valid");
     let mut error = std::ptr::null_mut();
@@ -63,13 +98,7 @@ async fn queues_a_thread_fork_through_the_private_c_interface() {
 #[tokio::test]
 async fn queues_conversation_inference_overrides_through_the_private_c_interface() {
     let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
-    let observer = WardCodexHistoryObserver {
-        commands,
-        cancellation: CodexHistoryCancellation::new(),
-        active_operation: Arc::new(ObserverOperationGate::new()),
-        runtime: Handle::current(),
-        worker: None,
-    };
+    let (observer, _polling_enabled_updates) = test_observer(commands);
     let thread_id = CString::new("thread-1").expect("the thread ID is valid");
     let prompt = CString::new("Continue").expect("the prompt is valid");
     let model = CString::new("gpt-fast").expect("the model is valid");
@@ -110,13 +139,7 @@ async fn queues_conversation_inference_overrides_through_the_private_c_interface
 #[tokio::test]
 async fn queues_typed_attachments_through_the_private_c_interface() {
     let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
-    let observer = WardCodexHistoryObserver {
-        commands,
-        cancellation: CodexHistoryCancellation::new(),
-        active_operation: Arc::new(ObserverOperationGate::new()),
-        runtime: Handle::current(),
-        worker: None,
-    };
+    let (observer, _polling_enabled_updates) = test_observer(commands);
     let thread_id = CString::new("thread-1").expect("the thread ID is valid");
     let prompt = CString::new("").expect("the empty prompt is valid");
     let image_name = CString::new("first.png").expect("the image name is valid");
@@ -231,13 +254,7 @@ fn decodes_the_private_turn_control_values() {
 #[tokio::test]
 async fn queues_a_thread_rename_through_the_private_c_interface() {
     let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
-    let observer = WardCodexHistoryObserver {
-        commands,
-        cancellation: CodexHistoryCancellation::new(),
-        active_operation: Arc::new(ObserverOperationGate::new()),
-        runtime: Handle::current(),
-        worker: None,
-    };
+    let (observer, _polling_enabled_updates) = test_observer(commands);
     let thread_id = CString::new("thread-1").expect("the thread ID is valid");
     let name = CString::new("Focused work").expect("the thread name is valid");
     let mut error = std::ptr::null_mut();
@@ -269,13 +286,7 @@ async fn queues_a_thread_rename_through_the_private_c_interface() {
 #[tokio::test]
 async fn queues_history_scope_and_lifecycle_changes_through_the_private_c_interface() {
     let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
-    let observer = WardCodexHistoryObserver {
-        commands,
-        cancellation: CodexHistoryCancellation::new(),
-        active_operation: Arc::new(ObserverOperationGate::new()),
-        runtime: Handle::current(),
-        worker: None,
-    };
+    let (observer, _polling_enabled_updates) = test_observer(commands);
     let thread_id = CString::new("thread-1").expect("the thread ID is valid");
     let mut error = std::ptr::null_mut();
 
