@@ -1,14 +1,16 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::Path;
 
 use tokio_util::sync::CancellationToken;
 
+use crate::protocol::THREAD_TURNS_LIST_METHOD;
 use crate::{
     CodexAppServerSource, CodexClient, CodexError, InteractionResponse, ModelCatalog, Thread,
-    ThreadListOptions, ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription,
+    ThreadListOptions, ThreadPage, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription, Turn,
     TurnInput,
 };
 
@@ -82,6 +84,7 @@ pub struct CodexHistorySession {
     client: CodexClient,
     thread_tracker: ThreadTracker,
     page_tracker: ThreadPageTracker,
+    thread_turns_list_unsupported: bool,
 }
 
 /// An exclusive writer lease for one started or resumed Codex thread.
@@ -109,6 +112,7 @@ enum ThreadWriterCreation<'a> {
 #[derive(Default)]
 struct ThreadTracker {
     previous: Option<Thread>,
+    active_turn_cursor: Option<String>,
 }
 
 #[derive(Default)]
@@ -118,6 +122,11 @@ struct ThreadPageTracker {
 
 impl ThreadTracker {
     fn record(&mut self, thread: Thread) -> ThreadPoll {
+        self.active_turn_cursor = None;
+        self.record_snapshot(thread)
+    }
+
+    fn record_snapshot(&mut self, thread: Thread) -> ThreadPoll {
         let poll = match self.previous.as_ref() {
             Some(previous) if previous == &thread => ThreadPoll::Unchanged,
             Some(previous) if previous.summary.id == thread.summary.id => {
@@ -129,8 +138,45 @@ impl ThreadTracker {
         poll
     }
 
+    fn record_turns_from_active_anchor(&mut self, turns: Vec<Turn>) -> Option<ThreadPoll> {
+        let anchor_turn = turns.first()?;
+        let previous = self.previous.as_ref()?;
+        let anchor_index = previous
+            .turns
+            .iter()
+            .position(|turn| turn.id == anchor_turn.id)?;
+        if anchor_index + 1 != previous.turns.len() {
+            return None;
+        }
+        let mut seen_ids = previous.turns[..anchor_index]
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<HashSet<_>>();
+        if turns.iter().any(|turn| !seen_ids.insert(turn.id.as_str())) {
+            return None;
+        }
+
+        let mut merged = previous.clone();
+        merged.turns.truncate(anchor_index);
+        merged.turns.extend(turns);
+        Some(self.record_snapshot(merged))
+    }
+
+    fn active_turn_cursor(&self) -> Option<&str> {
+        self.active_turn_cursor.as_deref()
+    }
+
+    fn set_active_turn_cursor(&mut self, cursor: String) {
+        self.active_turn_cursor = Some(cursor);
+    }
+
+    fn reset_active_turn_cursor(&mut self) {
+        self.active_turn_cursor = None;
+    }
+
     fn reset(&mut self) {
         self.previous = None;
+        self.reset_active_turn_cursor();
     }
 }
 
@@ -185,6 +231,7 @@ impl CodexHistorySession {
             client,
             thread_tracker: ThreadTracker::default(),
             page_tracker: ThreadPageTracker::default(),
+            thread_turns_list_unsupported: false,
         })
     }
 
@@ -265,6 +312,74 @@ impl CodexHistorySession {
         Ok(self.thread_tracker.record(thread))
     }
 
+    /// Refreshes the last active turn without rereading the complete thread.
+    ///
+    /// A complete snapshot must already have established the selected thread's
+    /// baseline. The first incremental poll obtains an inclusive cursor for the
+    /// latest turn; later polls reread that anchor in ascending order so status
+    /// and item changes are not skipped. Unsupported endpoints, invalid cursors,
+    /// and discontinuous pages transparently fall back to `thread/read`.
+    pub async fn poll_active_thread(&mut self, thread_id: &str) -> Result<ThreadPoll, CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        if self.thread_turns_list_unsupported {
+            return self.poll_thread(thread_id).await;
+        }
+
+        let mut result = self.try_poll_active_thread(thread_id).await;
+        if result.as_ref().is_err_and(CodexError::is_connection_lost)
+            && !self.cancellation.is_cancelled()
+        {
+            self.reconnect().await?;
+            result = self.try_poll_active_thread(thread_id).await;
+        }
+
+        match result {
+            Ok(Some(poll)) => Ok(poll),
+            Ok(None) => self.poll_thread(thread_id).await,
+            Err(error) if error.is_method_not_found(THREAD_TURNS_LIST_METHOD) => {
+                self.thread_turns_list_unsupported = true;
+                self.poll_thread(thread_id).await
+            }
+            Err(error) if self.cancellation.is_cancelled() => Err(error),
+            Err(_) => {
+                self.thread_tracker.reset_active_turn_cursor();
+                self.poll_thread(thread_id).await
+            }
+        }
+    }
+
+    async fn try_poll_active_thread(
+        &mut self,
+        thread_id: &str,
+    ) -> Result<Option<ThreadPoll>, CodexError> {
+        if let Some(cursor) = self.thread_tracker.active_turn_cursor().map(str::to_owned) {
+            let turns = self
+                .client
+                .list_thread_turns_from(thread_id, &cursor)
+                .await?;
+            let includes_newer_turn = turns.len() > 1;
+            let poll = self.thread_tracker.record_turns_from_active_anchor(turns);
+            if includes_newer_turn && poll.is_some() {
+                self.thread_tracker.reset_active_turn_cursor();
+            }
+            return Ok(poll);
+        }
+
+        let page = self.client.list_latest_thread_turn_page(thread_id).await?;
+        let Some(cursor) = page.backwards_cursor else {
+            return Ok(None);
+        };
+        let poll = self
+            .thread_tracker
+            .record_turns_from_active_anchor(page.turns);
+        if poll.is_some() {
+            self.thread_tracker.set_active_turn_cursor(cursor);
+        }
+        Ok(poll)
+    }
+
     /// Sets the user-facing name of one persisted thread.
     ///
     /// Repeating this operation with the same name is idempotent, so a lost
@@ -324,6 +439,7 @@ impl CodexHistorySession {
             CodexClient::connect_with_cancellation(&self.source, self.cancellation.token.clone())
                 .await?;
         let previous = std::mem::replace(&mut self.client, replacement);
+        self.thread_tracker.reset_active_turn_cursor();
         previous.shutdown().await;
         Ok(())
     }
@@ -683,6 +799,40 @@ mod tests {
         assert_eq!(tracker.record(first.clone()), ThreadPoll::Unchanged);
         tracker.reset();
         assert_eq!(tracker.record(first.clone()), ThreadPoll::Baseline(first));
+    }
+
+    #[test]
+    fn merges_an_incremental_update_only_from_the_latest_turn_anchor() {
+        let initial = thread("thread-1", "Working");
+        let mut completed_turn = initial.turns[0].clone();
+        completed_turn.status = TurnStatus::Completed;
+        let ThreadItem::AgentMessage { text, .. } = &mut completed_turn.items[0] else {
+            panic!("the fixture must contain an agent message");
+        };
+        *text = "Done".to_owned();
+        let mut tracker = ThreadTracker::default();
+        assert!(matches!(
+            tracker.record(initial.clone()),
+            ThreadPoll::Baseline(_)
+        ));
+
+        let Some(ThreadPoll::Changed(changed)) =
+            tracker.record_turns_from_active_anchor(vec![completed_turn])
+        else {
+            panic!("the anchored turn update should merge into the complete snapshot");
+        };
+        assert_eq!(changed.turns.len(), 1);
+        assert_eq!(changed.turns[0].status, TurnStatus::Completed);
+
+        let mut discontinuous = initial.turns;
+        discontinuous[0].id = "turn-other".to_owned();
+        assert!(
+            tracker
+                .record_turns_from_active_anchor(discontinuous)
+                .is_none(),
+            "an unknown anchor must request a complete fallback instead of corrupting history"
+        );
+        assert_eq!(tracker.record(changed), ThreadPoll::Unchanged);
     }
 
     #[test]

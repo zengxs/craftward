@@ -514,7 +514,13 @@ impl ObserverState {
         thread_id: &str,
         sink: &HistoryEventSink,
     ) -> ConversationPollOutcome {
-        let result = self.poll_thread(thread_id).await;
+        let result = if self.polled_conversation_is_active
+            && !self.writer.needs_persisted_reconciliation()
+        {
+            self.poll_active_thread(thread_id).await
+        } else {
+            self.poll_thread(thread_id).await
+        };
         let result = self.initial_conversation_reads.classify(thread_id, result);
         let effect = self
             .conversation_health
@@ -644,6 +650,15 @@ impl ObserverState {
             .as_mut()
             .expect("the history session was initialized above")
             .poll_thread(thread_id)
+            .await
+    }
+
+    async fn poll_active_thread(&mut self, thread_id: &str) -> Result<ThreadPoll, CodexError> {
+        self.ensure_session().await?;
+        self.session
+            .as_mut()
+            .expect("the history session was initialized above")
+            .poll_active_thread(thread_id)
             .await
     }
 

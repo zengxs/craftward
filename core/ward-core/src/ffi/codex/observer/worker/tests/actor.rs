@@ -426,10 +426,31 @@ async fn polls_an_external_active_turn_until_it_becomes_idle() {
         .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
         .await;
     let reads_after_active_load = observer.app_server().thread_read_request_count();
+    let turn_pages_after_active_load = observer.app_server().thread_turns_list_requests().len();
     tokio::time::sleep(Duration::from_millis(1_100)).await;
+    assert_eq!(
+        observer.app_server().thread_read_request_count(),
+        reads_after_active_load,
+        "active follow-up polling should not reload the complete conversation"
+    );
+    let turn_requests = observer.app_server().thread_turns_list_requests();
     assert!(
-        observer.app_server().thread_read_request_count() >= reads_after_active_load + 2,
-        "the observer should keep polling while another client owns an active turn"
+        turn_requests.len() >= turn_pages_after_active_load + 2,
+        "the observer should keep polling the active turn through paginated turn reads"
+    );
+    let incremental_requests = &turn_requests[turn_pages_after_active_load..];
+    assert_eq!(incremental_requests[0].thread_id, thread_id);
+    assert_eq!(incremental_requests[0].cursor, None);
+    assert_eq!(incremental_requests[0].limit, Some(1));
+    assert_eq!(
+        incremental_requests[0].sort_direction.as_deref(),
+        Some("desc")
+    );
+    assert_eq!(incremental_requests[0].items_view.as_deref(), Some("full"));
+    assert!(incremental_requests[1].cursor.is_some());
+    assert_eq!(
+        incremental_requests[1].sort_direction.as_deref(),
+        Some("asc")
     );
 
     external_writer
@@ -452,14 +473,20 @@ async fn polls_an_external_active_turn_until_it_becomes_idle() {
         .wait_for_event(wire::HistoryEventKind::ConversationUpdated)
         .await;
     let reads_after_completion = observer.app_server().thread_read_request_count();
+    let turn_pages_after_completion = observer.app_server().thread_turns_list_requests().len();
 
     tokio::time::sleep(Duration::from_millis(1_100)).await;
     let reads_after_idle = observer.app_server().thread_read_request_count();
+    let turn_pages_after_idle = observer.app_server().thread_turns_list_requests().len();
 
     observer.stop().await;
     assert_eq!(
         reads_after_idle, reads_after_completion,
         "the observer should stop full reads after the external turn completes"
+    );
+    assert_eq!(
+        turn_pages_after_idle, turn_pages_after_completion,
+        "the observer should stop incremental reads after the external turn completes"
     );
 }
 

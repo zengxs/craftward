@@ -78,6 +78,17 @@ impl CodexError {
         )
     }
 
+    pub(crate) fn is_method_not_found(&self, method: &'static str) -> bool {
+        matches!(
+            self,
+            Self::Server {
+                method: reported_method,
+                code: -32601,
+                ..
+            } if *reported_method == method
+        )
+    }
+
     /// Returns whether a thread resume failed because another app-server owns
     /// the persisted thread writer.
     #[must_use]
@@ -191,6 +202,26 @@ mod tests {
                 message: "invalid thread identifier".to_owned(),
             }
             .is_thread_not_loaded("thread-new")
+        );
+    }
+
+    #[test]
+    fn recognizes_method_not_found_only_for_the_requested_method() {
+        let missing = CodexError::Server {
+            method: "thread/turns/list",
+            code: -32601,
+            message: "method not found".to_owned(),
+        };
+
+        assert!(missing.is_method_not_found("thread/turns/list"));
+        assert!(!missing.is_method_not_found("thread/read"));
+        assert!(
+            !CodexError::Server {
+                method: "thread/turns/list",
+                code: -32600,
+                message: "invalid params".to_owned(),
+            }
+            .is_method_not_found("thread/turns/list")
         );
     }
 }

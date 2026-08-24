@@ -18,11 +18,12 @@ use crate::protocol::{
     Connection, INITIALIZE_METHOD, InitializeParams, InitializeResponse, MODEL_LIST_METHOD,
     ModelListParams, ModelListResponse, ServerMessage, THREAD_ARCHIVE_METHOD, THREAD_FORK_METHOD,
     THREAD_LIST_METHOD, THREAD_READ_METHOD, THREAD_RESUME_METHOD, THREAD_SET_NAME_METHOD,
-    THREAD_START_METHOD, THREAD_UNARCHIVE_METHOD, TURN_INTERRUPT_METHOD, TURN_START_METHOD,
-    TURN_STEER_METHOD, ThreadArchiveParams, ThreadArchiveResponse, ThreadForkParams,
-    ThreadForkResponse, ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse,
-    ThreadResumeParams, ThreadResumeResponse, ThreadSetNameParams, ThreadSetNameResponse,
-    ThreadStartParams, ThreadStartResponse, ThreadUnarchiveParams, ThreadUnarchiveResponse,
+    THREAD_START_METHOD, THREAD_TURNS_LIST_METHOD, THREAD_UNARCHIVE_METHOD, TURN_INTERRUPT_METHOD,
+    TURN_START_METHOD, TURN_STEER_METHOD, ThreadArchiveParams, ThreadArchiveResponse,
+    ThreadForkParams, ThreadForkResponse, ThreadListParams, ThreadListResponse, ThreadReadParams,
+    ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse, ThreadSetNameParams,
+    ThreadSetNameResponse, ThreadStartParams, ThreadStartResponse, ThreadTurnsListParams,
+    ThreadTurnsListResponse, ThreadTurnsPage, ThreadUnarchiveParams, ThreadUnarchiveResponse,
     TurnInterruptParams, TurnInterruptResponse, TurnStartParams, TurnStartResponse,
     TurnSteerParams, TurnSteerResponse, interaction_result, pending_interaction,
     resolved_server_request, turn_stream_event,
@@ -30,11 +31,43 @@ use crate::protocol::{
 use crate::{
     CodexAppServerSource, CodexError, InteractionId, InteractionResponse, ModelCatalog,
     PendingInteraction, ServerInfo, Thread, ThreadInferenceState, ThreadPage, ThreadStartOptions,
-    ThreadStreamEvent, ThreadSubscription, TurnInput, TurnOptions,
+    ThreadStreamEvent, ThreadSubscription, Turn, TurnInput, TurnOptions,
 };
 
 type AppServerConnection = Connection<BufReader<AppServerReader>, BufWriter<AppServerWriter>>;
 const APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct PaginationCursorGuard {
+    method: &'static str,
+    page_kind: &'static str,
+    requested: HashSet<String>,
+}
+
+impl PaginationCursorGuard {
+    fn new(method: &'static str, page_kind: &'static str, initial_cursor: Option<&str>) -> Self {
+        Self {
+            method,
+            page_kind,
+            requested: initial_cursor.into_iter().map(str::to_owned).collect(),
+        }
+    }
+
+    fn accept_next(&mut self, cursor: Option<String>) -> Result<Option<String>, CodexError> {
+        let Some(cursor) = cursor else {
+            return Ok(None);
+        };
+        if !self.requested.insert(cursor.clone()) {
+            return Err(CodexError::UnexpectedMessage {
+                method: self.method,
+                description: format!(
+                    "the app-server repeated a {} pagination cursor",
+                    self.page_kind
+                ),
+            });
+        }
+        Ok(Some(cursor))
+    }
+}
 
 /// Filters and pagination controls for a thread history request.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -325,7 +358,7 @@ impl CodexClient {
     pub async fn list_models(&mut self) -> Result<ModelCatalog, CodexError> {
         let mut models = Vec::new();
         let mut cursor = None;
-        let mut requested_cursors = HashSet::new();
+        let mut cursor_guard = PaginationCursorGuard::new(MODEL_LIST_METHOD, "model-list", None);
 
         loop {
             let params = ModelListParams::visible(cursor.as_deref());
@@ -333,16 +366,9 @@ impl CodexClient {
             let (mut page, next_cursor) = response.into_parts();
             models.append(&mut page);
 
-            let Some(next_cursor) = next_cursor else {
+            let Some(next_cursor) = cursor_guard.accept_next(next_cursor)? else {
                 break;
             };
-            if !requested_cursors.insert(next_cursor.clone()) {
-                return Err(CodexError::UnexpectedMessage {
-                    method: MODEL_LIST_METHOD,
-                    description: "the app-server repeated a model-list pagination cursor"
-                        .to_owned(),
-                });
-            }
             cursor = Some(next_cursor);
         }
 
@@ -377,7 +403,11 @@ impl CodexClient {
         options: &ThreadListOptions,
     ) -> Result<ThreadPage, CodexError> {
         let mut page_options = options.clone();
-        let mut requested_cursors = page_options.cursor.iter().cloned().collect::<HashSet<_>>();
+        let mut cursor_guard = PaginationCursorGuard::new(
+            THREAD_LIST_METHOD,
+            "thread-list",
+            page_options.cursor.as_deref(),
+        );
         let mut seen_thread_ids = HashSet::new();
         let mut threads = Vec::new();
 
@@ -389,16 +419,9 @@ impl CodexClient {
                     .filter(|thread| seen_thread_ids.insert(thread.id.clone())),
             );
 
-            let Some(next_cursor) = page.next_cursor else {
+            let Some(next_cursor) = cursor_guard.accept_next(page.next_cursor)? else {
                 break;
             };
-            if !requested_cursors.insert(next_cursor.clone()) {
-                return Err(CodexError::UnexpectedMessage {
-                    method: THREAD_LIST_METHOD,
-                    description: "the app-server repeated a thread-list pagination cursor"
-                        .to_owned(),
-                });
-            }
             page_options.cursor = Some(next_cursor);
         }
 
@@ -420,6 +443,55 @@ impl CodexClient {
             .into_thread()
             .map_err(|source| CodexError::InvalidResponse {
                 method: THREAD_READ_METHOD,
+                source,
+            })
+    }
+
+    pub(crate) async fn list_latest_thread_turn_page(
+        &mut self,
+        thread_id: &str,
+    ) -> Result<ThreadTurnsPage, CodexError> {
+        self.list_thread_turn_page(ThreadTurnsListParams::latest(thread_id))
+            .await
+    }
+
+    pub(crate) async fn list_thread_turns_from(
+        &mut self,
+        thread_id: &str,
+        anchor_cursor: &str,
+    ) -> Result<Vec<Turn>, CodexError> {
+        let mut turns = Vec::new();
+        let mut cursor = anchor_cursor.to_owned();
+        let mut cursor_guard = PaginationCursorGuard::new(
+            THREAD_TURNS_LIST_METHOD,
+            "thread-turn-list",
+            Some(anchor_cursor),
+        );
+
+        loop {
+            let page = self
+                .list_thread_turn_page(ThreadTurnsListParams::ascending(thread_id, &cursor))
+                .await?;
+            turns.extend(page.turns);
+            let Some(next_cursor) = cursor_guard.accept_next(page.next_cursor)? else {
+                break;
+            };
+            cursor = next_cursor;
+        }
+
+        Ok(turns)
+    }
+
+    async fn list_thread_turn_page(
+        &mut self,
+        params: ThreadTurnsListParams<'_>,
+    ) -> Result<ThreadTurnsPage, CodexError> {
+        let response: ThreadTurnsListResponse =
+            self.request(THREAD_TURNS_LIST_METHOD, &params).await?;
+        response
+            .into_page()
+            .map_err(|source| CodexError::InvalidResponse {
+                method: THREAD_TURNS_LIST_METHOD,
                 source,
             })
     }

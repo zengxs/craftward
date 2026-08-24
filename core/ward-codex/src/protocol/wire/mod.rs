@@ -161,6 +161,81 @@ pub(crate) struct ThreadReadResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadTurnsListParams<'a> {
+    thread_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u32>,
+    sort_direction: ThreadTurnsSortDirection,
+    items_view: ThreadItemsView,
+}
+
+impl<'a> ThreadTurnsListParams<'a> {
+    pub(crate) fn latest(thread_id: &'a str) -> Self {
+        Self {
+            thread_id,
+            cursor: None,
+            limit: Some(1),
+            sort_direction: ThreadTurnsSortDirection::Desc,
+            items_view: ThreadItemsView::Full,
+        }
+    }
+
+    pub(crate) fn ascending(thread_id: &'a str, cursor: &'a str) -> Self {
+        Self {
+            thread_id,
+            cursor: Some(cursor),
+            limit: None,
+            sort_direction: ThreadTurnsSortDirection::Asc,
+            items_view: ThreadItemsView::Full,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ThreadTurnsSortDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ThreadItemsView {
+    Full,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadTurnsListResponse {
+    data: Vec<WireTurn>,
+    next_cursor: Option<String>,
+    backwards_cursor: Option<String>,
+}
+
+pub(crate) struct ThreadTurnsPage {
+    pub(crate) turns: Vec<Turn>,
+    pub(crate) next_cursor: Option<String>,
+    pub(crate) backwards_cursor: Option<String>,
+}
+
+impl ThreadTurnsListResponse {
+    pub(crate) fn into_page(self) -> Result<ThreadTurnsPage, serde_json::Error> {
+        Ok(ThreadTurnsPage {
+            turns: self
+                .data
+                .into_iter()
+                .map(WireTurn::into_model)
+                .collect::<Result<Vec<_>, _>>()?,
+            next_cursor: self.next_cursor,
+            backwards_cursor: self.backwards_cursor,
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadSetNameParams<'a> {
     pub(crate) thread_id: &'a str,
     pub(crate) name: &'a str,

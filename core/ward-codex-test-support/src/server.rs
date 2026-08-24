@@ -15,7 +15,7 @@ use super::state::FakeState;
 use super::threads::{
     thread_archive_response, thread_fork_response, thread_list_response, thread_read_response,
     thread_resume_response, thread_set_name_response, thread_start_response,
-    thread_unarchive_response,
+    thread_turns_list_response, thread_unarchive_response,
 };
 use super::turns::{handle_client_response, turn_start_messages, turn_steer_messages};
 
@@ -163,6 +163,12 @@ fn handle_client_message(
                 .map(|response| vec![response]);
         }
         "thread/read" => vec![thread_read_response(id, &params, state)],
+        "thread/turns/list" => vec![thread_turns_list_response(
+            id,
+            &params,
+            state,
+            connection_id,
+        )],
         "thread/start" => vec![thread_start_response(id, &params, state, connection_id)],
         "thread/resume" => vec![thread_resume_response(id, &params, state, connection_id)],
         "thread/name/set" => vec![thread_set_name_response(id, &params, state)],

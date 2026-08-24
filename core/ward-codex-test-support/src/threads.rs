@@ -8,11 +8,12 @@ use serde_json::{Value, json};
 use super::catalog::{default_fake_model, fake_model};
 use super::state::{FakeState, FakeThread};
 use super::turns::{persisted_turn_id, turn_json};
-use super::{FakeCodexAppServerOptions, FakeThreadListRequest};
+use super::{FakeCodexAppServerOptions, FakeThreadListRequest, FakeThreadTurnsListRequest};
 
 const THREAD_ID: &str = "thread-new";
 const THREAD_LIST_CURSOR_PREFIX: &str = "thread-list-offset-";
 const REPEATED_THREAD_LIST_CURSOR: &str = "thread-list-repeated";
+const THREAD_TURN_CURSOR_PREFIX: &str = "thread-turn-index-";
 
 fn requested_thread_mut<'a>(
     response_id: &Value,
@@ -221,6 +222,107 @@ pub(super) fn thread_read_response(
     }
     let thread = thread_json(&state.threads[thread_index], state.options, true);
     json!({ "id": id, "result": { "thread": thread } })
+}
+
+pub(super) fn thread_turns_list_response(
+    id: Value,
+    params: &Value,
+    state: &Arc<Mutex<FakeState>>,
+    connection_id: u64,
+) -> Value {
+    let requested_thread_id = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let requested_cursor = params
+        .get("cursor")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let requested_limit = params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|limit| u32::try_from(limit).ok());
+    let requested_sort_direction = params
+        .get("sortDirection")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let requested_items_view = params
+        .get("itemsView")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut state = state.lock().unwrap();
+    state
+        .thread_turns_list_requests
+        .push(FakeThreadTurnsListRequest {
+            connection_id,
+            thread_id: requested_thread_id.clone(),
+            cursor: requested_cursor.clone(),
+            limit: requested_limit,
+            sort_direction: requested_sort_direction.clone(),
+            items_view: requested_items_view,
+        });
+    if !state.options.support_thread_turns_list {
+        return json!({
+            "id": id,
+            "error": { "code": -32601, "message": "method not found: thread/turns/list" }
+        });
+    }
+    let Some(thread) = state
+        .threads
+        .iter()
+        .find(|thread| thread.id == requested_thread_id)
+    else {
+        return json!({
+            "id": id,
+            "error": { "code": -32600, "message": format!("thread not loaded: {requested_thread_id}") }
+        });
+    };
+    let cursor_index = match requested_cursor.as_deref() {
+        None => None,
+        Some(cursor) => match cursor
+            .strip_prefix(THREAD_TURN_CURSOR_PREFIX)
+            .and_then(|index| index.parse::<usize>().ok())
+        {
+            Some(index) if index < thread.turns.len() => Some(index),
+            _ => {
+                return json!({
+                    "id": id,
+                    "error": { "code": -32600, "message": format!("unknown thread-turn cursor: {cursor}") }
+                });
+            }
+        },
+    };
+    let ascending = requested_sort_direction.as_deref() == Some("asc");
+    let mut indices = if ascending {
+        let start = cursor_index.unwrap_or(0);
+        (start..thread.turns.len()).collect::<Vec<_>>()
+    } else {
+        let start = cursor_index.unwrap_or_else(|| thread.turns.len().saturating_sub(1));
+        if thread.turns.is_empty() {
+            vec![]
+        } else {
+            (0..=start).rev().collect::<Vec<_>>()
+        }
+    };
+    if let Some(limit) = requested_limit.and_then(|limit| usize::try_from(limit).ok()) {
+        indices.truncate(limit);
+    }
+    let backwards_cursor = indices
+        .first()
+        .map(|index| format!("{THREAD_TURN_CURSOR_PREFIX}{index}"));
+    let data = indices
+        .into_iter()
+        .map(|index| turn_json(&thread.turns[index], state.options, true))
+        .collect::<Vec<_>>();
+    json!({
+        "id": id,
+        "result": {
+            "data": data,
+            "nextCursor": null,
+            "backwardsCursor": backwards_cursor
+        }
+    })
 }
 
 pub(super) fn thread_set_name_response(

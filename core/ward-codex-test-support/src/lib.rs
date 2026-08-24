@@ -58,6 +58,8 @@ pub struct FakeCodexAppServerOptions {
     pub lose_first_thread_list_continuation_response: bool,
     /// Whether every thread-list page reports the same continuation cursor.
     pub repeat_thread_list_cursor: bool,
+    /// Whether the experimental thread-turn pagination endpoint is available.
+    pub support_thread_turns_list: bool,
     /// Behavior exercised by each started turn.
     pub turn_scenario: FakeTurnScenario,
 }
@@ -74,6 +76,7 @@ impl Default for FakeCodexAppServerOptions {
             overlap_thread_list_pages: false,
             lose_first_thread_list_continuation_response: false,
             repeat_thread_list_cursor: false,
+            support_thread_turns_list: true,
             turn_scenario: FakeTurnScenario::default(),
         }
     }
@@ -86,6 +89,17 @@ pub struct FakeThreadListRequest {
     pub cursor: Option<String>,
     pub limit: Option<u32>,
     pub archived: Option<bool>,
+}
+
+/// One thread-turn-list request observed by the fake app-server.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FakeThreadTurnsListRequest {
+    pub connection_id: u64,
+    pub thread_id: String,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+    pub sort_direction: Option<String>,
+    pub items_view: Option<String>,
 }
 
 /// A stateful in-memory Codex app-server shared by independent connections.
@@ -119,6 +133,16 @@ impl FakeCodexAppServer {
     #[must_use]
     pub fn thread_read_request_count(&self) -> usize {
         self.state.lock().unwrap().thread_read_request_count
+    }
+
+    /// Returns the thread-turn-list requests observed so far in arrival order.
+    #[must_use]
+    pub fn thread_turns_list_requests(&self) -> Vec<FakeThreadTurnsListRequest> {
+        self.state
+            .lock()
+            .unwrap()
+            .thread_turns_list_requests
+            .clone()
     }
 }
 

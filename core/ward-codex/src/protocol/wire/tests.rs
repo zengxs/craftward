@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use super::{
     InitializeParams, ThreadForkParams, ThreadReadResponse, ThreadResumeResponse,
-    ThreadStartParams, ThreadStartResponse, TurnStartParams, TurnSteerParams, turn_stream_event,
+    ThreadStartParams, ThreadStartResponse, ThreadTurnsListParams, ThreadTurnsListResponse,
+    TurnStartParams, TurnSteerParams, turn_stream_event,
 };
 use crate::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
@@ -54,6 +55,53 @@ fn opts_in_to_the_experimental_app_server_surface() {
             "capabilities": { "experimentalApi": true }
         })
     );
+}
+
+#[test]
+fn requests_full_turns_with_an_inclusive_active_anchor() {
+    assert_eq!(
+        serde_json::to_value(ThreadTurnsListParams::latest("thread-1")).unwrap(),
+        serde_json::json!({
+            "threadId": "thread-1",
+            "limit": 1,
+            "sortDirection": "desc",
+            "itemsView": "full"
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(ThreadTurnsListParams::ascending(
+            "thread-1",
+            "opaque-anchor"
+        ))
+        .unwrap(),
+        serde_json::json!({
+            "threadId": "thread-1",
+            "cursor": "opaque-anchor",
+            "sortDirection": "asc",
+            "itemsView": "full"
+        })
+    );
+}
+
+#[test]
+fn maps_paginated_turns_and_preserves_both_cursors() {
+    let response: ThreadTurnsListResponse = serde_json::from_value(serde_json::json!({
+        "data": [{
+            "id": "turn-2",
+            "status": "inProgress",
+            "items": []
+        }],
+        "nextCursor": "next-page",
+        "backwardsCursor": "active-anchor"
+    }))
+    .expect("the turn page should decode");
+    let page = response.into_page().expect("the turn page should map");
+
+    assert_eq!(page.turns.len(), 1);
+    assert_eq!(page.turns[0].id, "turn-2");
+    assert_eq!(page.turns[0].status, crate::TurnStatus::InProgress);
+    assert_eq!(page.next_cursor.as_deref(), Some("next-page"));
+    assert_eq!(page.backwards_cursor.as_deref(), Some("active-anchor"));
 }
 
 #[test]

@@ -1057,3 +1057,120 @@ async fn steers_the_expected_active_turn_through_the_public_writer_seam() {
     );
     history.shutdown().await;
 }
+
+#[tokio::test]
+async fn refreshes_an_active_turn_without_reloading_the_complete_thread() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        turn_scenario: FakeTurnScenario::WaitForGuidance,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let source = fake_app_server.source();
+    let cancellation = CodexHistoryCancellation::new();
+    let (mut writer, _) = CodexThreadWriter::start_on(
+        &source,
+        cancellation.clone(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the fake writer should start a thread");
+    let started = writer
+        .begin_text_turn("Wait for guidance", TurnOptions::default())
+        .await
+        .expect("the fake turn should start");
+    let ThreadStreamEvent::TurnStarted { turn, .. } = started else {
+        panic!("the fake writer should report the active turn");
+    };
+    let mut history = CodexHistorySession::connect_with_cancellation(source, cancellation)
+        .await
+        .expect("the persisted history session should connect");
+    let ThreadPoll::Baseline(thread) = history
+        .poll_thread("thread-new")
+        .await
+        .expect("the complete read should establish a baseline")
+    else {
+        panic!("the first complete read should establish a baseline");
+    };
+    assert_eq!(thread.turns[0].status, TurnStatus::InProgress);
+
+    assert_eq!(
+        history
+            .poll_active_thread("thread-new")
+            .await
+            .expect("the active anchor should load"),
+        ThreadPoll::Unchanged
+    );
+    writer
+        .steer_text_turn(&turn.id, "Finish now")
+        .await
+        .expect("guidance should complete the fake turn");
+    let ThreadPoll::Changed(completed) = history
+        .poll_active_thread("thread-new")
+        .await
+        .expect("the anchored turn should refresh")
+    else {
+        panic!("the terminal turn should change the merged snapshot");
+    };
+
+    assert_eq!(completed.turns[0].status, TurnStatus::Completed);
+    assert_eq!(fake_app_server.thread_read_request_count(), 1);
+    let requests = fake_app_server.thread_turns_list_requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].cursor, None);
+    assert_eq!(requests[0].sort_direction.as_deref(), Some("desc"));
+    assert!(requests[1].cursor.is_some());
+    assert_eq!(requests[1].sort_direction.as_deref(), Some("asc"));
+
+    history.shutdown().await;
+    writer.shutdown().await;
+}
+
+#[tokio::test]
+async fn falls_back_once_when_turn_pagination_is_unsupported() {
+    let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
+        support_thread_turns_list: false,
+        turn_scenario: FakeTurnScenario::WaitForGuidance,
+        ..FakeCodexAppServerOptions::default()
+    });
+    let source = fake_app_server.source();
+    let cancellation = CodexHistoryCancellation::new();
+    let (mut writer, _) = CodexThreadWriter::start_on(
+        &source,
+        cancellation.clone(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the fake writer should start a thread");
+    writer
+        .begin_text_turn("Remain active", TurnOptions::default())
+        .await
+        .expect("the fake turn should start");
+    let mut history = CodexHistorySession::connect_with_cancellation(source, cancellation)
+        .await
+        .expect("the persisted history session should connect");
+    history
+        .poll_thread("thread-new")
+        .await
+        .expect("the complete read should establish a baseline");
+
+    assert_eq!(
+        history
+            .poll_active_thread("thread-new")
+            .await
+            .expect("the missing method should fall back to a complete read"),
+        ThreadPoll::Unchanged
+    );
+    assert_eq!(
+        history
+            .poll_active_thread("thread-new")
+            .await
+            .expect("later polls should use the remembered fallback"),
+        ThreadPoll::Unchanged
+    );
+
+    assert_eq!(fake_app_server.thread_turns_list_requests().len(), 1);
+    assert_eq!(fake_app_server.thread_read_request_count(), 3);
+    history.shutdown().await;
+    writer.shutdown().await;
+}
