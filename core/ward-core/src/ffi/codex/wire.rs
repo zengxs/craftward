@@ -76,6 +76,7 @@ impl From<CodexReasoningEffortOption> for ReasoningEffortOption {
 
 impl Conversation {
     pub(super) fn from_thread(thread: CodexThread, forkable_turn_ids: Vec<String>) -> Self {
+        let persisted_run_state = persisted_run_state(&thread);
         let title = thread
             .summary
             .name
@@ -103,6 +104,33 @@ impl Conversation {
             timeline,
             activity_history_is_partial: true,
             forkable_turn_ids,
+            persisted_run_state: Some(persisted_run_state),
+        }
+    }
+}
+
+fn persisted_run_state(thread: &CodexThread) -> PersistedRunState {
+    let Some(turn) = thread.turns.last() else {
+        return PersistedRunState {
+            status: PersistedRunStatus::NotRunning as i32,
+            turn_id: None,
+        };
+    };
+
+    if turn.status.is_in_progress() {
+        PersistedRunState {
+            status: PersistedRunStatus::InProgress as i32,
+            turn_id: Some(turn.id.clone()),
+        }
+    } else if turn.status.is_terminal() {
+        PersistedRunState {
+            status: PersistedRunStatus::NotRunning as i32,
+            turn_id: None,
+        }
+    } else {
+        PersistedRunState {
+            status: PersistedRunStatus::Unknown as i32,
+            turn_id: None,
         }
     }
 }
@@ -410,6 +438,13 @@ mod tests {
         assert_eq!(decoded.title, "Example");
         assert!(decoded.activity_history_is_partial);
         assert_eq!(decoded.forkable_turn_ids, ["turn-1"]);
+        assert_eq!(
+            decoded.persisted_run_state,
+            Some(PersistedRunState {
+                status: PersistedRunStatus::NotRunning as i32,
+                turn_id: None,
+            })
+        );
         assert_eq!(decoded.timeline.len(), 4);
         assert!(decoded.timeline.iter().all(|item| item.turn_id == "turn-1"));
 
@@ -451,6 +486,64 @@ mod tests {
         assert_eq!(final_answer.role(), MessageRole::Agent);
         assert_eq!(final_answer.phase(), MessagePhase::FinalAnswer);
         assert_eq!(final_answer.text, "Hi");
+    }
+
+    #[test]
+    fn derives_execution_evidence_from_the_latest_persisted_turn() {
+        fn thread_with_turns(turns: Vec<Turn>) -> CodexThread {
+            CodexThread {
+                summary: CodexThreadSummary {
+                    id: "thread-1".to_owned(),
+                    name: None,
+                    preview: "Preview".to_owned(),
+                    cwd: PathBuf::from("/workspace"),
+                    created_at_unix_seconds: 10,
+                    updated_at_unix_seconds: 20,
+                },
+                turns,
+            }
+        }
+
+        let empty = Conversation::from_thread(thread_with_turns(vec![]), vec![]);
+        assert_eq!(
+            empty.persisted_run_state,
+            Some(PersistedRunState {
+                status: PersistedRunStatus::NotRunning as i32,
+                turn_id: None,
+            })
+        );
+
+        let running = Conversation::from_thread(
+            thread_with_turns(vec![Turn {
+                id: "turn-running".to_owned(),
+                status: TurnStatus::InProgress,
+                items: vec![],
+            }]),
+            vec![],
+        );
+        assert_eq!(
+            running.persisted_run_state,
+            Some(PersistedRunState {
+                status: PersistedRunStatus::InProgress as i32,
+                turn_id: Some("turn-running".to_owned()),
+            })
+        );
+
+        let unknown = Conversation::from_thread(
+            thread_with_turns(vec![Turn {
+                id: "turn-future".to_owned(),
+                status: TurnStatus::Unknown("futureStatus".to_owned()),
+                items: vec![],
+            }]),
+            vec![],
+        );
+        assert_eq!(
+            unknown.persisted_run_state,
+            Some(PersistedRunState {
+                status: PersistedRunStatus::Unknown as i32,
+                turn_id: None,
+            })
+        );
     }
 
     #[test]

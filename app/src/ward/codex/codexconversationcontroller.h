@@ -41,6 +41,7 @@ class CodexConversationController : public QObject
     Q_PROPERTY(QString modelCatalogErrorMessage READ modelCatalogErrorMessage NOTIFY modelCatalogStateChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(bool activityHistoryPartial READ activityHistoryPartial NOTIFY activityHistoryPartialChanged)
+    Q_PROPERTY(ThreadRunState threadRunState READ threadRunState NOTIFY threadRunStateChanged)
     Q_PROPERTY(TurnState turnState READ turnState NOTIFY turnStateChanged)
     Q_PROPERTY(bool turnInFlight READ turnInFlight NOTIFY turnStateChanged)
     Q_PROPERTY(bool turnRunning READ turnRunning NOTIFY turnStateChanged)
@@ -56,6 +57,19 @@ class CodexConversationController : public QObject
     Q_PROPERTY(QString writeAvailabilityMessage READ writeAvailabilityMessage NOTIFY writeAvailabilityChanged)
 
   public:
+    // Reconciled execution evidence for the selected persisted thread. This
+    // state does not imply that the current observer can control the turn.
+    enum class ThreadRunState
+    {
+        RunStateUnknown,
+        RunStateNotRunning,
+        RunStatePersistedInProgress,
+        RunStateObserverOwnedRunning,
+    };
+    Q_ENUM(ThreadRunState)
+
+    // Live runtime state owned by the current observer. Only Running grants
+    // the control semantics exposed by turnRunning and activeTurnId.
     enum class TurnState
     {
         Detached,
@@ -132,6 +146,7 @@ class CodexConversationController : public QObject
     [[nodiscard]] QString modelCatalogErrorMessage() const;
     [[nodiscard]] bool loading() const;
     [[nodiscard]] bool activityHistoryPartial() const;
+    [[nodiscard]] ThreadRunState threadRunState() const;
     [[nodiscard]] TurnState turnState() const;
     [[nodiscard]] bool turnInFlight() const;
     [[nodiscard]] bool turnRunning() const;
@@ -167,6 +182,7 @@ class CodexConversationController : public QObject
     void loadingChanged();
     void modelCatalogStateChanged();
     void activityHistoryPartialChanged();
+    void threadRunStateChanged();
     void turnStateChanged();
     void steeringTurnChanged();
     void interruptRequestedChanged();
@@ -186,6 +202,13 @@ class CodexConversationController : public QObject
         QString activeTurnId;
         bool waitingOnApproval = false;
         bool waitingOnUserInput = false;
+    };
+
+    enum class PersistedRunStatus
+    {
+        Unknown,
+        NotRunning,
+        InProgress,
     };
 
     struct InferenceState
@@ -213,6 +236,10 @@ class CodexConversationController : public QObject
     void clearSelection();
     void setErrorMessage(const QString& message);
     void setActivityHistoryPartial(bool partial);
+    void applyPersistedRunEvidence(const ward::codex::v1::Conversation& conversation);
+    void resetPersistedRunEvidence();
+    void reconcileThreadRunState();
+    void setThreadRunState(ThreadRunState state);
     void setTurnState(TurnState state,
                       const QString& activeTurnId = {},
                       bool waitingOnApproval = false,
@@ -248,6 +275,8 @@ class CodexConversationController : public QObject
     QString modelCatalogErrorMessage_;
     bool loading_ = false;
     bool activityHistoryPartial_ = false;
+    PersistedRunStatus persistedRunStatus_ = PersistedRunStatus::Unknown;
+    ThreadRunState threadRunState_ = ThreadRunState::RunStateUnknown;
     TurnRuntimeState turnRuntimeState_;
     bool steeringTurn_ = false;
     bool interruptRequested_ = false;

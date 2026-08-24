@@ -56,6 +56,23 @@ message Conversation {
 
   // Terminal turn identifiers confirmed by an authoritative persisted snapshot.
   repeated string forkable_turn_ids = 6;
+
+  // Best-effort execution evidence derived from the latest persisted turn.
+  PersistedRunState persisted_run_state = 7;
+}
+
+// The execution status inferred from a persisted conversation snapshot.
+// This is not authoritative live state and may lag behind another app-server.
+enum PersistedRunStatus {
+  PERSISTED_RUN_STATUS_UNSPECIFIED = 0;
+  PERSISTED_RUN_STATUS_NOT_RUNNING = 1;
+  PERSISTED_RUN_STATUS_IN_PROGRESS = 2;
+  PERSISTED_RUN_STATUS_UNKNOWN = 3;
+}
+
+message PersistedRunState {
+  PersistedRunStatus status = 1;
+  optional string turn_id = 2;
 }
 
 enum HistoryEventKind {

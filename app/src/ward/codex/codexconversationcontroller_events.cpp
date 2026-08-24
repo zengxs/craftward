@@ -61,6 +61,7 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
             auto timeline = conversation.timeline();
             timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds());
             setActivityHistoryPartial(conversation.activityHistoryIsPartial());
+            applyPersistedRunEvidence(conversation);
             finishLoading({});
             return true;
         }

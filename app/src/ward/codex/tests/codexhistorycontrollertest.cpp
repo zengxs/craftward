@@ -25,7 +25,9 @@ using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKi
 using Message = ward::codex::v1::Message;
 using MessagePhase = ward::codex::v1::MessagePhaseGadget::MessagePhase;
 using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
+using PersistedRunStatus = ward::codex::v1::PersistedRunStatusGadget::PersistedRunStatus;
 using ThreadPage = ward::codex::v1::ThreadPage;
+using ThreadRuntimeStatus = ward::codex::v1::ThreadRuntimeStatusGadget::ThreadRuntimeStatus;
 using ThreadSummary = ward::codex::v1::ThreadSummary;
 using TimelineItem = ward::codex::v1::TimelineItem;
 
@@ -122,17 +124,38 @@ HistoryEvent
 conversationEvent(HistoryEventKind kind,
                   QList<TimelineItem> timeline,
                   const QString& title = QStringLiteral("New conversation"),
-                  const QStringList& forkableTurnIds = {})
+                  const QStringList& forkableTurnIds = {},
+                  PersistedRunStatus persistedRunStatus = PersistedRunStatus::PERSISTED_RUN_STATUS_UNSPECIFIED)
 {
     Conversation conversation;
     conversation.setTitle(title);
     conversation.setTimeline(std::move(timeline));
     conversation.setForkableTurnIds(forkableTurnIds);
+    if (persistedRunStatus != PersistedRunStatus::PERSISTED_RUN_STATUS_UNSPECIFIED) {
+        ward::codex::v1::PersistedRunState runState;
+        runState.setStatus(persistedRunStatus);
+        conversation.setPersistedRunState(std::move(runState));
+    }
 
     HistoryEvent event;
     event.setKind(kind);
     event.setThreadId(QStringLiteral("thread-new"));
     event.setConversation(std::move(conversation));
+    return event;
+}
+
+HistoryEvent
+threadRuntimeEvent(ThreadRuntimeStatus status, const QString& turnId = {})
+{
+    ward::codex::v1::ThreadRuntimeState state;
+    state.setStatus(status);
+    if (!turnId.isEmpty())
+        state.setTurnId(turnId);
+
+    HistoryEvent event;
+    event.setKind(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_RUNTIME_STATE_CHANGED);
+    event.setThreadId(QStringLiteral("thread-new"));
+    event.setThreadRuntimeState(std::move(state));
     return event;
 }
 
@@ -187,6 +210,7 @@ class CodexHistoryControllerTest : public QObject
     void updatesPollingVisibilityState();
     void retranslatesTimelinePresentationWhenRequested();
     void adaptsMessageFormatsAndPreservesMarkupModelsAcrossStreamingUpdates();
+    void reconcilesPersistedAndOwnedThreadRunState();
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
     void marksOnlyAuthoritativeTurnEndsAsForkBoundaries();
     void confirmsAcceptedTurnGuidance();
@@ -365,6 +389,55 @@ CodexHistoryControllerTest::adaptsMessageFormatsAndPreservesMarkupModelsAcrossSt
                                                    { QStringLiteral("turn-1") }),
                                  {});
     QTRY_COMPARE(finalizedSpy.count(), 1);
+}
+
+void
+CodexHistoryControllerTest::reconcilesPersistedAndOwnedThreadRunState()
+{
+    using ThreadRunState = CodexConversationController::ThreadRunState;
+
+    CodexHistoryController controller(nullptr, nullptr);
+    CodexConversationController* conversation = controller.conversation();
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED,
+                                                   {},
+                                                   QStringLiteral("Running elsewhere"),
+                                                   {},
+                                                   PersistedRunStatus::PERSISTED_RUN_STATUS_IN_PROGRESS),
+                                 {});
+
+    QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStatePersistedInProgress);
+    QVERIFY(!conversation->turnRunning());
+    QVERIFY(conversation->activeTurnId().isEmpty());
+
+    controller.applyHistoryEvent(
+      threadRuntimeEvent(ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_ACTIVE, QStringLiteral("turn-owned")), {});
+
+    QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateObserverOwnedRunning);
+    QVERIFY(conversation->turnRunning());
+    QCOMPARE(conversation->activeTurnId(), QStringLiteral("turn-owned"));
+
+    controller.applyHistoryEvent(threadRuntimeEvent(ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_IDLE), {});
+
+    QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateNotRunning);
+    QVERIFY(!conversation->turnRunning());
+
+    controller.applyHistoryEvent(threadRuntimeEvent(ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_DETACHED), {});
+
+    QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStatePersistedInProgress);
+    QVERIFY(!conversation->turnRunning());
+
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
+                                                   {},
+                                                   QStringLiteral("Completed"),
+                                                   {},
+                                                   PersistedRunStatus::PERSISTED_RUN_STATUS_NOT_RUNNING),
+                                 {});
+
+    QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateNotRunning);
+
+    conversation->beginLoadingThread(QStringLiteral("thread-next"), QStringLiteral("Next"));
+
+    QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateUnknown);
 }
 
 void

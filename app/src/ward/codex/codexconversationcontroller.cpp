@@ -102,6 +102,7 @@ CodexConversationController::beginLoadingThread(const QString& threadId, const Q
     timelineModel_.clear();
     interactionModel_.clear();
     setActivityHistoryPartial(false);
+    resetPersistedRunEvidence();
     setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::NotRequested);
     setErrorMessage({});
@@ -216,6 +217,12 @@ bool
 CodexConversationController::activityHistoryPartial() const
 {
     return activityHistoryPartial_;
+}
+
+CodexConversationController::ThreadRunState
+CodexConversationController::threadRunState() const
+{
+    return threadRunState_;
 }
 
 CodexConversationController::TurnState
@@ -718,6 +725,7 @@ CodexConversationController::clearSelection()
     timelineModel_.clear();
     interactionModel_.clear();
     setActivityHistoryPartial(false);
+    resetPersistedRunEvidence();
     setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::NotRequested);
     setErrorMessage({});
@@ -735,6 +743,79 @@ CodexConversationController::setActivityHistoryPartial(bool partial)
         return;
     activityHistoryPartial_ = partial;
     emit activityHistoryPartialChanged();
+}
+
+void
+CodexConversationController::applyPersistedRunEvidence(const ward::codex::v1::Conversation& conversation)
+{
+    PersistedRunStatus status = PersistedRunStatus::Unknown;
+    if (conversation.hasPersistedRunState()) {
+        const auto& state = conversation.persistedRunState();
+        using WirePersistedRunStatus = ward::codex::v1::PersistedRunStatusGadget::PersistedRunStatus;
+        switch (state.status()) {
+            case WirePersistedRunStatus::PERSISTED_RUN_STATUS_NOT_RUNNING:
+                status = PersistedRunStatus::NotRunning;
+                break;
+            case WirePersistedRunStatus::PERSISTED_RUN_STATUS_IN_PROGRESS:
+                status = PersistedRunStatus::InProgress;
+                break;
+            case WirePersistedRunStatus::PERSISTED_RUN_STATUS_UNKNOWN:
+            case WirePersistedRunStatus::PERSISTED_RUN_STATUS_UNSPECIFIED:
+            default:
+                status = PersistedRunStatus::Unknown;
+                break;
+        }
+    }
+    persistedRunStatus_ = status;
+    reconcileThreadRunState();
+}
+
+void
+CodexConversationController::resetPersistedRunEvidence()
+{
+    persistedRunStatus_ = PersistedRunStatus::Unknown;
+    reconcileThreadRunState();
+}
+
+void
+CodexConversationController::reconcileThreadRunState()
+{
+    switch (turnRuntimeState_.status) {
+        case TurnState::Running:
+            setThreadRunState(ThreadRunState::RunStateObserverOwnedRunning);
+            return;
+        case TurnState::Idle:
+            setThreadRunState(ThreadRunState::RunStateNotRunning);
+            return;
+        case TurnState::Starting:
+        case TurnState::SystemError:
+        case TurnState::Unknown:
+            setThreadRunState(ThreadRunState::RunStateUnknown);
+            return;
+        case TurnState::Detached:
+            break;
+    }
+
+    switch (persistedRunStatus_) {
+        case PersistedRunStatus::InProgress:
+            setThreadRunState(ThreadRunState::RunStatePersistedInProgress);
+            break;
+        case PersistedRunStatus::NotRunning:
+            setThreadRunState(ThreadRunState::RunStateNotRunning);
+            break;
+        case PersistedRunStatus::Unknown:
+            setThreadRunState(ThreadRunState::RunStateUnknown);
+            break;
+    }
+}
+
+void
+CodexConversationController::setThreadRunState(ThreadRunState state)
+{
+    if (threadRunState_ == state)
+        return;
+    threadRunState_ = state;
+    emit threadRunStateChanged();
 }
 
 void
@@ -757,6 +838,7 @@ CodexConversationController::setTurnState(TurnState state,
         .waitingOnApproval = waitingOnApproval,
         .waitingOnUserInput = waitingOnUserInput,
     };
+    reconcileThreadRunState();
     emit turnStateChanged();
 }
 
@@ -849,6 +931,7 @@ CodexConversationController::adoptConversation(const QString& threadId,
     timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds());
     interactionModel_.clear();
     setActivityHistoryPartial(conversation.activityHistoryIsPartial());
+    applyPersistedRunEvidence(conversation);
     setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::NotRequested);
     setErrorMessage({});
