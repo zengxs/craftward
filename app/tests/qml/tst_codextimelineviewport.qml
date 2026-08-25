@@ -324,9 +324,10 @@ Item {
             wait(20);
             const changedRow = suite.viewport.topRow;
             timelineModel.setProperty(changedRow, "desiredHeight", 220);
+            suite.viewport.recordRowHeight(changedRow, "entry-" + changedRow, 220);
             wait(20);
 
-            compare(suite.viewport.rowHeight(changedRow), 160);
+            compare(suite.viewport._rowHeightAt(changedRow), 160);
             verify(suite.viewport.flicking);
             const contentYDuringFlick = suite.viewport.contentY;
             wait(50);
@@ -334,7 +335,7 @@ Item {
 
             suite.viewport.cancelFlick();
             tryVerify(() => !suite.viewport.moving);
-            tryVerify(() => suite.viewport.rowHeight(changedRow) === 220);
+            tryVerify(() => suite.viewport._rowHeightAt(changedRow) === 220);
         }
 
         function test_followLatestTracksAppendsAndLastRowGrowth() {
@@ -371,13 +372,14 @@ Item {
                 suite.viewport.recordRowHeight(row, "entry-" + row, 80);
             tryCompare(suite.viewport, "contentHeight", 1070);
             suite.viewport.followLiveTail = false;
+            suite.viewport.forceLayout();
             suite.viewport.positionViewAtRow(6, TableView.AlignTop);
-            wait(40);
+            tryCompare(suite.viewport, "topRow", 6);
 
             const anchorRow = suite.viewport.topRow;
             const anchorY = visualY(anchorRow);
             suite.viewport.width -= 100;
-            wait(20);
+            tryVerify(() => !suite.viewport._layoutScheduled);
 
             compare(suite.viewport.topRow, anchorRow);
             fuzzyCompare(visualY(anchorRow), anchorY, 0.5);
