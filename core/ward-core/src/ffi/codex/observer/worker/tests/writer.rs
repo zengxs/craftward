@@ -465,6 +465,7 @@ fn confirms_a_turn_start_before_publishing_its_active_runtime_state() {
             turn: Turn {
                 id: "turn-2".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![],
             },
         },
@@ -562,6 +563,7 @@ fn flushes_the_latest_incremental_update_without_a_following_event() {
             turn: Turn {
                 id: "turn-2".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![],
             },
         },

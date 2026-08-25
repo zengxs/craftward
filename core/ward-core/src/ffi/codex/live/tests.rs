@@ -20,6 +20,7 @@ fn thread() -> Thread {
         turns: vec![Turn {
             id: "turn-1".to_owned(),
             status: TurnStatus::Completed,
+            timing: Default::default(),
             items: vec![ThreadItem::AgentMessage {
                 id: "agent-1".to_owned(),
                 text: "Done".to_owned(),
@@ -94,6 +95,7 @@ fn distinguishes_starting_from_a_confirmed_active_turn() {
             turn: Turn {
                 id: "turn-2".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![],
             },
         },
@@ -138,6 +140,7 @@ fn folds_incremental_messages_and_activity_content() {
             turn: Turn {
                 id: turn_id.clone(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![],
             },
         },
@@ -246,6 +249,7 @@ fn retains_the_initial_active_subscription_until_persistence_catches_up() {
     subscribed.turns.push(Turn {
         id: "turn-2".to_owned(),
         status: TurnStatus::InProgress,
+        timing: Default::default(),
         items: vec![ThreadItem::AgentMessage {
             id: "agent-2".to_owned(),
             text: "Live text".to_owned(),
@@ -264,6 +268,7 @@ fn retains_the_initial_active_subscription_until_persistence_catches_up() {
     stale.turns.push(Turn {
         id: "turn-2".to_owned(),
         status: TurnStatus::InProgress,
+        timing: Default::default(),
         items: vec![],
     });
     assert!(!projection.accept_snapshot(stale));
@@ -287,6 +292,7 @@ fn retains_a_partial_live_turn_without_hiding_new_persisted_turns() {
             turn: Turn {
                 id: "turn-2".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![ThreadItem::UserMessage {
                     id: "user-2".to_owned(),
                     content: vec![UserInput::Text("Continue".to_owned())],
@@ -300,11 +306,13 @@ fn retains_a_partial_live_turn_without_hiding_new_persisted_turns() {
     persisted.turns.push(Turn {
         id: "turn-2".to_owned(),
         status: TurnStatus::InProgress,
+        timing: Default::default(),
         items: vec![],
     });
     persisted.turns.push(Turn {
         id: "turn-3".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![ThreadItem::AgentMessage {
             id: "final-3".to_owned(),
             text: "External answer".to_owned(),
@@ -335,6 +343,7 @@ fn accepts_an_authoritative_completed_snapshot_after_missing_live_completion() {
             turn: Turn {
                 id: "turn-2".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![ThreadItem::AgentMessage {
                     id: "commentary-2".to_owned(),
                     text: "Working".to_owned(),
@@ -367,6 +376,7 @@ fn accepts_an_authoritative_completed_snapshot_after_missing_live_completion() {
     persisted.turns.push(Turn {
         id: "turn-2".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![
             ThreadItem::Activity(Activity {
                 id: "command-2".to_owned(),
@@ -438,6 +448,7 @@ fn new_thread_fork_boundary_waits_for_the_authoritative_first_turn() {
             turn: Turn {
                 id: "live-turn".to_owned(),
                 status: TurnStatus::Completed,
+                timing: Default::default(),
                 items: items.clone(),
             },
         },
@@ -449,6 +460,7 @@ fn new_thread_fork_boundary_waits_for_the_authoritative_first_turn() {
     persisted.turns = vec![Turn {
         id: "persisted-turn".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items,
     }];
     assert!(projection.accept_snapshot(persisted));
@@ -471,6 +483,7 @@ fn authoritative_snapshot_publishes_an_unchanged_live_turn_as_forkable() {
     let completed = Turn {
         id: "turn-1".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![ThreadItem::UserMessage {
             id: "user-1".to_owned(),
             content: vec![UserInput::Text("Hello".to_owned())],
@@ -507,6 +520,7 @@ fn new_thread_snapshot_does_not_duplicate_equivalent_items_when_all_ids_differ()
             turn: Turn {
                 id: "turn-1".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![],
             },
         },
@@ -541,6 +555,7 @@ fn new_thread_snapshot_does_not_duplicate_equivalent_items_when_all_ids_differ()
             turn: Turn {
                 id: "turn-1".to_owned(),
                 status: TurnStatus::Completed,
+                timing: Default::default(),
                 items: vec![],
             },
         },
@@ -551,6 +566,7 @@ fn new_thread_snapshot_does_not_duplicate_equivalent_items_when_all_ids_differ()
     persisted.turns = vec![Turn {
         id: "persisted-turn".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![
             ThreadItem::UserMessage {
                 id: "item-1".to_owned(),
@@ -578,6 +594,7 @@ fn renamed_message_matching_preserves_repeated_messages() {
     let snapshot = Turn {
         id: "turn-1".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![ThreadItem::AgentMessage {
             id: "item-1".to_owned(),
             text: "Same".to_owned(),
@@ -587,6 +604,7 @@ fn renamed_message_matching_preserves_repeated_messages() {
     let retained = Turn {
         id: "turn-1".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![
             ThreadItem::AgentMessage {
                 id: "live-1".to_owned(),
@@ -609,10 +627,34 @@ fn renamed_message_matching_preserves_repeated_messages() {
 }
 
 #[test]
+fn snapshot_merge_preserves_live_turn_timing_when_history_omits_it() {
+    let snapshot = Turn {
+        id: "turn-1".to_owned(),
+        status: TurnStatus::Completed,
+        timing: Default::default(),
+        items: vec![],
+    };
+    let retained = Turn {
+        id: "turn-1".to_owned(),
+        status: TurnStatus::Completed,
+        timing: TurnTiming::new(Some(10), Some(13), Some(2_750)),
+        items: vec![],
+    };
+
+    let merged = merge_snapshot_turn(snapshot, &retained);
+
+    assert_eq!(
+        merged.timing,
+        TurnTiming::new(Some(10), Some(13), Some(2_750))
+    );
+}
+
+#[test]
 fn renamed_message_matching_preserves_snapshot_only_prefix_order() {
     let snapshot = Turn {
         id: "turn-1".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![
             ThreadItem::Other {
                 id: "persisted-only".to_owned(),
@@ -627,6 +669,7 @@ fn renamed_message_matching_preserves_snapshot_only_prefix_order() {
     let retained = Turn {
         id: "turn-1".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![
             ThreadItem::UserMessage {
                 id: "live-user".to_owned(),
@@ -661,6 +704,7 @@ fn new_thread_snapshot_keeps_distinct_turns_without_shared_items() {
             turn: Turn {
                 id: "live-turn".to_owned(),
                 status: TurnStatus::Completed,
+                timing: Default::default(),
                 items: vec![ThreadItem::UserMessage {
                     id: "live-user".to_owned(),
                     content: vec![UserInput::Text("First".to_owned())],
@@ -674,6 +718,7 @@ fn new_thread_snapshot_keeps_distinct_turns_without_shared_items() {
     persisted.turns = vec![Turn {
         id: "persisted-turn".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![ThreadItem::UserMessage {
             id: "persisted-user".to_owned(),
             content: vec![UserInput::Text("Second".to_owned())],
@@ -693,6 +738,7 @@ fn semantic_turn_matching_does_not_cross_later_turns() {
             turn: Turn {
                 id: "live-turn".to_owned(),
                 status: TurnStatus::Completed,
+                timing: Default::default(),
                 items: vec![ThreadItem::UserMessage {
                     id: "live-user".to_owned(),
                     content: vec![UserInput::Text("Same".to_owned())],
@@ -706,6 +752,7 @@ fn semantic_turn_matching_does_not_cross_later_turns() {
     persisted.turns.push(Turn {
         id: "persisted-turn".to_owned(),
         status: TurnStatus::Completed,
+        timing: Default::default(),
         items: vec![ThreadItem::UserMessage {
             id: "persisted-user".to_owned(),
             content: vec![UserInput::Text("Same".to_owned())],
@@ -732,6 +779,7 @@ fn marks_only_the_active_turn_failed_when_the_stream_disconnects() {
             turn: Turn {
                 id: "turn-2".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![ThreadItem::Activity(Activity {
                     id: "command-2".to_owned(),
                     kind: ActivityKind::CommandExecution,

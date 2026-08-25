@@ -733,6 +733,7 @@ mod tests {
             turns: vec![Turn {
                 id: "turn-1".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![ThreadItem::AgentMessage {
                     id: "agent-1".to_owned(),
                     text: text.to_owned(),

@@ -59,6 +59,19 @@ message Conversation {
 
   // Best-effort execution evidence derived from the latest persisted turn.
   PersistedRunState persisted_run_state = 7;
+
+  // Timing retained for turns that expose reliable app-server metadata.
+  repeated TurnTiming turn_timings = 8;
+}
+
+message TurnTiming {
+  string turn_id = 1;
+  optional int64 started_at_unix_seconds = 2;
+  optional int64 completed_at_unix_seconds = 3;
+
+  // Prefer the app-server duration; otherwise this may be derived from the
+  // available second-resolution endpoints.
+  optional int64 duration_milliseconds = 4;
 }
 
 // The execution status inferred from a persisted conversation snapshot.

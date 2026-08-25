@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 use crate::{
     Activity, ActivityKind, ActivityStatus, AgentMessagePhase, CommandAction, CommandActionKind,
     Thread, ThreadActiveFlag, ThreadItem, ThreadRuntimeStatus, ThreadSubscription, ThreadSummary,
-    Turn, TurnStatus, UserInput,
+    Turn, TurnStatus, TurnTiming, UserInput,
 };
 
 #[derive(Deserialize)]
@@ -118,9 +118,16 @@ fn make_summary(
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct WireTurn {
     id: String,
     status: String,
+    #[serde(default)]
+    started_at: Option<i64>,
+    #[serde(default)]
+    completed_at: Option<i64>,
+    #[serde(default)]
+    duration_ms: Option<i64>,
     items: Vec<WireThreadItem>,
 }
 
@@ -140,6 +147,7 @@ impl WireTurn {
                 "inProgress" => TurnStatus::InProgress,
                 _ => TurnStatus::Unknown(self.status),
             },
+            timing: TurnTiming::new(self.started_at, self.completed_at, self.duration_ms),
             items,
         })
     }

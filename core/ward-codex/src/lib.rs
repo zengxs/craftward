@@ -29,5 +29,6 @@ pub use model::{
     ModelCatalog, ModelInfo, PendingInteraction, PendingInteractionKind, ReasoningEffort,
     ReasoningEffortOption, ServerInfo, Thread, ThreadActiveFlag, ThreadItem, ThreadPage,
     ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription, ThreadSummary,
-    Turn, TurnInput, TurnMode, TurnOptions, TurnPermissionPreset, TurnStatus, UserInput,
+    Turn, TurnInput, TurnMode, TurnOptions, TurnPermissionPreset, TurnStatus, TurnTiming,
+    UserInput,
 };

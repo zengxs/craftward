@@ -12,7 +12,7 @@ use crate::{
     Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
     CommandActionKind, InferenceOverride, ReasoningEffort, ThreadActiveFlag, ThreadInferenceState,
     ThreadItem, ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnInput, TurnMode,
-    TurnOptions, TurnPermissionPreset, UserInput,
+    TurnOptions, TurnPermissionPreset, TurnTiming, UserInput,
 };
 
 fn inference_state(model: Option<&str>, reasoning_effort: Option<&str>) -> ThreadInferenceState {
@@ -118,6 +118,9 @@ fn maps_conversation_items_without_exposing_the_full_wire_schema() {
             "turns": [{
                 "id": "turn-1",
                 "status": "completed",
+                "startedAt": 11,
+                "completedAt": 19,
+                "durationMs": 7_654,
                 "items": [{
                     "id": "item-1",
                     "type": "userMessage",
@@ -169,6 +172,10 @@ fn maps_conversation_items_without_exposing_the_full_wire_schema() {
 
     assert_eq!(thread.summary.name.as_deref(), Some("Example"));
     assert_eq!(thread.turns.len(), 1);
+    assert_eq!(
+        thread.turns[0].timing,
+        TurnTiming::new(Some(11), Some(19), Some(7_654))
+    );
     assert_eq!(
         thread.turns[0].items,
         vec![

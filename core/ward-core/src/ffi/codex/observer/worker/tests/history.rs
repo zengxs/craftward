@@ -514,6 +514,7 @@ async fn rejects_forking_archived_unloaded_or_nonidle_history() {
             turn: Turn {
                 id: "live-turn-2".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![],
             },
         },

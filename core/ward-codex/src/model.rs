@@ -366,11 +366,99 @@ pub enum InteractionResponseBody {
     UserInput(Vec<InteractionAnswer>),
 }
 
+/// Timing metadata reported for one Codex turn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TurnTiming {
+    started_at_unix_seconds: Option<i64>,
+    completed_at_unix_seconds: Option<i64>,
+    duration_milliseconds: Option<i64>,
+}
+
+impl TurnTiming {
+    #[must_use]
+    pub const fn new(
+        started_at_unix_seconds: Option<i64>,
+        completed_at_unix_seconds: Option<i64>,
+        duration_milliseconds: Option<i64>,
+    ) -> Self {
+        Self {
+            started_at_unix_seconds,
+            completed_at_unix_seconds,
+            duration_milliseconds,
+        }
+    }
+
+    #[must_use]
+    pub const fn started_at_unix_seconds(&self) -> Option<i64> {
+        self.started_at_unix_seconds
+    }
+
+    #[must_use]
+    pub const fn completed_at_unix_seconds(&self) -> Option<i64> {
+        self.completed_at_unix_seconds
+    }
+
+    #[must_use]
+    pub const fn duration_milliseconds(&self) -> Option<i64> {
+        self.duration_milliseconds
+    }
+
+    /// Applies fields present in a sparse update without clearing omitted fields.
+    pub fn apply_sparse_update(&mut self, update: &Self) {
+        if update.started_at_unix_seconds.is_some() {
+            self.started_at_unix_seconds = update.started_at_unix_seconds;
+        }
+        if update.completed_at_unix_seconds.is_some() {
+            self.completed_at_unix_seconds = update.completed_at_unix_seconds;
+        }
+        if update.duration_milliseconds.is_some() {
+            self.duration_milliseconds = update.duration_milliseconds;
+        }
+    }
+
+    /// Returns whether every populated field in `other` has the same value here.
+    #[must_use]
+    pub fn covers(&self, other: &Self) -> bool {
+        (other.started_at_unix_seconds.is_none()
+            || self.started_at_unix_seconds == other.started_at_unix_seconds)
+            && (other.completed_at_unix_seconds.is_none()
+                || self.completed_at_unix_seconds == other.completed_at_unix_seconds)
+            && (other.duration_milliseconds.is_none()
+                || self.duration_milliseconds == other.duration_milliseconds)
+    }
+
+    /// Fills omitted fields from the corresponding values in `fallback`.
+    pub fn fill_missing_from(&mut self, fallback: &Self) {
+        self.started_at_unix_seconds = self
+            .started_at_unix_seconds
+            .or(fallback.started_at_unix_seconds);
+        self.completed_at_unix_seconds = self
+            .completed_at_unix_seconds
+            .or(fallback.completed_at_unix_seconds);
+        self.duration_milliseconds = self
+            .duration_milliseconds
+            .or(fallback.duration_milliseconds);
+    }
+
+    /// Returns the app-server duration or derives one from valid endpoints.
+    #[must_use]
+    pub fn resolved_duration_milliseconds(&self) -> Option<i64> {
+        self.duration_milliseconds.or_else(|| {
+            self.completed_at_unix_seconds
+                .zip(self.started_at_unix_seconds)
+                .and_then(|(completed, started)| completed.checked_sub(started))
+                .and_then(|seconds| seconds.checked_mul(1_000))
+                .filter(|duration| *duration >= 0)
+        })
+    }
+}
+
 /// One persisted turn in a Codex thread.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Turn {
     pub id: String,
     pub status: TurnStatus,
+    pub timing: TurnTiming,
     pub items: Vec<ThreadItem>,
 }
 
@@ -582,7 +670,44 @@ pub enum AgentMessagePhase {
 
 #[cfg(test)]
 mod tests {
-    use super::TurnStatus;
+    use super::{TurnStatus, TurnTiming};
+
+    #[test]
+    fn merges_sparse_turn_timing_without_clearing_retained_fields() {
+        let mut timing = TurnTiming::new(Some(10), None, None);
+
+        timing.apply_sparse_update(&TurnTiming::new(None, Some(13), Some(2_750)));
+
+        assert_eq!(timing, TurnTiming::new(Some(10), Some(13), Some(2_750)));
+    }
+
+    #[test]
+    fn compares_and_fills_sparse_turn_timing_directionally() {
+        let complete = TurnTiming::new(Some(10), Some(13), Some(2_750));
+        let partial = TurnTiming::new(Some(10), None, None);
+        assert!(complete.covers(&partial));
+        assert!(!partial.covers(&complete));
+
+        let mut restored = partial;
+        restored.fill_missing_from(&complete);
+        assert_eq!(restored, complete);
+    }
+
+    #[test]
+    fn resolves_turn_duration_from_the_server_before_deriving_it() {
+        assert_eq!(
+            TurnTiming::new(Some(10), Some(13), Some(2_750)).resolved_duration_milliseconds(),
+            Some(2_750)
+        );
+        assert_eq!(
+            TurnTiming::new(Some(10), Some(13), None).resolved_duration_milliseconds(),
+            Some(3_000)
+        );
+        assert_eq!(
+            TurnTiming::new(Some(13), Some(10), None).resolved_duration_milliseconds(),
+            None
+        );
+    }
 
     #[test]
     fn classifies_known_and_unknown_turn_statuses() {

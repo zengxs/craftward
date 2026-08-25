@@ -83,7 +83,9 @@ impl Conversation {
             .filter(|name| !name.trim().is_empty())
             .unwrap_or(thread.summary.preview);
         let mut timeline = Vec::new();
+        let mut turn_timings = Vec::with_capacity(thread.turns.len());
         for turn in thread.turns {
+            turn_timings.push(turn_timing(&turn));
             for item in turn.items {
                 let body = match item {
                     CodexThreadItem::Activity(activity) => {
@@ -105,7 +107,17 @@ impl Conversation {
             activity_history_is_partial: true,
             forkable_turn_ids,
             persisted_run_state: Some(persisted_run_state),
+            turn_timings,
         }
+    }
+}
+
+fn turn_timing(turn: &ward_codex::Turn) -> TurnTiming {
+    TurnTiming {
+        turn_id: turn.id.clone(),
+        started_at_unix_seconds: turn.timing.started_at_unix_seconds(),
+        completed_at_unix_seconds: turn.timing.completed_at_unix_seconds(),
+        duration_milliseconds: turn.timing.resolved_duration_milliseconds(),
     }
 }
 
@@ -366,7 +378,8 @@ mod tests {
         CommandAction as CodexCommandAction, CommandActionKind as CodexCommandActionKind,
         InteractionAnswer, InteractionResponse as CodexInteractionResponse,
         InteractionResponseBody, Thread as CodexThread, ThreadItem as CodexThreadItem,
-        ThreadSummary as CodexThreadSummary, Turn, TurnStatus, UserInput,
+        ThreadSummary as CodexThreadSummary, Turn, TurnStatus, TurnTiming as CodexTurnTiming,
+        UserInput,
     };
 
     use super::*;
@@ -386,6 +399,7 @@ mod tests {
                 turns: vec![Turn {
                     id: "turn-1".to_owned(),
                     status: TurnStatus::Completed,
+                    timing: CodexTurnTiming::new(Some(10), Some(13), Some(2_750)),
                     items: vec![
                         CodexThreadItem::UserMessage {
                             id: "user-1".to_owned(),
@@ -447,6 +461,15 @@ mod tests {
         );
         assert_eq!(decoded.timeline.len(), 4);
         assert!(decoded.timeline.iter().all(|item| item.turn_id == "turn-1"));
+        assert_eq!(
+            decoded.turn_timings,
+            [TurnTiming {
+                turn_id: "turn-1".to_owned(),
+                started_at_unix_seconds: Some(10),
+                completed_at_unix_seconds: Some(13),
+                duration_milliseconds: Some(2_750),
+            }]
+        );
 
         let timeline_item::Body::Message(user) = decoded.timeline[0].body.as_ref().unwrap() else {
             panic!("the first timeline item should be the user message");
@@ -489,6 +512,26 @@ mod tests {
     }
 
     #[test]
+    fn derives_turn_duration_when_the_app_server_omits_it() {
+        let turn = Turn {
+            id: "turn-1".to_owned(),
+            status: TurnStatus::Completed,
+            timing: CodexTurnTiming::new(Some(10), Some(13), None),
+            items: vec![],
+        };
+
+        assert_eq!(
+            turn_timing(&turn),
+            TurnTiming {
+                turn_id: "turn-1".to_owned(),
+                started_at_unix_seconds: Some(10),
+                completed_at_unix_seconds: Some(13),
+                duration_milliseconds: Some(3_000),
+            }
+        );
+    }
+
+    #[test]
     fn derives_execution_evidence_from_the_latest_persisted_turn() {
         fn thread_with_turns(turns: Vec<Turn>) -> CodexThread {
             CodexThread {
@@ -517,6 +560,7 @@ mod tests {
             thread_with_turns(vec![Turn {
                 id: "turn-running".to_owned(),
                 status: TurnStatus::InProgress,
+                timing: Default::default(),
                 items: vec![],
             }]),
             vec![],
@@ -533,6 +577,7 @@ mod tests {
             thread_with_turns(vec![Turn {
                 id: "turn-future".to_owned(),
                 status: TurnStatus::Unknown("futureStatus".to_owned()),
+                timing: Default::default(),
                 items: vec![],
             }]),
             vec![],

@@ -3,7 +3,7 @@
 
 use ward_codex::{
     ActivityStatus, ActivityUpdate, Thread, ThreadActiveFlag, ThreadItem, ThreadRuntimeStatus,
-    ThreadStreamEvent, ThreadSubscription, Turn, TurnStatus,
+    ThreadStreamEvent, ThreadSubscription, Turn, TurnStatus, TurnTiming,
 };
 
 /// The application-level runtime state of a subscribed thread.
@@ -244,6 +244,7 @@ impl LiveThreadProjection {
         };
         if let Some(turn) = thread.turns.iter_mut().find(|turn| turn.id == update.id) {
             turn.status = update.status.clone();
+            turn.timing.apply_sparse_update(&update.timing);
             for item in &update.items {
                 upsert_item(&mut turn.items, item.clone());
             }
@@ -412,6 +413,7 @@ fn turn_mut_or_insert<'a>(thread: &'a mut Thread, turn_id: &str) -> &'a mut Turn
     thread.turns.push(Turn {
         id: turn_id.to_owned(),
         status: TurnStatus::InProgress,
+        timing: TurnTiming::default(),
         items: Vec::new(),
     });
     thread
@@ -453,6 +455,7 @@ fn thread_item_id(item: &ThreadItem) -> &str {
 
 fn turn_covers(snapshot: &Turn, retained: &Turn) -> bool {
     snapshot.status == retained.status
+        && snapshot.timing.covers(&retained.timing)
         && retained.items.iter().all(|retained_item| {
             snapshot.items.iter().any(|snapshot_item| {
                 thread_item_id(snapshot_item) == thread_item_id(retained_item)
@@ -540,6 +543,7 @@ fn merge_snapshot_turn(mut snapshot: Turn, retained: &Turn) -> Turn {
     if !snapshot_is_terminal {
         snapshot.status = retained.status.clone();
     }
+    snapshot.timing.fill_missing_from(&retained.timing);
 
     let mut matched_snapshot_items = vec![false; snapshot.items.len()];
     let mut snapshot_cursor = 0;
