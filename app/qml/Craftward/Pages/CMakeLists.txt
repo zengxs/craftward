@@ -4,17 +4,22 @@ qt_add_qml_module(CraftwardPages
     QML_FILES
         AboutPage.qml
         CodexApprovalActionState.qml
+        CodexActivityGlyph.qml
         CodexCatalogSelector.qml
         CodexComposer.qml
         CodexComposerState.qml
         CodexConversationRenameDialog.qml
         CodexConversationRenameState.qml
+        CodexElapsedBadge.qml
         CodexHistoryActionState.qml
         CodexHistoryLayoutState.qml
         CodexHistoryPage.qml
         CodexInteractionCard.qml
+        CodexMessageActions.qml
+        CodexMessageActionState.qml
         CodexModelSelector.qml
         CodexReasoningEffortSelector.qml
+        CodexTimelineDetailHeader.qml
         CodexTimelinePageWindow.qml
         CodexTimelineRow.qml
         CodexTimelineView.qml

@@ -767,34 +767,39 @@ version 3 or later.</translation>
         <translation>The selected effort is applied when the next turn starts and remains active for later turns.</translation>
     </message>
     <message id="craftward.codex.timeline.processed_seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="59"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="61"/>
         <source>Processed %1 s</source>
         <translation>Processed %1 s</translation>
     </message>
     <message id="craftward.codex.timeline.duration.hours_minutes_seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="88"/>
+        <location filename="../qml/Craftward/Pages/CodexElapsedBadge.qml" line="39"/>
         <source>%1 h %2 min %3 s</source>
         <translation>%1 h %2 min %3 s</translation>
     </message>
     <message id="craftward.codex.timeline.duration.minutes_seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="90"/>
+        <location filename="../qml/Craftward/Pages/CodexElapsedBadge.qml" line="41"/>
         <source>%1 min %2 s</source>
         <translation>%1 min %2 s</translation>
     </message>
     <message id="craftward.codex.timeline.duration.seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="91"/>
+        <location filename="../qml/Craftward/Pages/CodexElapsedBadge.qml" line="42"/>
         <source>%1 s</source>
         <translation>%1 s</translation>
     </message>
     <message id="craftward.codex.timeline.details_count">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="229"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineDetailHeader.qml" line="65"/>
         <source>Details · %1</source>
         <translation>Details · %1</translation>
     </message>
     <message id="craftward.codex.timeline.elapsed">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="229"/>
+        <location filename="../qml/Craftward/Pages/CodexElapsedBadge.qml" line="18"/>
         <source>Elapsed %1</source>
         <translation>Elapsed %1</translation>
+    </message>
+    <message id="craftward.codex.timeline.elapsed_label">
+        <location filename="../qml/Craftward/Pages/CodexTimelineDetailHeader.qml" line="47"/>
+        <source>Elapsed</source>
+        <translation>Elapsed</translation>
     </message>
     <message id="craftward.codex.timeline.author.you">
         <source>You</source>
@@ -805,15 +810,24 @@ version 3 or later.</translation>
         <translation type="vanished">Codex · Commentary</translation>
     </message>
     <message id="craftward.codex.timeline.activity_count">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="236"/>
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="327"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="318"/>
         <source>× %1</source>
         <translation>× %1</translation>
     </message>
     <message id="craftward.codex.timeline.fork.action">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="144"/>
+        <location filename="../qml/Craftward/Pages/CodexMessageActions.qml" line="76"/>
         <source>Fork from here</source>
         <translation>Fork from here</translation>
+    </message>
+    <message id="craftward.codex.timeline.copy.action">
+        <location filename="../qml/Craftward/Pages/CodexMessageActions.qml" line="58"/>
+        <source>Copy</source>
+        <translation>Copy</translation>
+    </message>
+    <message id="craftward.codex.timeline.copy.copied">
+        <location filename="../qml/Craftward/Pages/CodexMessageActions.qml" line="58"/>
+        <source>Copied</source>
+        <translation>Copied</translation>
     </message>
     <message id="craftward.codex.timeline.loading">
         <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="66"/>
@@ -920,9 +934,9 @@ version 3 or later.</translation>
         <translation>Pasted image.png</translation>
     </message>
     <message id="craftward.codex.error.history_observer_unavailable">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="333"/>
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="384"/>
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="591"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="340"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="391"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="598"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="149"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="172"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="202"/>
@@ -935,38 +949,38 @@ version 3 or later.</translation>
         <translation>The Codex history observer is unavailable.</translation>
     </message>
     <message id="craftward.codex.error.write_access_check">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="343"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="350"/>
         <source>Writing access could not be checked for this conversation.</source>
         <translation>Writing access could not be checked for this conversation.</translation>
     </message>
     <message id="craftward.codex.error.write_access_release">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="368"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="375"/>
         <source>Writing access could not be released for this conversation.</source>
         <translation>Writing access could not be released for this conversation.</translation>
     </message>
     <message id="craftward.codex.error.turn_start">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="422"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="429"/>
         <source>The Codex turn could not be started.</source>
         <translation>The Codex turn could not be started.</translation>
     </message>
     <message id="craftward.codex.error.turn_steer">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="604"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="611"/>
         <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="100"/>
         <source>The Codex turn could not be guided.</source>
         <translation>The Codex turn could not be guided.</translation>
     </message>
     <message id="craftward.codex.error.turn_stop">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="626"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="633"/>
         <source>The Codex turn could not be stopped.</source>
         <translation>The Codex turn could not be stopped.</translation>
     </message>
     <message id="craftward.codex.error.response_encode">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="881"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="897"/>
         <source>The Codex response could not be encoded: %1</source>
         <translation>The Codex response could not be encoded: %1</translation>
     </message>
     <message id="craftward.codex.error.response_send">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="894"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="910"/>
         <source>The Codex response could not be sent.</source>
         <translation>The Codex response could not be sent.</translation>
     </message>
@@ -1125,147 +1139,147 @@ version 3 or later.</translation>
         <translation>Ward Core returned an unsupported Codex history event.</translation>
     </message>
     <message id="craftward.codex.timeline.activity.reasoning">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="265"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="317"/>
         <source>Reasoning</source>
         <translation>Reasoning</translation>
     </message>
     <message id="craftward.codex.timeline.activity.plan">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="267"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="319"/>
         <source>Planned</source>
         <translation>Planned</translation>
     </message>
     <message id="craftward.codex.timeline.activity.read_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="269"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="321"/>
         <source>Read files</source>
         <translation>Read files</translation>
     </message>
     <message id="craftward.codex.timeline.activity.list_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="271"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="323"/>
         <source>Listed files</source>
         <translation>Listed files</translation>
     </message>
     <message id="craftward.codex.timeline.activity.search_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="273"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="325"/>
         <source>Searched files</source>
         <translation>Searched files</translation>
     </message>
     <message id="craftward.codex.timeline.activity.run_commands">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="275"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="327"/>
         <source>Ran commands</source>
         <translation>Ran commands</translation>
     </message>
     <message id="craftward.codex.timeline.activity.change_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="277"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="329"/>
         <source>Changed files</source>
         <translation>Changed files</translation>
     </message>
     <message id="craftward.codex.timeline.activity.use_tools">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="279"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="331"/>
         <source>Used tools</source>
         <translation>Used tools</translation>
     </message>
     <message id="craftward.codex.timeline.activity.coordinate_agents">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="281"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="333"/>
         <source>Coordinated agents</source>
         <translation>Coordinated agents</translation>
     </message>
     <message id="craftward.codex.timeline.activity.web_search">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="283"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="335"/>
         <source>Searched the web</source>
         <translation>Searched the web</translation>
     </message>
     <message id="craftward.codex.timeline.activity.view_images">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="285"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="337"/>
         <source>Viewed images</source>
         <translation>Viewed images</translation>
     </message>
     <message id="craftward.codex.timeline.activity.wait">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="287"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="339"/>
         <source>Waited</source>
         <translation>Waited</translation>
     </message>
     <message id="craftward.codex.timeline.activity.generate_images">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="289"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="341"/>
         <source>Generated images</source>
         <translation>Generated images</translation>
     </message>
     <message id="craftward.codex.timeline.activity.review_started">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="291"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="343"/>
         <source>Entered review mode</source>
         <translation>Entered review mode</translation>
     </message>
     <message id="craftward.codex.timeline.activity.review_completed">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="293"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="345"/>
         <source>Exited review mode</source>
         <translation>Exited review mode</translation>
     </message>
     <message id="craftward.codex.timeline.activity.context_compaction">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="295"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="347"/>
         <source>Compacted context</source>
         <translation>Compacted context</translation>
     </message>
     <message id="craftward.codex.timeline.activity.other">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="298"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="350"/>
         <source>Activity</source>
         <translation>Activity</translation>
     </message>
     <message id="craftward.codex.timeline.status.in_progress">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="353"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="405"/>
         <source>In progress</source>
         <translation>In progress</translation>
     </message>
     <message id="craftward.codex.timeline.status.failed">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="357"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="409"/>
         <source>Failed</source>
         <translation>Failed</translation>
     </message>
     <message id="craftward.codex.timeline.status.declined">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="359"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="411"/>
         <source>Declined</source>
         <translation>Declined</translation>
     </message>
     <message id="craftward.codex.timeline.status.unknown">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="361"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="413"/>
         <source>Unknown status</source>
         <translation>Unknown status</translation>
     </message>
     <message id="craftward.codex.timeline.command.read_file">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="381"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="433"/>
         <source>Read a file</source>
         <translation>Read a file</translation>
     </message>
     <message id="craftward.codex.timeline.command.read_target">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="382"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="434"/>
         <source>Read %1</source>
         <translation>Read %1</translation>
     </message>
     <message id="craftward.codex.timeline.command.list_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="388"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="440"/>
         <source>List files</source>
         <translation>List files</translation>
     </message>
     <message id="craftward.codex.timeline.command.list_files_in">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="389"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="441"/>
         <source>List files in %1</source>
         <translation>List files in %1</translation>
     </message>
     <message id="craftward.codex.timeline.command.search_in">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="394"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="446"/>
         <source>Search for “%1” in %2</source>
         <translation>Search for “%1” in %2</translation>
     </message>
     <message id="craftward.codex.timeline.command.search">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="398"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="450"/>
         <source>Search for “%1”</source>
         <translation>Search for “%1”</translation>
     </message>
     <message id="craftward.codex.timeline.command.search_location">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="401"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="453"/>
         <source>Search in %1</source>
         <translation>Search in %1</translation>
     </message>
     <message id="craftward.codex.timeline.command.search_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="403"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="455"/>
         <source>Search files</source>
         <translation>Search files</translation>
     </message>

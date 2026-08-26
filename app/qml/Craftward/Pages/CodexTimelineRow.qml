@@ -6,25 +6,27 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Craftward.Codex
 import Craftward.Components
 import Craftward.Design
 
 Control {
     id: root
 
-    required property CodexTimelinePageModel timelineModel
+    required property var timelineModel
     property int sourceRow: -1
     property int dataRevision: -1
     required property bool turnExpanded
+    required property bool hasRunningEvidence
     required property bool forkEnabled
     required property bool showForkActions
     required property double wallClockUnixMilliseconds
     readonly property string entryId: String(root.value("entryId") ?? "")
     readonly property string turnId: String(root.value("turnId") ?? "")
-    readonly property bool forkBoundary: Boolean(root.value("forkBoundary"))
+    readonly property bool turnForkable: Boolean(root.value("turnForkable"))
+    readonly property bool latestTurn: Boolean(root.value("latestTurn"))
     readonly property bool activityGroup: Boolean(root.value("activityGroup"))
     readonly property bool fromUser: Boolean(root.value("fromUser"))
+    readonly property bool finalAnswer: Boolean(root.value("finalAnswer"))
     readonly property bool detailRow: Boolean(root.value("detailRow"))
     readonly property bool firstDetailInTurn: Boolean(root.value("firstDetailInTurn"))
     readonly property int detailCountInTurn: Number(root.value("detailCountInTurn"))
@@ -79,18 +81,6 @@ Control {
         return Number.isFinite(startedAt) && Number.isFinite(completedAt) && completedAt >= startedAt ? (completedAt - startedAt) * 1000 : -1;
     }
 
-    function formattedDuration(durationMilliseconds) {
-        const totalSeconds = Math.max(0, Math.floor(durationMilliseconds / 1000));
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        const seconds = totalSeconds % 60;
-        if (hours > 0)
-            return /*% "%1 h %2 min %3 s" */ qsTrId("craftward.codex.timeline.duration.hours_minutes_seconds").arg(hours).arg(minutes).arg(seconds);
-        if (minutes > 0)
-            return /*% "%1 min %2 s" */ qsTrId("craftward.codex.timeline.duration.minutes_seconds").arg(minutes).arg(seconds);
-        return /*% "%1 s" */ qsTrId("craftward.codex.timeline.duration.seconds").arg(seconds);
-    }
-
     padding: 0
     background: null
     visible: presentationVisible
@@ -136,15 +126,6 @@ Control {
             visible: active
             sourceComponent: root.activityGroup ? activityGroupComponent : commentaryComponent
         }
-
-        ToolButton {
-            enabled: root.forkEnabled
-            font.pixelSize: 11
-            implicitHeight: visible ? 24 : 0
-            text: /*% "Fork from here" */ qsTrId("craftward.codex.timeline.fork.action")
-            visible: root.forkBoundary && root.showForkActions && (!root.detailRow || root.turnExpanded)
-            onClicked: root.forkRequested(root.turnId)
-        }
     }
 
     Component {
@@ -154,11 +135,11 @@ Control {
             id: messageRoot
 
             width: primaryMessageLoader.width
-            readonly property real maximumWidth: root.fromUser ? Math.min(width * 0.72, 680) : Math.min(width, 820)
+            readonly property real userMaximumWidth: Math.min(width * 0.72, 680)
             readonly property real messageHorizontalPadding: root.fromUser ? 14 : 0
             readonly property real messageVerticalPadding: root.fromUser ? 10 : 0
-            readonly property real messageWidth: root.fromUser ? Math.min(maximumWidth, Math.max(120, userTextMetrics.advanceWidth + messageHorizontalPadding * 2)) : maximumWidth
-            implicitHeight: messageBody.height
+            readonly property real messageWidth: root.fromUser ? Math.min(userMaximumWidth, Math.max(120, userTextMetrics.advanceWidth + messageHorizontalPadding * 2)) : width
+            implicitHeight: messageContent.height
 
             TextMetrics {
                 id: userTextMetrics
@@ -168,26 +149,67 @@ Control {
             }
 
             Item {
-                id: messageBody
+                id: messageContent
 
-                x: root.fromUser ? messageRoot.width - width - 6 : 0
+                x: root.fromUser ? messageRoot.width - width : 0
                 width: messageRoot.messageWidth
-                height: messageRenderer.implicitHeight + messageRoot.messageVerticalPadding * 2
+                height: messageBody.height + messageActions.implicitHeight + (messageActions.available ? 2 : 0)
 
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 12
-                    color: Theme.userMessageSurface
-                    visible: root.fromUser
+                HoverHandler {
+                    id: messageHover
                 }
 
-                Loader {
-                    id: messageRenderer
+                CodexMessageActionState {
+                    id: messageActionState
 
-                    x: messageRoot.messageHorizontalPadding
-                    y: messageRoot.messageVerticalPadding
-                    width: parent.width - messageRoot.messageHorizontalPadding * 2
-                    sourceComponent: messageComponent
+                    fromUser: root.fromUser
+                    finalAnswer: root.finalAnswer
+                    latestTurn: root.latestTurn
+                    hasRunningEvidence: root.hasRunningEvidence
+                    hovered: messageHover.hovered
+                    copyFeedbackActive: messageActions.copied
+                    turnForkable: root.turnForkable
+                    showForkActions: root.showForkActions
+                }
+
+                Item {
+                    id: messageBody
+
+                    width: parent.width
+                    height: messageRenderer.implicitHeight + messageRoot.messageVerticalPadding * 2
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 12
+                        color: Theme.userMessageSurface
+                        visible: root.fromUser
+                    }
+
+                    Loader {
+                        id: messageRenderer
+
+                        x: messageRoot.messageHorizontalPadding
+                        y: messageRoot.messageVerticalPadding
+                        width: parent.width - messageRoot.messageHorizontalPadding * 2
+                        sourceComponent: messageComponent
+                    }
+                }
+
+                CodexMessageActions {
+                    id: messageActions
+
+                    objectName: "codexMessageActions"
+                    x: root.fromUser ? parent.width - width : 0
+                    y: messageBody.height + 2
+                    available: messageActionState.available
+                    revealed: messageActionState.revealed
+                    forkVisible: messageActionState.forkVisible
+                    forkEnabled: root.forkEnabled
+                    onCopyRequested: {
+                        if (ApplicationClipboard.copyText(root.textValue("text")))
+                            messageActions.confirmCopied();
+                    }
+                    onForkRequested: root.forkRequested(root.turnId)
                 }
             }
         }
@@ -207,44 +229,13 @@ Control {
     Component {
         id: detailHeaderComponent
 
-        ItemDelegate {
-            id: detailHeader
-
-            readonly property real turnDurationMilliseconds: root.resolvedTurnDurationMilliseconds()
-
+        CodexTimelineDetailHeader {
             width: detailHeaderLoader.width
-            implicitHeight: 32
-            leftPadding: 0
-            rightPadding: 8
-            topPadding: 4
-            bottomPadding: 4
-            hoverEnabled: true
-            background: null
-            onClicked: root.toggleTurnRequested(root.turnId)
-
-            contentItem: Row {
-                spacing: 6
-
-                Label {
-                    text: detailHeader.turnDurationMilliseconds >= 0 ? /*% "Elapsed %1" */ qsTrId("craftward.codex.timeline.elapsed").arg(root.formattedDuration(detailHeader.turnDurationMilliseconds)) : /*% "Details · %1" */ qsTrId("craftward.codex.timeline.details_count").arg(root.detailCountInTurn)
-                    color: root.palette.placeholderText
-                    font.pixelSize: 12
-                    font.weight: Font.DemiBold
-                }
-
-                Label {
-                    text: /*% "× %1" */ qsTrId("craftward.codex.timeline.activity_count").arg(root.detailCountInTurn)
-                    color: root.palette.placeholderText
-                    font.pixelSize: 11
-                    visible: detailHeader.turnDurationMilliseconds >= 0 && root.detailCountInTurn > 0
-                }
-
-                AnimatedChevron {
-                    expanded: root.turnExpanded
-                    chevronColor: root.palette.placeholderText
-                    onClicked: root.toggleTurnRequested(root.turnId)
-                }
-            }
+            durationMilliseconds: root.resolvedTurnDurationMilliseconds()
+            detailCount: root.detailCountInTurn
+            expanded: root.turnExpanded
+            font: root.font
+            onToggleRequested: root.toggleTurnRequested(root.turnId)
         }
     }
 
@@ -252,7 +243,7 @@ Control {
         id: commentaryComponent
 
         MarkupDocumentView {
-            width: Math.min(detailBodyLoader.width, 820)
+            width: detailBodyLoader.width
             documentModel: root.value("markupDocument") ?? null
             textColor: root.palette.text
             font: root.font
@@ -269,11 +260,11 @@ Control {
             readonly property bool rowRunning: Boolean(root.value("running"))
             spacing: 7
 
-            Rectangle {
-                Layout.preferredWidth: 7
-                Layout.preferredHeight: 7
-                radius: width / 2
-                color: parent.rowFailed ? Theme.dangerForeground : (parent.rowRunning ? root.palette.highlight : root.palette.mid)
+            CodexActivityGlyph {
+                Layout.preferredWidth: 16
+                Layout.preferredHeight: 16
+                presentationKind: root.textValue("activityPresentationKind")
+                glyphColor: parent.rowFailed ? Theme.dangerForeground : (parent.rowRunning ? root.palette.highlight : root.palette.mid)
             }
 
             Label {
@@ -310,11 +301,11 @@ Control {
                 contentItem: RowLayout {
                     spacing: 7
 
-                    Rectangle {
-                        Layout.preferredWidth: 7
-                        Layout.preferredHeight: 7
-                        radius: width / 2
-                        color: activityGroup.rowFailed ? Theme.dangerForeground : (activityGroup.rowRunning ? root.palette.highlight : root.palette.mid)
+                    CodexActivityGlyph {
+                        Layout.preferredWidth: 16
+                        Layout.preferredHeight: 16
+                        presentationKind: root.textValue("activityPresentationKind")
+                        glyphColor: activityGroup.rowFailed ? Theme.dangerForeground : (activityGroup.rowRunning ? root.palette.highlight : root.palette.mid)
                     }
 
                     Label {

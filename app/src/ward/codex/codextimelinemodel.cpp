@@ -69,6 +69,10 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
             return row.turnId;
         case ForkBoundaryRole:
             return row.forkBoundary;
+        case TurnForkableRole:
+            return row.turnForkable;
+        case LatestTurnRole:
+            return row.latestTurn;
         case ActivityGroupRole:
             return row.activityGroup;
         case StandaloneActivityRole:
@@ -106,6 +110,8 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
             return row.turnTiming.hasDurationMilliseconds()
                      ? QVariant::fromValue(static_cast<qint64>(row.turnTiming.durationMilliseconds()))
                      : QVariant();
+        case ActivityPresentationKindRole:
+            return row.activityGroup ? activityPresentationKindName(row.activityKind) : QString();
         default:
             return {};
     }
@@ -118,6 +124,8 @@ CodexTimelineModel::roleNames() const
         { EntryIdRole, "entryId" },
         { TurnIdRole, "turnId" },
         { ForkBoundaryRole, "forkBoundary" },
+        { TurnForkableRole, "turnForkable" },
+        { LatestTurnRole, "latestTurn" },
         { ActivityGroupRole, "activityGroup" },
         { StandaloneActivityRole, "standaloneActivity" },
         { FromUserRole, "fromUser" },
@@ -133,6 +141,7 @@ CodexTimelineModel::roleNames() const
         { TurnStartedAtUnixSecondsRole, "turnStartedAtUnixSeconds" },
         { TurnCompletedAtUnixSecondsRole, "turnCompletedAtUnixSeconds" },
         { TurnDurationMillisecondsRole, "turnDurationMilliseconds" },
+        { ActivityPresentationKindRole, "activityPresentationKind" },
     };
 }
 
@@ -180,13 +189,14 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline,
         row.activities.append(std::move(activity));
         rows.append(std::move(row));
     }
-    for (qsizetype index = 0; index < rows.size(); ++index) {
-        rows[index].forkBoundary = forkableTurnIds.contains(rows[index].turnId) &&
-                                   (index + 1 == rows.size() || rows[index + 1].turnId != rows[index].turnId);
-    }
     const QString lastTurnId = rows.isEmpty() ? QString() : rows.constLast().turnId;
     using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
-    for (TimelineRow& row : rows) {
+    for (qsizetype index = 0; index < rows.size(); ++index) {
+        TimelineRow& row = rows[index];
+        row.turnForkable = forkableTurnIds.contains(row.turnId);
+        row.latestTurn = row.turnId == lastTurnId;
+        row.forkBoundary = row.turnForkable &&
+                           (index + 1 == rows.size() || rows[index + 1].turnId != row.turnId);
         row.markupFinalized = !row.activityGroup && (row.message.role() == MessageRole::MESSAGE_ROLE_USER ||
                                                      row.turnId != lastTurnId || forkableTurnIds.contains(row.turnId));
     }
@@ -254,6 +264,48 @@ CodexTimelineModel::presentationKind(const CodexActivity& activity) const
         case ActivityKind::ACTIVITY_KIND_UNSPECIFIED:
         default:
             return ActivityPresentationKind::Activity;
+    }
+}
+
+QString
+CodexTimelineModel::activityPresentationKindName(ActivityPresentationKind kind)
+{
+    switch (kind) {
+        case ActivityPresentationKind::Reasoning:
+            return QStringLiteral("reasoning");
+        case ActivityPresentationKind::Plan:
+            return QStringLiteral("plan");
+        case ActivityPresentationKind::ReadFiles:
+            return QStringLiteral("readFiles");
+        case ActivityPresentationKind::ListFiles:
+            return QStringLiteral("listFiles");
+        case ActivityPresentationKind::SearchFiles:
+            return QStringLiteral("searchFiles");
+        case ActivityPresentationKind::RunCommands:
+            return QStringLiteral("runCommands");
+        case ActivityPresentationKind::FileChange:
+            return QStringLiteral("fileChange");
+        case ActivityPresentationKind::ToolCall:
+            return QStringLiteral("toolCall");
+        case ActivityPresentationKind::Collaboration:
+            return QStringLiteral("collaboration");
+        case ActivityPresentationKind::WebSearch:
+            return QStringLiteral("webSearch");
+        case ActivityPresentationKind::ImageView:
+            return QStringLiteral("imageView");
+        case ActivityPresentationKind::Wait:
+            return QStringLiteral("wait");
+        case ActivityPresentationKind::ImageGeneration:
+            return QStringLiteral("imageGeneration");
+        case ActivityPresentationKind::ReviewStarted:
+            return QStringLiteral("reviewStarted");
+        case ActivityPresentationKind::ReviewCompleted:
+            return QStringLiteral("reviewCompleted");
+        case ActivityPresentationKind::ContextCompaction:
+            return QStringLiteral("contextCompaction");
+        case ActivityPresentationKind::Activity:
+        default:
+            return QStringLiteral("activity");
     }
 }
 
@@ -448,6 +500,7 @@ bool
 CodexTimelineModel::rowsEqual(const TimelineRow& left, const TimelineRow& right) const
 {
     return left.entryId == right.entryId && left.turnId == right.turnId && left.forkBoundary == right.forkBoundary &&
+           left.turnForkable == right.turnForkable && left.latestTurn == right.latestTurn &&
            left.activityGroup == right.activityGroup && left.message == right.message &&
            left.markupFinalized == right.markupFinalized && left.activityKind == right.activityKind &&
            left.activities == right.activities && left.turnTiming == right.turnTiming;

@@ -2,6 +2,8 @@ qt_add_qml_module(CraftwardComponents
     STATIC
     URI Craftward.Components
     SOURCES
+        "${PROJECT_SOURCE_DIR}/src/components/applicationclipboard.cpp"
+        "${PROJECT_SOURCE_DIR}/src/components/applicationclipboard.h"
         "${PROJECT_SOURCE_DIR}/src/components/macos/typography.mm"
         "${PROJECT_SOURCE_DIR}/src/components/macos/windowmovehelper.mm"
         "${PROJECT_SOURCE_DIR}/src/components/typography.h"

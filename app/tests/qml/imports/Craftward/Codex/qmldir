@@ -1,0 +1,3 @@
+module Craftward.Codex
+CodexConversationController 1.0 CodexConversationController.qml
+CodexTimelinePageModel 1.0 CodexTimelinePageModel.qml

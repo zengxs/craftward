@@ -79,6 +79,7 @@ Control {
             width: parent ? parent.width : 0
             timelineModel: pageModel
             turnExpanded: root.turnExpanded(turnId)
+            hasRunningEvidence: root.controller !== null && root.controller.hasRunningEvidence
             forkEnabled: root.forkEnabled
             showForkActions: root.showForkActions
             wallClockUnixMilliseconds: root.wallClockUnixMilliseconds

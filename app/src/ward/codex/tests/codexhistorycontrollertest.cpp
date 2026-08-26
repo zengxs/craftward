@@ -20,6 +20,8 @@ using Conversation = ward::codex::v1::Conversation;
 using Activity = ward::codex::v1::Activity;
 using ActivityKind = ward::codex::v1::ActivityKindGadget::ActivityKind;
 using ActivityStatus = ward::codex::v1::ActivityStatusGadget::ActivityStatus;
+using CommandAction = ward::codex::v1::CommandAction;
+using CommandActionKind = ward::codex::v1::CommandActionKindGadget::CommandActionKind;
 using HistoryEvent = ward::codex::v1::HistoryEvent;
 using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKind;
 using Message = ward::codex::v1::Message;
@@ -107,17 +109,30 @@ messageItem(const QString& turnId, const QString& messageId, MessageRole role, M
 }
 
 TimelineItem
-activityItem(const QString& turnId, const QString& activityId, ActivityKind kind, ActivityStatus status)
+activityItem(const QString& turnId,
+             const QString& activityId,
+             ActivityKind kind,
+             ActivityStatus status,
+             QList<CommandAction> commandActions = {})
 {
     Activity activity;
     activity.setActivityId(activityId);
     activity.setKind(kind);
     activity.setStatus(status);
+    activity.setCommandActions(std::move(commandActions));
 
     TimelineItem item;
     item.setTurnId(turnId);
     item.setActivity(std::move(activity));
     return item;
+}
+
+CommandAction
+commandAction(CommandActionKind kind)
+{
+    CommandAction action;
+    action.setKind(kind);
+    return action;
 }
 
 HistoryEvent
@@ -210,6 +225,7 @@ class CodexHistoryControllerTest : public QObject
     void updatesPollingVisibilityState();
     void retranslatesTimelinePresentationWhenRequested();
     void classifiesContextCompactionAsStandaloneActivity();
+    void exposesStableActivityPresentationKinds();
     void exposesTurnTimingMetadata();
     void trimsBoundaryLineBreaksFromDisplayedUserMessages();
     void adaptsMessageFormatsAndPreservesMarkupModelsAcrossStreamingUpdates();
@@ -337,6 +353,61 @@ CodexHistoryControllerTest::classifiesContextCompactionAsStandaloneActivity()
     QVERIFY(model.data(model.index(2), CodexTimelineModel::StandaloneActivityRole).toBool());
     QCOMPARE(model.data(model.index(1), CodexTimelineModel::ActivityCountRole).toInt(), 1);
     QCOMPARE(model.data(model.index(2), CodexTimelineModel::ActivityCountRole).toInt(), 1);
+}
+
+void
+CodexHistoryControllerTest::exposesStableActivityPresentationKinds()
+{
+    CodexTimelineModel model;
+    model.reconcileTimeline(
+      {
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("read"),
+                     ActivityKind::ACTIVITY_KIND_COMMAND_EXECUTION,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED,
+                     { commandAction(CommandActionKind::COMMAND_ACTION_KIND_READ) }),
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("list"),
+                     ActivityKind::ACTIVITY_KIND_COMMAND_EXECUTION,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED,
+                     { commandAction(CommandActionKind::COMMAND_ACTION_KIND_LIST_FILES) }),
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("search"),
+                     ActivityKind::ACTIVITY_KIND_COMMAND_EXECUTION,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED,
+                     { commandAction(CommandActionKind::COMMAND_ACTION_KIND_SEARCH) }),
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("command"),
+                     ActivityKind::ACTIVITY_KIND_COMMAND_EXECUTION,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED,
+                     { commandAction(CommandActionKind::COMMAND_ACTION_KIND_OTHER) }),
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("edit"),
+                     ActivityKind::ACTIVITY_KIND_FILE_CHANGE,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED),
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("web"),
+                     ActivityKind::ACTIVITY_KIND_WEB_SEARCH,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED),
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("compaction"),
+                     ActivityKind::ACTIVITY_KIND_CONTEXT_COMPACTION,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED),
+      },
+      {});
+
+    const QStringList expectedKinds{
+        QStringLiteral("readFiles"),         QStringLiteral("listFiles"),  QStringLiteral("searchFiles"),
+        QStringLiteral("runCommands"),       QStringLiteral("fileChange"), QStringLiteral("webSearch"),
+        QStringLiteral("contextCompaction"),
+    };
+    QCOMPARE(model.roleNames().value(CodexTimelineModel::ActivityPresentationKindRole),
+             QByteArray("activityPresentationKind"));
+    QCOMPARE(model.rowCount(), expectedKinds.size());
+    for (int row = 0; row < model.rowCount(); ++row) {
+        QCOMPARE(model.data(model.index(row), CodexTimelineModel::ActivityPresentationKindRole).toString(),
+                 expectedKinds.at(row));
+    }
 }
 
 void
@@ -485,6 +556,7 @@ CodexHistoryControllerTest::reconcilesPersistedAndOwnedThreadRunState()
 
     CodexHistoryController controller(nullptr, nullptr);
     CodexConversationController* conversation = controller.conversation();
+    QSignalSpy runningEvidenceSpy(conversation, &CodexConversationController::runningEvidenceChanged);
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED,
                                                    {},
                                                    QStringLiteral("Running elsewhere"),
@@ -493,25 +565,41 @@ CodexHistoryControllerTest::reconcilesPersistedAndOwnedThreadRunState()
                                  {});
 
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStatePersistedInProgress);
+    QVERIFY(conversation->hasRunningEvidence());
     QVERIFY(!conversation->turnRunning());
     QVERIFY(conversation->activeTurnId().isEmpty());
+    QCOMPARE(runningEvidenceSpy.count(), 1);
+
+    controller.applyHistoryEvent(threadRuntimeEvent(ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_STARTING), {});
+
+    QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateUnknown);
+    QVERIFY(conversation->turnInFlight());
+    QVERIFY(!conversation->turnRunning());
+    QVERIFY(conversation->hasRunningEvidence());
+    QCOMPARE(runningEvidenceSpy.count(), 1);
 
     controller.applyHistoryEvent(
       threadRuntimeEvent(ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_ACTIVE, QStringLiteral("turn-owned")), {});
 
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateObserverOwnedRunning);
+    QVERIFY(conversation->hasRunningEvidence());
     QVERIFY(conversation->turnRunning());
     QCOMPARE(conversation->activeTurnId(), QStringLiteral("turn-owned"));
+    QCOMPARE(runningEvidenceSpy.count(), 1);
 
     controller.applyHistoryEvent(threadRuntimeEvent(ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_IDLE), {});
 
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateNotRunning);
+    QVERIFY(!conversation->hasRunningEvidence());
     QVERIFY(!conversation->turnRunning());
+    QCOMPARE(runningEvidenceSpy.count(), 2);
 
     controller.applyHistoryEvent(threadRuntimeEvent(ThreadRuntimeStatus::THREAD_RUNTIME_STATUS_DETACHED), {});
 
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStatePersistedInProgress);
+    QVERIFY(conversation->hasRunningEvidence());
     QVERIFY(!conversation->turnRunning());
+    QCOMPARE(runningEvidenceSpy.count(), 3);
 
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
                                                    {},
@@ -521,10 +609,14 @@ CodexHistoryControllerTest::reconcilesPersistedAndOwnedThreadRunState()
                                  {});
 
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateNotRunning);
+    QVERIFY(!conversation->hasRunningEvidence());
+    QCOMPARE(runningEvidenceSpy.count(), 4);
 
     conversation->beginLoadingThread(QStringLiteral("thread-next"), QStringLiteral("Next"));
 
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateUnknown);
+    QVERIFY(!conversation->hasRunningEvidence());
+    QCOMPARE(runningEvidenceSpy.count(), 4);
 }
 
 void
@@ -869,6 +961,16 @@ CodexHistoryControllerTest::marksOnlyAuthoritativeTurnEndsAsForkBoundaries()
     QVERIFY(timeline->data(timeline->index(1), CodexTimelineModel::ForkBoundaryRole).toBool());
     QVERIFY(!timeline->data(timeline->index(2), CodexTimelineModel::ForkBoundaryRole).toBool());
     QVERIFY(!timeline->data(timeline->index(3), CodexTimelineModel::ForkBoundaryRole).toBool());
+    QVERIFY(timeline->data(timeline->index(0), CodexTimelineModel::TurnForkableRole).toBool());
+    QVERIFY(timeline->data(timeline->index(1), CodexTimelineModel::TurnForkableRole).toBool());
+    QVERIFY(!timeline->data(timeline->index(2), CodexTimelineModel::TurnForkableRole).toBool());
+    QVERIFY(!timeline->data(timeline->index(3), CodexTimelineModel::TurnForkableRole).toBool());
+    QVERIFY(!timeline->data(timeline->index(0), CodexTimelineModel::LatestTurnRole).toBool());
+    QVERIFY(!timeline->data(timeline->index(1), CodexTimelineModel::LatestTurnRole).toBool());
+    QVERIFY(timeline->data(timeline->index(2), CodexTimelineModel::LatestTurnRole).toBool());
+    QVERIFY(timeline->data(timeline->index(3), CodexTimelineModel::LatestTurnRole).toBool());
+    QCOMPARE(timeline->roleNames().value(CodexTimelineModel::TurnForkableRole), QByteArray("turnForkable"));
+    QCOMPARE(timeline->roleNames().value(CodexTimelineModel::LatestTurnRole), QByteArray("latestTurn"));
 }
 
 void

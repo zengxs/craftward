@@ -42,6 +42,7 @@ class CodexConversationController : public QObject
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(bool activityHistoryPartial READ activityHistoryPartial NOTIFY activityHistoryPartialChanged)
     Q_PROPERTY(ThreadRunState threadRunState READ threadRunState NOTIFY threadRunStateChanged)
+    Q_PROPERTY(bool hasRunningEvidence READ hasRunningEvidence NOTIFY runningEvidenceChanged)
     Q_PROPERTY(TurnState turnState READ turnState NOTIFY turnStateChanged)
     Q_PROPERTY(bool turnInFlight READ turnInFlight NOTIFY turnStateChanged)
     Q_PROPERTY(bool turnRunning READ turnRunning NOTIFY turnStateChanged)
@@ -147,6 +148,7 @@ class CodexConversationController : public QObject
     [[nodiscard]] bool loading() const;
     [[nodiscard]] bool activityHistoryPartial() const;
     [[nodiscard]] ThreadRunState threadRunState() const;
+    [[nodiscard]] bool hasRunningEvidence() const;
     [[nodiscard]] TurnState turnState() const;
     [[nodiscard]] bool turnInFlight() const;
     [[nodiscard]] bool turnRunning() const;
@@ -183,6 +185,7 @@ class CodexConversationController : public QObject
     void modelCatalogStateChanged();
     void activityHistoryPartialChanged();
     void threadRunStateChanged();
+    void runningEvidenceChanged();
     void turnStateChanged();
     void steeringTurnChanged();
     void interruptRequestedChanged();

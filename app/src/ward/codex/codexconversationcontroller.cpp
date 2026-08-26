@@ -225,6 +225,13 @@ CodexConversationController::threadRunState() const
     return threadRunState_;
 }
 
+bool
+CodexConversationController::hasRunningEvidence() const
+{
+    return turnInFlight() || threadRunState_ == ThreadRunState::RunStatePersistedInProgress ||
+           threadRunState_ == ThreadRunState::RunStateObserverOwnedRunning;
+}
+
 CodexConversationController::TurnState
 CodexConversationController::turnState() const
 {
@@ -748,6 +755,7 @@ CodexConversationController::setActivityHistoryPartial(bool partial)
 void
 CodexConversationController::applyPersistedRunEvidence(const ward::codex::v1::Conversation& conversation)
 {
+    const bool hadRunningEvidence = hasRunningEvidence();
     PersistedRunStatus status = PersistedRunStatus::Unknown;
     if (conversation.hasPersistedRunState()) {
         const auto& state = conversation.persistedRunState();
@@ -768,13 +776,18 @@ CodexConversationController::applyPersistedRunEvidence(const ward::codex::v1::Co
     }
     persistedRunStatus_ = status;
     reconcileThreadRunState();
+    if (hadRunningEvidence != hasRunningEvidence())
+        emit runningEvidenceChanged();
 }
 
 void
 CodexConversationController::resetPersistedRunEvidence()
 {
+    const bool hadRunningEvidence = hasRunningEvidence();
     persistedRunStatus_ = PersistedRunStatus::Unknown;
     reconcileThreadRunState();
+    if (hadRunningEvidence != hasRunningEvidence())
+        emit runningEvidenceChanged();
 }
 
 void
@@ -832,6 +845,7 @@ CodexConversationController::setTurnState(TurnState state,
         turnRuntimeState_.waitingOnApproval == waitingOnApproval &&
         turnRuntimeState_.waitingOnUserInput == waitingOnUserInput)
         return;
+    const bool hadRunningEvidence = hasRunningEvidence();
     turnRuntimeState_ = {
         .status = state,
         .activeTurnId = activeTurnId,
@@ -840,6 +854,8 @@ CodexConversationController::setTurnState(TurnState state,
     };
     reconcileThreadRunState();
     emit turnStateChanged();
+    if (hadRunningEvidence != hasRunningEvidence())
+        emit runningEvidenceChanged();
 }
 
 void
@@ -928,8 +944,7 @@ CodexConversationController::adoptConversation(const QString& threadId,
     title_ = conversation.title();
     restoreInferenceSelection();
     auto timeline = conversation.timeline();
-    timelineModel_.reconcileTimeline(
-      std::move(timeline), conversation.forkableTurnIds(), conversation.turnTimings());
+    timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds(), conversation.turnTimings());
     interactionModel_.clear();
     setActivityHistoryPartial(conversation.activityHistoryIsPartial());
     applyPersistedRunEvidence(conversation);

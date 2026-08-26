@@ -34,6 +34,8 @@ class CodexTimelineModel : public QAbstractListModel
         EntryIdRole = Qt::UserRole + 1,
         TurnIdRole,
         ForkBoundaryRole,
+        TurnForkableRole,
+        LatestTurnRole,
         ActivityGroupRole,
         StandaloneActivityRole,
         FromUserRole,
@@ -49,6 +51,7 @@ class CodexTimelineModel : public QAbstractListModel
         TurnStartedAtUnixSecondsRole,
         TurnCompletedAtUnixSecondsRole,
         TurnDurationMillisecondsRole,
+        ActivityPresentationKindRole,
     };
 
     explicit CodexTimelineModel(QObject* parent = nullptr);
@@ -91,6 +94,8 @@ class CodexTimelineModel : public QAbstractListModel
         QString entryId;
         QString turnId;
         bool forkBoundary = false;
+        bool turnForkable = false;
+        bool latestTurn = false;
         bool activityGroup = false;
         CodexMessage message;
         bool markupFinalized = false;
@@ -104,6 +109,7 @@ class CodexTimelineModel : public QAbstractListModel
                                                const QSet<QString>& forkableTurnIds,
                                                const QHash<QString, CodexTurnTiming>& turnTimings) const;
     [[nodiscard]] ActivityPresentationKind presentationKind(const CodexActivity& activity) const;
+    [[nodiscard]] static QString activityPresentationKindName(ActivityPresentationKind kind);
     [[nodiscard]] QString activityGroupLabel(ActivityPresentationKind kind) const;
     [[nodiscard]] QVariantList activityItems(const TimelineRow& row) const;
     [[nodiscard]] QVariantMap activityItem(const CodexActivity& activity) const;

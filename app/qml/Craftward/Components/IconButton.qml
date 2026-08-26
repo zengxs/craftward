@@ -6,6 +6,8 @@ ToolButton {
 
     property string toolTipText
     property real backgroundInset: 0
+    property real iconRotation: 0
+    property bool forceToolTipVisible: false
 
     implicitWidth: 28
     implicitHeight: 28
@@ -14,6 +16,7 @@ ToolButton {
     hoverEnabled: true
     icon.width: 16
     icon.height: 16
+    contentItem.rotation: iconRotation
     Accessible.name: toolTipText
 
     background: Rectangle {
@@ -48,9 +51,9 @@ ToolButton {
         parent: control
         x: Math.round((control.width - width) / 2)
         y: control.height + 5
-        visible: control.enabled && control.hovered && !control.down && text.length > 0
+        visible: control.enabled && (control.forceToolTipVisible || (control.hovered && !control.down)) && text.length > 0
         text: control.toolTipText
-        delay: 500
+        delay: control.forceToolTipVisible ? 0 : 500
         timeout: 5000
         leftPadding: 7
         rightPadding: 7

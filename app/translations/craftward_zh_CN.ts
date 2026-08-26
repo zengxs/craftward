@@ -766,34 +766,39 @@ version 3 or later.</source>
         <translation>所选推理强度将在下一轮开始时应用，并在后续轮次中保持有效。</translation>
     </message>
     <message id="craftward.codex.timeline.processed_seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="59"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="61"/>
         <source>Processed %1 s</source>
         <translation>已处理 %1 秒</translation>
     </message>
     <message id="craftward.codex.timeline.duration.hours_minutes_seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="88"/>
+        <location filename="../qml/Craftward/Pages/CodexElapsedBadge.qml" line="39"/>
         <source>%1 h %2 min %3 s</source>
         <translation>%1 小时 %2 分 %3 秒</translation>
     </message>
     <message id="craftward.codex.timeline.duration.minutes_seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="90"/>
+        <location filename="../qml/Craftward/Pages/CodexElapsedBadge.qml" line="41"/>
         <source>%1 min %2 s</source>
         <translation>%1 分 %2 秒</translation>
     </message>
     <message id="craftward.codex.timeline.duration.seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="91"/>
+        <location filename="../qml/Craftward/Pages/CodexElapsedBadge.qml" line="42"/>
         <source>%1 s</source>
         <translation>%1 秒</translation>
     </message>
     <message id="craftward.codex.timeline.details_count">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="229"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineDetailHeader.qml" line="65"/>
         <source>Details · %1</source>
         <translation>详情 · %1</translation>
     </message>
     <message id="craftward.codex.timeline.elapsed">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="229"/>
+        <location filename="../qml/Craftward/Pages/CodexElapsedBadge.qml" line="18"/>
         <source>Elapsed %1</source>
         <translation>耗时 %1</translation>
+    </message>
+    <message id="craftward.codex.timeline.elapsed_label">
+        <location filename="../qml/Craftward/Pages/CodexTimelineDetailHeader.qml" line="47"/>
+        <source>Elapsed</source>
+        <translation>耗时</translation>
     </message>
     <message id="craftward.codex.timeline.author.you">
         <source>You</source>
@@ -804,15 +809,24 @@ version 3 or later.</source>
         <translation type="vanished">Codex · 过程说明</translation>
     </message>
     <message id="craftward.codex.timeline.activity_count">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="236"/>
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="327"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="318"/>
         <source>× %1</source>
         <translation>× %1</translation>
     </message>
     <message id="craftward.codex.timeline.fork.action">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="144"/>
+        <location filename="../qml/Craftward/Pages/CodexMessageActions.qml" line="76"/>
         <source>Fork from here</source>
         <translation>从此处分叉</translation>
+    </message>
+    <message id="craftward.codex.timeline.copy.action">
+        <location filename="../qml/Craftward/Pages/CodexMessageActions.qml" line="58"/>
+        <source>Copy</source>
+        <translation>复制</translation>
+    </message>
+    <message id="craftward.codex.timeline.copy.copied">
+        <location filename="../qml/Craftward/Pages/CodexMessageActions.qml" line="58"/>
+        <source>Copied</source>
+        <translation>已复制</translation>
     </message>
     <message id="craftward.codex.timeline.loading">
         <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="66"/>
@@ -919,9 +933,9 @@ version 3 or later.</source>
         <translation>粘贴的图片.png</translation>
     </message>
     <message id="craftward.codex.error.history_observer_unavailable">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="333"/>
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="384"/>
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="591"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="340"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="391"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="598"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="149"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="172"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="202"/>
@@ -934,38 +948,38 @@ version 3 or later.</source>
         <translation>Codex 历史观察器不可用。</translation>
     </message>
     <message id="craftward.codex.error.write_access_check">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="343"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="350"/>
         <source>Writing access could not be checked for this conversation.</source>
         <translation>无法检查此对话的写入权限。</translation>
     </message>
     <message id="craftward.codex.error.write_access_release">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="368"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="375"/>
         <source>Writing access could not be released for this conversation.</source>
         <translation>无法释放此对话的写入权限。</translation>
     </message>
     <message id="craftward.codex.error.turn_start">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="422"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="429"/>
         <source>The Codex turn could not be started.</source>
         <translation>无法启动 Codex 轮次。</translation>
     </message>
     <message id="craftward.codex.error.turn_steer">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="604"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="611"/>
         <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="100"/>
         <source>The Codex turn could not be guided.</source>
         <translation>无法引导 Codex 轮次。</translation>
     </message>
     <message id="craftward.codex.error.turn_stop">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="626"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="633"/>
         <source>The Codex turn could not be stopped.</source>
         <translation>无法停止 Codex 轮次。</translation>
     </message>
     <message id="craftward.codex.error.response_encode">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="881"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="897"/>
         <source>The Codex response could not be encoded: %1</source>
         <translation>无法编码 Codex 响应：%1</translation>
     </message>
     <message id="craftward.codex.error.response_send">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="894"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="910"/>
         <source>The Codex response could not be sent.</source>
         <translation>无法发送 Codex 响应。</translation>
     </message>
@@ -1124,147 +1138,147 @@ version 3 or later.</source>
         <translation>Ward Core 返回了不受支持的 Codex 历史事件。</translation>
     </message>
     <message id="craftward.codex.timeline.activity.reasoning">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="265"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="317"/>
         <source>Reasoning</source>
         <translation>推理</translation>
     </message>
     <message id="craftward.codex.timeline.activity.plan">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="267"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="319"/>
         <source>Planned</source>
         <translation>已制定计划</translation>
     </message>
     <message id="craftward.codex.timeline.activity.read_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="269"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="321"/>
         <source>Read files</source>
         <translation>已读取文件</translation>
     </message>
     <message id="craftward.codex.timeline.activity.list_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="271"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="323"/>
         <source>Listed files</source>
         <translation>已列出文件</translation>
     </message>
     <message id="craftward.codex.timeline.activity.search_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="273"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="325"/>
         <source>Searched files</source>
         <translation>已搜索文件</translation>
     </message>
     <message id="craftward.codex.timeline.activity.run_commands">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="275"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="327"/>
         <source>Ran commands</source>
         <translation>已运行命令</translation>
     </message>
     <message id="craftward.codex.timeline.activity.change_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="277"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="329"/>
         <source>Changed files</source>
         <translation>已更改文件</translation>
     </message>
     <message id="craftward.codex.timeline.activity.use_tools">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="279"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="331"/>
         <source>Used tools</source>
         <translation>已使用工具</translation>
     </message>
     <message id="craftward.codex.timeline.activity.coordinate_agents">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="281"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="333"/>
         <source>Coordinated agents</source>
         <translation>已协调智能体</translation>
     </message>
     <message id="craftward.codex.timeline.activity.web_search">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="283"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="335"/>
         <source>Searched the web</source>
         <translation>已搜索网页</translation>
     </message>
     <message id="craftward.codex.timeline.activity.view_images">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="285"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="337"/>
         <source>Viewed images</source>
         <translation>已查看图片</translation>
     </message>
     <message id="craftward.codex.timeline.activity.wait">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="287"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="339"/>
         <source>Waited</source>
         <translation>已等待</translation>
     </message>
     <message id="craftward.codex.timeline.activity.generate_images">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="289"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="341"/>
         <source>Generated images</source>
         <translation>已生成图片</translation>
     </message>
     <message id="craftward.codex.timeline.activity.review_started">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="291"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="343"/>
         <source>Entered review mode</source>
         <translation>已进入审阅模式</translation>
     </message>
     <message id="craftward.codex.timeline.activity.review_completed">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="293"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="345"/>
         <source>Exited review mode</source>
         <translation>已退出审阅模式</translation>
     </message>
     <message id="craftward.codex.timeline.activity.context_compaction">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="295"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="347"/>
         <source>Compacted context</source>
         <translation>已压缩上下文</translation>
     </message>
     <message id="craftward.codex.timeline.activity.other">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="298"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="350"/>
         <source>Activity</source>
         <translation>活动</translation>
     </message>
     <message id="craftward.codex.timeline.status.in_progress">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="353"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="405"/>
         <source>In progress</source>
         <translation>进行中</translation>
     </message>
     <message id="craftward.codex.timeline.status.failed">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="357"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="409"/>
         <source>Failed</source>
         <translation>失败</translation>
     </message>
     <message id="craftward.codex.timeline.status.declined">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="359"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="411"/>
         <source>Declined</source>
         <translation>已拒绝</translation>
     </message>
     <message id="craftward.codex.timeline.status.unknown">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="361"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="413"/>
         <source>Unknown status</source>
         <translation>未知状态</translation>
     </message>
     <message id="craftward.codex.timeline.command.read_file">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="381"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="433"/>
         <source>Read a file</source>
         <translation>读取了一个文件</translation>
     </message>
     <message id="craftward.codex.timeline.command.read_target">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="382"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="434"/>
         <source>Read %1</source>
         <translation>读取了 %1</translation>
     </message>
     <message id="craftward.codex.timeline.command.list_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="388"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="440"/>
         <source>List files</source>
         <translation>列出了文件</translation>
     </message>
     <message id="craftward.codex.timeline.command.list_files_in">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="389"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="441"/>
         <source>List files in %1</source>
         <translation>列出了 %1 中的文件</translation>
     </message>
     <message id="craftward.codex.timeline.command.search_in">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="394"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="446"/>
         <source>Search for “%1” in %2</source>
         <translation>在 %2 中搜索了“%1”</translation>
     </message>
     <message id="craftward.codex.timeline.command.search">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="398"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="450"/>
         <source>Search for “%1”</source>
         <translation>搜索了“%1”</translation>
     </message>
     <message id="craftward.codex.timeline.command.search_location">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="401"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="453"/>
         <source>Search in %1</source>
         <translation>在 %1 中进行了搜索</translation>
     </message>
     <message id="craftward.codex.timeline.command.search_files">
-        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="403"/>
+        <location filename="../src/ward/codex/codextimelinemodel.cpp" line="455"/>
         <source>Search files</source>
         <translation>搜索了文件</translation>
     </message>
