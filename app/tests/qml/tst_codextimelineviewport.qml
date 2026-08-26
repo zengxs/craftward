@@ -119,7 +119,7 @@ Item {
             createViewport(20);
             suite.viewport.positionAtContentY(8 * suite.viewport.estimatedPageHeight);
             tryVerify(() => suite.viewport.activeFirstPage <= 8 && suite.viewport.activeLastPage >= 8);
-            wait(20);
+            tryVerify(() => suite.viewport.captureVisibleAnchor() !== null);
 
             const wideAnchor = suite.viewport.captureVisibleAnchor();
             verify(wideAnchor !== null, JSON.stringify({
