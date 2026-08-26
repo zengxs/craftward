@@ -7,6 +7,7 @@ qt_add_qml_module(CraftwardComponents
         "${PROJECT_SOURCE_DIR}/src/components/typography.h"
         "${PROJECT_SOURCE_DIR}/src/components/windowmovehelper.h"
     QML_FILES
+        AnimatedChevron.qml
         ConfirmationDialog.qml
         IconButton.qml
         MenuComboBox.qml

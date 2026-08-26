@@ -7,6 +7,7 @@
 #include "ward/markup/markupdocumentmodel.h"
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QList>
 #include <QSet>
 #include <QString>
@@ -20,6 +21,7 @@
 using CodexActivity = ward::codex::v1::Activity;
 using CodexMessage = ward::codex::v1::Message;
 using CodexTimelineItem = ward::codex::v1::TimelineItem;
+using CodexTurnTiming = ward::codex::v1::TurnTiming;
 
 class CodexTimelineModel : public QAbstractListModel
 {
@@ -33,6 +35,7 @@ class CodexTimelineModel : public QAbstractListModel
         TurnIdRole,
         ForkBoundaryRole,
         ActivityGroupRole,
+        StandaloneActivityRole,
         FromUserRole,
         CommentaryRole,
         FinalAnswerRole,
@@ -43,6 +46,9 @@ class CodexTimelineModel : public QAbstractListModel
         ActivityItemsRole,
         FailedRole,
         RunningRole,
+        TurnStartedAtUnixSecondsRole,
+        TurnCompletedAtUnixSecondsRole,
+        TurnDurationMillisecondsRole,
     };
 
     explicit CodexTimelineModel(QObject* parent = nullptr);
@@ -52,7 +58,9 @@ class CodexTimelineModel : public QAbstractListModel
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
-    void reconcileTimeline(QList<CodexTimelineItem> timeline, const QStringList& forkableTurnIds);
+    void reconcileTimeline(QList<CodexTimelineItem> timeline,
+                           const QStringList& forkableTurnIds,
+                           const QList<CodexTurnTiming>& turnTimings = {});
     void clear();
     void retranslate();
 
@@ -89,10 +97,12 @@ class CodexTimelineModel : public QAbstractListModel
         mutable std::shared_ptr<MarkupDocumentModel> markupDocument;
         ActivityPresentationKind activityKind = ActivityPresentationKind::Activity;
         QList<CodexActivity> activities;
+        CodexTurnTiming turnTiming;
     };
 
     [[nodiscard]] QList<TimelineRow> buildRows(QList<CodexTimelineItem> timeline,
-                                               const QSet<QString>& forkableTurnIds) const;
+                                               const QSet<QString>& forkableTurnIds,
+                                               const QHash<QString, CodexTurnTiming>& turnTimings) const;
     [[nodiscard]] ActivityPresentationKind presentationKind(const CodexActivity& activity) const;
     [[nodiscard]] QString activityGroupLabel(ActivityPresentationKind kind) const;
     [[nodiscard]] QVariantList activityItems(const TimelineRow& row) const;

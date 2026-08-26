@@ -9,9 +9,14 @@
 #include <QString>
 #include <QTimer>
 
+#include <memory>
+
+class MarkupRenderModel;
+
 class MarkupDocumentModel : public QAbstractListModel
 {
     Q_OBJECT
+    Q_PROPERTY(QAbstractItemModel* renderModel READ renderModel CONSTANT)
 
   public:
     enum class SourceFormat
@@ -33,10 +38,12 @@ class MarkupDocumentModel : public QAbstractListModel
     };
 
     explicit MarkupDocumentModel(QObject* parent = nullptr);
+    ~MarkupDocumentModel() override;
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
+    [[nodiscard]] QAbstractItemModel* renderModel() const;
 
     bool reconcileSource(const QString& source, SourceFormat format, bool finalized = true);
 
@@ -111,4 +118,5 @@ class MarkupDocumentModel : public QAbstractListModel
     QList<BlockRow> rows_;
     QTimer parseTimer_;
     QFutureWatcher<ParseResult> parseWatcher_;
+    mutable std::unique_ptr<MarkupRenderModel> renderModel_;
 };

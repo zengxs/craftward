@@ -1,3 +1,5 @@
 module Craftward.Components
+AnimatedChevron 1.0 AnimatedChevron.qml
 MarkupDocumentView 1.0 MarkupDocumentView.qml
 MenuComboBox 1.0 MenuComboBox.qml
+OverlayScrollBar 1.0 OverlayScrollBar.qml

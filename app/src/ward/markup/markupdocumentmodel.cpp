@@ -5,6 +5,7 @@
 
 #include "document.qpb.h"
 #include "ward/coreffierror.h"
+#include "ward/markup/markuprendermodel.h"
 
 #include <ward_core.h>
 
@@ -53,6 +54,8 @@ MarkupDocumentModel::MarkupDocumentModel(QObject* parent)
     connect(&parseWatcher_, &QFutureWatcher<ParseResult>::finished, this, &MarkupDocumentModel::applyFinishedParse);
 }
 
+MarkupDocumentModel::~MarkupDocumentModel() = default;
+
 int
 MarkupDocumentModel::rowCount(const QModelIndex& parent) const
 {
@@ -98,6 +101,17 @@ MarkupDocumentModel::roleNames() const
         { SourceEndRole, "sourceEnd" }, { BlockTextRole, "blockText" }, { PlainTextRole, "plainText" },
         { LanguageRole, "language" },   { MarkdownRole, "markdown" },
     };
+}
+
+QAbstractItemModel*
+MarkupDocumentModel::renderModel() const
+{
+    if (!renderModel_) {
+        auto model = std::make_unique<MarkupRenderModel>();
+        model->setSourceModel(const_cast<MarkupDocumentModel*>(this));
+        renderModel_ = std::move(model);
+    }
+    return renderModel_.get();
 }
 
 bool

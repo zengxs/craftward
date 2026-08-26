@@ -209,6 +209,9 @@ class CodexHistoryControllerTest : public QObject
     void cleanupTestCase();
     void updatesPollingVisibilityState();
     void retranslatesTimelinePresentationWhenRequested();
+    void classifiesContextCompactionAsStandaloneActivity();
+    void exposesTurnTimingMetadata();
+    void trimsBoundaryLineBreaksFromDisplayedUserMessages();
     void adaptsMessageFormatsAndPreservesMarkupModelsAcrossStreamingUpdates();
     void reconcilesPersistedAndOwnedThreadRunState();
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
@@ -308,6 +311,90 @@ CodexHistoryControllerTest::retranslatesTimelinePresentationWhenRequested()
 }
 
 void
+CodexHistoryControllerTest::classifiesContextCompactionAsStandaloneActivity()
+{
+    CodexTimelineModel model;
+    model.reconcileTimeline(
+      {
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("reasoning"),
+                     ActivityKind::ACTIVITY_KIND_REASONING,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED),
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("compaction-1"),
+                     ActivityKind::ACTIVITY_KIND_CONTEXT_COMPACTION,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED),
+        activityItem(QStringLiteral("turn-1"),
+                     QStringLiteral("compaction-2"),
+                     ActivityKind::ACTIVITY_KIND_CONTEXT_COMPACTION,
+                     ActivityStatus::ACTIVITY_STATUS_COMPLETED),
+      },
+      {});
+
+    QCOMPARE(model.rowCount(), 3);
+    QVERIFY(!model.data(model.index(0), CodexTimelineModel::StandaloneActivityRole).toBool());
+    QVERIFY(model.data(model.index(1), CodexTimelineModel::StandaloneActivityRole).toBool());
+    QVERIFY(model.data(model.index(2), CodexTimelineModel::StandaloneActivityRole).toBool());
+    QCOMPARE(model.data(model.index(1), CodexTimelineModel::ActivityCountRole).toInt(), 1);
+    QCOMPARE(model.data(model.index(2), CodexTimelineModel::ActivityCountRole).toInt(), 1);
+}
+
+void
+CodexHistoryControllerTest::exposesTurnTimingMetadata()
+{
+    CodexTimelineModel model;
+    CodexTurnTiming timing;
+    timing.setTurnId(QStringLiteral("turn-1"));
+    timing.setStartedAtUnixSeconds(100);
+    timing.setCompletedAtUnixSeconds(112);
+    timing.setDurationMilliseconds(12'345);
+    model.reconcileTimeline(
+      {
+        messageItem(QStringLiteral("turn-1"),
+                    QStringLiteral("agent-1"),
+                    MessageRole::MESSAGE_ROLE_AGENT,
+                    MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                    QStringLiteral("Answer")),
+      },
+      {},
+      { timing });
+
+    QCOMPARE(model.data(model.index(0), CodexTimelineModel::TurnStartedAtUnixSecondsRole).toLongLong(), 100);
+    QCOMPARE(model.data(model.index(0), CodexTimelineModel::TurnCompletedAtUnixSecondsRole).toLongLong(), 112);
+    QCOMPARE(model.data(model.index(0), CodexTimelineModel::TurnDurationMillisecondsRole).toLongLong(), 12'345);
+}
+
+void
+CodexHistoryControllerTest::trimsBoundaryLineBreaksFromDisplayedUserMessages()
+{
+    CodexTimelineModel model;
+    model.reconcileTimeline(
+      {
+        messageItem(QStringLiteral("turn-1"),
+                    QStringLiteral("user-1"),
+                    MessageRole::MESSAGE_ROLE_USER,
+                    MessagePhase::MESSAGE_PHASE_UNSPECIFIED,
+                    QStringLiteral("\r\n\nPrompt\r\n\n")),
+        messageItem(QStringLiteral("turn-1"),
+                    QStringLiteral("agent-1"),
+                    MessageRole::MESSAGE_ROLE_AGENT,
+                    MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                    QStringLiteral("Answer\n")),
+      },
+      {});
+
+    QCOMPARE(model.data(model.index(0), CodexTimelineModel::TextRole).toString(), QStringLiteral("Prompt"));
+    QCOMPARE(model.data(model.index(1), CodexTimelineModel::TextRole).toString(), QStringLiteral("Answer\n"));
+    auto* userDocument = qobject_cast<MarkupDocumentModel*>(
+      model.data(model.index(0), CodexTimelineModel::MarkupDocumentRole).value<QObject*>());
+    QVERIFY(userDocument != nullptr);
+    QTRY_COMPARE(userDocument->rowCount(), 1);
+    QVERIFY(userDocument->data(userDocument->index(0), MarkupDocumentModel::MarkdownRole).toBool());
+    QCOMPARE(userDocument->data(userDocument->index(0), MarkupDocumentModel::PlainTextRole).toString(),
+             QStringLiteral("Prompt"));
+}
+
+void
 CodexHistoryControllerTest::adaptsMessageFormatsAndPreservesMarkupModelsAcrossStreamingUpdates()
 {
     CodexHistoryController controller(nullptr, nullptr);
@@ -343,8 +430,8 @@ CodexHistoryControllerTest::adaptsMessageFormatsAndPreservesMarkupModelsAcrossSt
     QCOMPARE(timeline->findChildren<MarkupDocumentModel*>().size(), 2);
     QVERIFY(userDocument != nullptr);
     QVERIFY(agentDocument != nullptr);
-    QCOMPARE(userDocument->rowCount(), 1);
-    QVERIFY(!userDocument->data(userDocument->index(0), MarkupDocumentModel::MarkdownRole).toBool());
+    QTRY_COMPARE(userDocument->rowCount(), 1);
+    QVERIFY(userDocument->data(userDocument->index(0), MarkupDocumentModel::MarkdownRole).toBool());
     QTRY_COMPARE(agentDocument->rowCount(), 3);
     QVERIFY(agentDocument->data(agentDocument->index(1), MarkupDocumentModel::CodeBlockRole).toBool());
 

@@ -1,6 +1,8 @@
 add_library(CraftwardMarkup STATIC
     markupdocumentmodel.cpp
     markupdocumentmodel.h
+    markuprendermodel.cpp
+    markuprendermodel.h
 )
 
 qt_add_protobuf(CraftwardMarkup
@@ -32,6 +34,7 @@ if(BUILD_TESTING)
     target_link_libraries(CraftwardMarkupDocumentModelTest
         PRIVATE
             CraftwardMarkup
+            Qt6::Gui
             Qt6::Test
             "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
     )

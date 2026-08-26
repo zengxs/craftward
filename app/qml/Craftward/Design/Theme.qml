@@ -13,6 +13,9 @@ QtObject {
     readonly property bool dark: system.window.hslLightness < system.windowText.hslLightness
 
     readonly property color accent: system.accent
+    readonly property color composerAmbientShadow: Qt.rgba(TailwindColors.black.r, TailwindColors.black.g, TailwindColors.black.b, dark ? 0.3 : 0.12)
+    readonly property color composerBorder: Qt.rgba(system.windowText.r, system.windowText.g, system.windowText.b, dark ? 0.22 : 0.16)
+    readonly property color composerSurface: system.base
     readonly property color dangerForeground: dark ? TailwindColors.red400 : TailwindColors.red700
     readonly property color dangerSurface: Qt.rgba(dangerForeground.r, dangerForeground.g, dangerForeground.b, dark ? 0.14 : 0.08)
     readonly property color dangerBorder: Qt.rgba(dangerForeground.r, dangerForeground.g, dangerForeground.b, dark ? 0.36 : 0.24)
@@ -23,4 +26,7 @@ QtObject {
     readonly property color navigationSelectionForeground: accent
     readonly property color navigationPressedBackground: dark ? TailwindColors.zinc700 : TailwindColors.zinc200
     readonly property color sidebarSurface: dark ? TailwindColors.zinc900 : TailwindColors.zinc50
+    readonly property color textSelectionBackground: dark ? TailwindColors.blue700 : TailwindColors.blue200
+    readonly property color textSelectionForeground: dark ? TailwindColors.blue50 : TailwindColors.blue950
+    readonly property color userMessageSurface: dark ? TailwindColors.zinc800 : TailwindColors.zinc100
 }

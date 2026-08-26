@@ -928,7 +928,8 @@ CodexConversationController::adoptConversation(const QString& threadId,
     title_ = conversation.title();
     restoreInferenceSelection();
     auto timeline = conversation.timeline();
-    timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds());
+    timelineModel_.reconcileTimeline(
+      std::move(timeline), conversation.forkableTurnIds(), conversation.turnTimings());
     interactionModel_.clear();
     setActivityHistoryPartial(conversation.activityHistoryIsPartial());
     applyPersistedRunEvidence(conversation);

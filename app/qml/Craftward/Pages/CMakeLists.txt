@@ -15,8 +15,10 @@ qt_add_qml_module(CraftwardPages
         CodexInteractionCard.qml
         CodexModelSelector.qml
         CodexReasoningEffortSelector.qml
-        CodexTimelineViewport.qml
+        CodexTimelinePageWindow.qml
+        CodexTimelineRow.qml
         CodexTimelineView.qml
+        CodexTimelineViewport.qml
         CodexTurnControlState.qml
         SettingsGeneralPage.qml
 )

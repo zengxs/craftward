@@ -6,9 +6,11 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
+import QtQuick.Effects
 import QtQuick.Layouts
 import Craftward.Codex
 import Craftward.Components
+import Craftward.Design
 
 Pane {
     id: root
@@ -92,11 +94,26 @@ Pane {
 
     padding: 10
 
-    background: Rectangle {
-        radius: 10
-        color: root.palette.base
-        border.color: attachmentDropArea.containsDrag ? root.palette.highlight : root.palette.mid
-        border.width: attachmentDropArea.containsDrag ? 2 : 1
+    background: Item {
+        RectangularShadow {
+            anchors.fill: composerSurface
+            radius: composerSurface.radius
+            blur: 14
+            cached: true
+            color: Theme.composerAmbientShadow
+            offset: Qt.vector2d(0, 3)
+        }
+
+        Rectangle {
+            id: composerSurface
+
+            anchors.fill: parent
+            radius: 16
+            color: Theme.composerSurface
+            border.color: attachmentDropArea.containsDrag ? root.palette.highlight : Theme.composerBorder
+            border.width: attachmentDropArea.containsDrag ? 2 : 0.5
+            border.pixelAligned: false
+        }
     }
 
     contentItem: Item {

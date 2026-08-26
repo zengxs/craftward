@@ -5,10 +5,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Craftward.Codex
-import Craftward.Components
-import Craftward.Design
 
 Control {
     id: root
@@ -16,22 +13,25 @@ Control {
     required property CodexConversationController controller
     required property bool forkEnabled
     required property bool showForkActions
+    property real bottomContentInset: 64
+    property var expandedTurns: ({})
     property double wallClockUnixMilliseconds: Date.now()
+    readonly property real contentColumnWidth: timelineViewport.contentColumnWidth
 
     signal forkRequested(string turnId)
 
-    function activityStatusText(activity) {
-        if (!activity.reasoning)
-            return activity.statusLabel;
+    function turnExpanded(turnId) {
+        return root.expandedTurns[String(turnId)] === true;
+    }
 
-        const startedAt = Number(activity.startedAtUnixMilliseconds);
-        if (startedAt <= 0)
-            return activity.statusLabel;
-
-        const completedAt = Number(activity.completedAtUnixMilliseconds);
-        const endAt = completedAt > 0 ? completedAt : root.wallClockUnixMilliseconds;
-        const elapsedSeconds = Math.max(0, Math.floor((endAt - startedAt) / 1000));
-        return /*% "Processed %1 s" */ qsTrId("craftward.codex.timeline.processed_seconds").arg(elapsedSeconds);
+    function toggleTurn(turnId) {
+        const anchor = timelineViewport.captureVisibleAnchor();
+        const next = Object.assign({}, root.expandedTurns);
+        const key = String(turnId);
+        next[key] = !root.turnExpanded(key);
+        root.expandedTurns = next;
+        timelineViewport.followLiveTail = false;
+        timelineViewport.scheduleAnchorRestore(anchor);
     }
 
     function followLatest() {
@@ -40,288 +40,70 @@ Control {
 
     padding: 0
 
-    contentItem: CodexTimelineViewport {
-        id: timelineViewport
+    CodexTimelinePageModel {
+        id: pageModel
 
-        loading: root.controller.loading
-        layoutKey: root.controller.threadId
-        rowKeyProvider: row => root.controller.timeline.entryIdAt(row)
-        clip: true
-        rowSpacing: 10
-        model: root.controller.timeline
-        ScrollBar.vertical: OverlayScrollBar {}
+        sourceModel: root.controller ? root.controller.timeline : null
+        turnsPerPage: 8
+    }
 
-        delegate: Item {
-            id: timelineDelegate
+    contentItem: Item {
+        CodexTimelineViewport {
+            id: timelineViewport
 
-            required property int row
-            required property string entryId
-            required property string turnId
-            required property bool forkBoundary
-            required property bool activityGroup
-            required property bool fromUser
-            required property bool commentary
-            required property bool finalAnswer
-            required property string text
-            required property var markupDocument
-            required property string activityLabel
-            required property int activityCount
-            required property var activityItems
-            required property bool failed
-            required property bool running
-            readonly property var viewport: TableView.view
-            property bool groupExpanded: shouldExpandGroup()
-
-            function shouldExpandGroup() {
-                return activityItems && activityItems.length > 0 && activityItems[0].reasoning;
-            }
-
-            function reportHeight() {
-                heightReportTimer.restart();
-            }
-
-            width: TableView.view.width
-            implicitHeight: (activityGroup ? activityCard.implicitHeight : messageCard.implicitHeight) + (forkAction.visible ? forkAction.implicitHeight + 2 : 0)
-
-            Component.onCompleted: reportHeight()
-            onEntryIdChanged: reportHeight()
-            onImplicitHeightChanged: reportHeight()
-            onWidthChanged: reportHeight()
-            TableView.onReused: {
-                groupExpanded = Qt.binding(timelineDelegate.shouldExpandGroup);
-                reportHeight();
-            }
-
-            Timer {
-                id: heightReportTimer
-
-                interval: 16
-                onTriggered: {
-                    if (timelineDelegate.viewport)
-                        timelineDelegate.viewport.recordRowHeight(timelineDelegate.row, timelineDelegate.entryId, timelineDelegate.implicitHeight);
-                }
-            }
-
-            Rectangle {
-                id: messageCard
-
-                anchors.right: timelineDelegate.fromUser ? parent.right : undefined
-                anchors.left: timelineDelegate.fromUser ? undefined : parent.left
-                width: Math.min(implicitWidth, parent.width * (timelineDelegate.commentary ? 0.92 : 0.86))
-                implicitWidth: Math.max(220, messageContent.implicitWidth + 28)
-                implicitHeight: visible ? messageContent.implicitHeight + 24 : 0
-                radius: 12
-                color: timelineDelegate.commentary ? "transparent" : (timelineDelegate.fromUser ? root.palette.alternateBase : root.palette.base)
-                border.color: timelineDelegate.commentary ? "transparent" : root.palette.mid
-                visible: !timelineDelegate.activityGroup
-
-                ColumnLayout {
-                    id: messageContent
-
-                    anchors {
-                        fill: parent
-                        margins: 12
-                    }
-                    spacing: 6
-
-                    Label {
-                        text: timelineDelegate.fromUser ? /*% "You" */ qsTrId("craftward.codex.timeline.author.you") : (timelineDelegate.commentary ? /*% "Codex · Commentary" */ qsTrId("craftward.codex.timeline.author.commentary") : /*% "Codex" */ qsTrId("craftward.codex.name"))
-                        color: root.palette.placeholderText
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                    }
-
-                    MarkupDocumentView {
-                        Layout.fillWidth: true
-                        documentModel: timelineDelegate.markupDocument
-                        textColor: root.palette.text
-                        font: root.font
-                        codeFont: Typography.codeFont
-                    }
-                }
-            }
-
-            Item {
-                id: activityCard
-
-                anchors.left: parent.left
-                width: Math.min(parent.width * 0.92, 820)
-                implicitHeight: visible ? activityColumn.implicitHeight : 0
-                visible: timelineDelegate.activityGroup
-
-                ColumnLayout {
-                    id: activityColumn
-
-                    width: parent.width
-                    spacing: 2
-
-                    ItemDelegate {
-                        Layout.fillWidth: true
-                        leftPadding: 6
-                        rightPadding: 8
-                        topPadding: 5
-                        bottomPadding: 5
-                        hoverEnabled: true
-                        onClicked: timelineDelegate.groupExpanded = !timelineDelegate.groupExpanded
-
-                        contentItem: RowLayout {
-                            spacing: 8
-
-                            Label {
-                                text: timelineDelegate.groupExpanded ? "▾" : "›"
-                                color: root.palette.placeholderText
-                                font.pixelSize: 13
-                            }
-
-                            Rectangle {
-                                Layout.preferredWidth: 8
-                                Layout.preferredHeight: 8
-                                radius: width / 2
-                                color: timelineDelegate.failed ? Theme.dangerForeground : (timelineDelegate.running ? root.palette.highlight : root.palette.mid)
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: timelineDelegate.activityLabel
-                                color: root.palette.placeholderText
-                                font.weight: Font.DemiBold
-                            }
-
-                            Label {
-                                text: /*% "× %1" */ qsTrId("craftward.codex.timeline.activity_count").arg(timelineDelegate.activityCount)
-                                color: root.palette.placeholderText
-                                font.pixelSize: 11
-                                visible: timelineDelegate.activityCount > 1
-                            }
-                        }
-                    }
-
-                    Repeater {
-                        model: timelineDelegate.groupExpanded ? timelineDelegate.activityItems : []
-
-                        delegate: ItemDelegate {
-                            id: activityItemDelegate
-
-                            required property var modelData
-                            property bool detailsExpanded: modelData.reasoning
-
-                            Layout.fillWidth: true
-                            leftPadding: 28
-                            rightPadding: 8
-                            topPadding: 6
-                            bottomPadding: 6
-                            hoverEnabled: modelData.expandable
-                            onClicked: {
-                                if (modelData.expandable)
-                                    detailsExpanded = !detailsExpanded;
-                            }
-
-                            contentItem: ColumnLayout {
-                                spacing: 4
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 7
-
-                                    Rectangle {
-                                        Layout.preferredWidth: 7
-                                        Layout.preferredHeight: 7
-                                        radius: width / 2
-                                        color: activityItemDelegate.modelData.failed ? Theme.dangerForeground : (activityItemDelegate.modelData.running ? root.palette.highlight : root.palette.mid)
-                                    }
-
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: activityItemDelegate.modelData.summary
-                                        textFormat: Text.PlainText
-                                        color: root.palette.text
-                                        wrapMode: Text.Wrap
-                                        maximumLineCount: activityItemDelegate.detailsExpanded ? 1000 : 2
-                                        elide: Text.ElideRight
-                                    }
-
-                                    Label {
-                                        text: root.activityStatusText(activityItemDelegate.modelData)
-                                        color: activityItemDelegate.modelData.failed ? Theme.dangerForeground : root.palette.placeholderText
-                                        font.pixelSize: 10
-                                        visible: text.length > 0
-                                    }
-
-                                    Label {
-                                        text: activityItemDelegate.detailsExpanded ? "▾" : "›"
-                                        color: root.palette.placeholderText
-                                        visible: activityItemDelegate.modelData.expandable
-                                    }
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: activityItemDelegate.modelData.context
-                                    color: root.palette.placeholderText
-                                    font.pixelSize: 11
-                                    elide: Text.ElideMiddle
-                                    visible: activityItemDelegate.detailsExpanded && text.length > 0
-                                }
-
-                                TextEdit {
-                                    Layout.fillWidth: true
-                                    text: activityItemDelegate.modelData.command
-                                    color: root.palette.placeholderText
-                                    font.family: Typography.monoFamily
-                                    font.pixelSize: 11
-                                    readOnly: true
-                                    selectByMouse: true
-                                    wrapMode: TextEdit.Wrap
-                                    textFormat: TextEdit.PlainText
-                                    visible: activityItemDelegate.detailsExpanded && text.length > 0
-                                }
-
-                                TextEdit {
-                                    Layout.fillWidth: true
-                                    text: activityItemDelegate.modelData.detail
-                                    color: root.palette.text
-                                    font.family: Typography.monoFamily
-                                    font.pixelSize: 11
-                                    readOnly: true
-                                    selectByMouse: true
-                                    wrapMode: TextEdit.Wrap
-                                    textFormat: TextEdit.PlainText
-                                    visible: activityItemDelegate.detailsExpanded && text.length > 0
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            ToolButton {
-                id: forkAction
-
-                anchors.left: timelineDelegate.activityGroup ? activityCard.left : messageCard.left
-                anchors.top: timelineDelegate.activityGroup ? activityCard.bottom : messageCard.bottom
-                enabled: root.forkEnabled
-                font.pixelSize: 11
-                implicitHeight: 24
-                text: /*% "Fork from here" */ qsTrId("craftward.codex.timeline.fork.action")
-                visible: timelineDelegate.forkBoundary && root.showForkActions
-                onClicked: root.forkRequested(timelineDelegate.turnId)
-            }
+            anchors.fill: parent
+            pageModel: pageModel
+            rowDelegate: timelineRowComponent
+            bottomContentInset: root.bottomContentInset
         }
 
         Label {
             anchors.centerIn: parent
             width: Math.min(parent.width - 48, 360)
-            text: root.controller.loading ? /*% "Loading conversation…" */ qsTrId("craftward.codex.timeline.loading") : (root.controller.threadId ? /*% "This conversation contains no displayable history." */ qsTrId("craftward.codex.timeline.empty") : /*% "Select a conversation to read it." */ qsTrId("craftward.codex.timeline.no_selection"))
+            text: {
+                if (!root.controller)
+                    return "";
+                return root.controller.loading ? /*% "Loading conversation…" */ qsTrId("craftward.codex.timeline.loading") : (root.controller.threadId ? /*% "This conversation contains no displayable history." */ qsTrId("craftward.codex.timeline.empty") : /*% "Select a conversation to read it." */ qsTrId("craftward.codex.timeline.no_selection"));
+            }
             color: root.palette.placeholderText
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            visible: timelineViewport.rows === 0
+            visible: pageModel.totalRowCount === 0
+        }
+    }
+
+    Component {
+        id: timelineRowComponent
+
+        CodexTimelineRow {
+            width: parent ? parent.width : 0
+            timelineModel: pageModel
+            turnExpanded: root.turnExpanded(turnId)
+            forkEnabled: root.forkEnabled
+            showForkActions: root.showForkActions
+            wallClockUnixMilliseconds: root.wallClockUnixMilliseconds
+            font: root.font
+            onToggleTurnRequested: turnId => root.toggleTurn(turnId)
+            onForkRequested: turnId => root.forkRequested(turnId)
+        }
+    }
+
+    Connections {
+        target: root.controller
+
+        function onSelectionChanged() {
+            root.expandedTurns = {};
+            timelineViewport.resetForNewContent();
+        }
+
+        function onTurnStarted() {
+            timelineViewport.followLatest();
         }
     }
 
     Timer {
         interval: 1000
-        running: root.visible && root.controller.turnRunning
+        running: root.visible && root.controller !== null && root.controller.turnRunning
         repeat: true
         onTriggered: root.wallClockUnixMilliseconds = Date.now()
     }

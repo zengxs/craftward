@@ -13,105 +13,129 @@ Control {
     required property var documentModel
     property color textColor: palette.text
     property font codeFont: font
+    readonly property var renderModel: documentModel ? documentModel["renderModel"] : null
 
     padding: 0
-    implicitWidth: Math.max(220, blockColumn.implicitWidth)
-    implicitHeight: blockColumn.implicitHeight
+    implicitWidth: 0
+    implicitHeight: segmentColumn.implicitHeight
     background: null
 
     contentItem: Column {
-        id: blockColumn
+        id: segmentColumn
 
         width: root.availableWidth
         spacing: 8
 
         Repeater {
-            model: root.documentModel
+            model: root.renderModel
 
-            delegate: Item {
-                id: blockDelegate
+            delegate: Loader {
+                id: segmentLoader
 
-                required property string blockId
+                required property string segmentId
                 required property bool codeBlock
-                required property string blockText
-                required property string plainText
+                required property string segmentText
                 required property string language
                 required property bool markdown
 
-                width: blockColumn.width
-                implicitWidth: codeBlock ? 560 : proseText.implicitWidth
-                implicitHeight: codeBlock ? codeSurface.implicitHeight : proseText.implicitHeight
-
-                TextEdit {
-                    id: proseText
-
-                    width: parent.width
-                    text: blockDelegate.blockText
-                    color: root.textColor
-                    font: root.font
-                    readOnly: true
-                    selectByMouse: true
-                    wrapMode: TextEdit.Wrap
-                    textFormat: blockDelegate.markdown ? TextEdit.MarkdownText : TextEdit.PlainText
-                    visible: !blockDelegate.codeBlock
+                function synchronizeItem() {
+                    if (!item)
+                        return;
+                    item.segmentText = segmentText;
+                    item.segmentLanguage = language;
+                    item.segmentMarkdown = markdown;
                 }
 
-                Rectangle {
-                    id: codeSurface
+                width: segmentColumn.width
+                sourceComponent: codeBlock ? codeSegment : proseSegment
+                onLoaded: synchronizeItem()
+                onSegmentTextChanged: synchronizeItem()
+                onLanguageChanged: synchronizeItem()
+                onMarkdownChanged: synchronizeItem()
+            }
+        }
+    }
+
+    Component {
+        id: proseSegment
+
+        TextEdit {
+            property string segmentText
+            property string segmentLanguage
+            property bool segmentMarkdown
+
+            text: segmentText
+            color: root.textColor
+            font: root.font
+            readOnly: true
+            selectByMouse: true
+            selectedTextColor: Theme.textSelectionForeground
+            selectionColor: Theme.textSelectionBackground
+            wrapMode: TextEdit.Wrap
+            textFormat: segmentMarkdown ? TextEdit.MarkdownText : TextEdit.PlainText
+        }
+    }
+
+    Component {
+        id: codeSegment
+
+        Rectangle {
+            id: codeSurface
+
+            property string segmentText
+            property string segmentLanguage
+            property bool segmentMarkdown
+
+            implicitHeight: codeColumn.implicitHeight + 16
+            radius: 8
+            color: Theme.dark ? TailwindColors.zinc900 : TailwindColors.zinc100
+            border.color: Theme.dark ? TailwindColors.zinc700 : TailwindColors.zinc300
+
+            Column {
+                id: codeColumn
+
+                x: 10
+                y: 8
+                width: parent.width - 20
+                spacing: 5
+
+                Label {
+                    text: codeSurface.segmentLanguage
+                    color: root.palette.placeholderText
+                    font.pixelSize: 10
+                    font.weight: Font.DemiBold
+                    visible: text.length > 0
+                }
+
+                Flickable {
+                    id: codeFlick
 
                     width: parent.width
-                    implicitWidth: 560
-                    implicitHeight: codeColumn.implicitHeight + 16
-                    radius: 8
-                    color: Theme.dark ? TailwindColors.zinc900 : TailwindColors.zinc100
-                    border.color: Theme.dark ? TailwindColors.zinc700 : TailwindColors.zinc300
-                    visible: blockDelegate.codeBlock
+                    height: codeText.implicitHeight
+                    contentWidth: Math.max(width, codeText.implicitWidth)
+                    contentHeight: height
+                    boundsBehavior: Flickable.StopAtBounds
+                    flickableDirection: Flickable.HorizontalFlick
+                    interactive: contentWidth > width
+                    clip: true
 
-                    Column {
-                        id: codeColumn
+                    ScrollBar.horizontal: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                    }
 
-                        x: 10
-                        y: 8
-                        width: parent.width - 20
-                        spacing: 5
+                    TextEdit {
+                        id: codeText
 
-                        Label {
-                            text: blockDelegate.language
-                            color: root.palette.placeholderText
-                            font.pixelSize: 10
-                            font.weight: Font.DemiBold
-                            visible: text.length > 0
-                        }
-
-                        Flickable {
-                            id: codeFlick
-
-                            width: parent.width
-                            height: codeText.implicitHeight
-                            contentWidth: Math.max(width, codeText.implicitWidth)
-                            contentHeight: height
-                            boundsBehavior: Flickable.StopAtBounds
-                            flickableDirection: Flickable.HorizontalFlick
-                            interactive: contentWidth > width
-                            clip: true
-
-                            ScrollBar.horizontal: ScrollBar {
-                                policy: ScrollBar.AsNeeded
-                            }
-
-                            TextEdit {
-                                id: codeText
-
-                                width: Math.max(codeFlick.width, implicitWidth)
-                                text: blockDelegate.blockText
-                                color: root.textColor
-                                font: root.codeFont
-                                readOnly: true
-                                selectByMouse: true
-                                wrapMode: TextEdit.NoWrap
-                                textFormat: TextEdit.PlainText
-                            }
-                        }
+                        width: Math.max(codeFlick.width, implicitWidth)
+                        text: codeSurface.segmentText
+                        color: root.textColor
+                        font: root.codeFont
+                        readOnly: true
+                        selectByMouse: true
+                        selectedTextColor: Theme.textSelectionForeground
+                        selectionColor: Theme.textSelectionBackground
+                        wrapMode: TextEdit.NoWrap
+                        textFormat: TextEdit.PlainText
                     }
                 }
             }

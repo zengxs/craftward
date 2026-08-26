@@ -14,7 +14,13 @@ Item {
     property var view
 
     ListModel {
-        id: testDocumentModel
+        id: testRenderModel
+    }
+
+    QtObject {
+        id: testDocument
+
+        readonly property var renderModel: testRenderModel
     }
 
     Component {
@@ -22,7 +28,7 @@ Item {
 
         MarkupDocumentView {
             width: 600
-            documentModel: testDocumentModel
+            documentModel: testDocument
         }
     }
 
@@ -30,20 +36,18 @@ Item {
         name: "MarkupDocumentView"
 
         function init() {
-            testDocumentModel.clear();
-            testDocumentModel.append({
-                "blockId": "prose:0",
+            testRenderModel.clear();
+            testRenderModel.append({
+                "segmentId": "prose:0",
                 "codeBlock": false,
-                "blockText": "# Heading",
-                "plainText": "Heading",
+                "segmentText": "# Heading",
                 "language": "",
                 "markdown": true
             });
-            testDocumentModel.append({
-                "blockId": "code:11",
+            testRenderModel.append({
+                "segmentId": "code:11",
                 "codeBlock": true,
-                "blockText": "let answer = 42;\n",
-                "plainText": "let answer = 42;\n",
+                "segmentText": "let answer = 42;\n",
                 "language": "javascript",
                 "markdown": false
             });
@@ -58,7 +62,6 @@ Item {
 
         function test_rendersProseAndIndependentCodeBlocks() {
             tryVerify(() => suite.view.implicitHeight > 0);
-            verify(suite.view.implicitWidth >= 560);
         }
     }
 }

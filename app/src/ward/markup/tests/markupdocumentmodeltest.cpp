@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "ward/markup/markupdocumentmodel.h"
+#include "ward/markup/markuprendermodel.h"
 
+#include <QStandardItem>
+#include <QStandardItemModel>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
@@ -17,6 +20,7 @@ class MarkupDocumentModelTest : public QObject
     void insertsANewlyCompletedBlockWithoutResettingThePrefix();
     void coalescesRapidStreamingSnapshots();
     void reparsesOnlyTheBoundedMutableTailBeforeFinalization();
+    void groupsAdjacentProseForRendering();
 };
 
 void
@@ -139,6 +143,52 @@ MarkupDocumentModelTest::reparsesOnlyTheBoundedMutableTailBeforeFinalization()
     QVERIFY(model.reconcileSource(source, MarkupDocumentModel::SourceFormat::Markdown, true));
     QTRY_COMPARE(reconciledSpy.count(), 1);
     QCOMPARE(resetSpy.count(), 0);
+}
+
+void
+MarkupDocumentModelTest::groupsAdjacentProseForRendering()
+{
+    enum Role
+    {
+        BlockIdRole = Qt::UserRole + 1,
+        CodeBlockRole,
+        BlockTextRole,
+        LanguageRole,
+        MarkdownRole,
+    };
+    QStandardItemModel source;
+    source.setItemRoleNames({
+      { BlockIdRole, "blockId" },
+      { CodeBlockRole, "codeBlock" },
+      { BlockTextRole, "blockText" },
+      { LanguageRole, "language" },
+      { MarkdownRole, "markdown" },
+    });
+    const auto appendRow =
+      [&source](const QString& id, bool codeBlock, const QString& text, const QString& language, bool markdown) {
+          auto* item = new QStandardItem;
+          item->setData(id, BlockIdRole);
+          item->setData(codeBlock, CodeBlockRole);
+          item->setData(text, BlockTextRole);
+          item->setData(language, LanguageRole);
+          item->setData(markdown, MarkdownRole);
+          source.appendRow(item);
+      };
+    appendRow(QStringLiteral("prose:0"), false, QStringLiteral("One"), {}, true);
+    appendRow(QStringLiteral("prose:5"), false, QStringLiteral("Two"), {}, true);
+    appendRow(QStringLiteral("code:10"), true, QStringLiteral("answer()"), QStringLiteral("cpp"), false);
+    appendRow(QStringLiteral("prose:20"), false, QStringLiteral("Three"), {}, true);
+
+    MarkupRenderModel renderModel;
+    renderModel.setSourceModel(&source);
+
+    QCOMPARE(renderModel.rowCount(), 3);
+    QCOMPARE(renderModel.data(renderModel.index(0), MarkupRenderModel::SegmentTextRole).toString(),
+             QStringLiteral("One\n\nTwo"));
+    QVERIFY(renderModel.data(renderModel.index(1), MarkupRenderModel::CodeBlockRole).toBool());
+    QCOMPARE(renderModel.data(renderModel.index(1), MarkupRenderModel::LanguageRole).toString(), QStringLiteral("cpp"));
+    QCOMPARE(renderModel.data(renderModel.index(2), MarkupRenderModel::SegmentTextRole).toString(),
+             QStringLiteral("Three"));
 }
 
 QTEST_GUILESS_MAIN(MarkupDocumentModelTest)

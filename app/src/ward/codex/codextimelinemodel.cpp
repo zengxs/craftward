@@ -10,6 +10,23 @@
 #include <algorithm>
 #include <utility>
 
+namespace {
+QString
+displayMessageText(const CodexMessage& message)
+{
+    using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
+    QString text = message.text();
+    if (message.role() != MessageRole::MESSAGE_ROLE_USER)
+        return text;
+
+    while (text.startsWith(QLatin1Char('\n')) || text.startsWith(QLatin1Char('\r')))
+        text.remove(0, 1);
+    while (text.endsWith(QLatin1Char('\n')) || text.endsWith(QLatin1Char('\r')))
+        text.chop(1);
+    return text;
+}
+}
+
 CodexTimelineModel::CodexTimelineModel(QObject* parent)
   : QAbstractListModel(parent)
 {
@@ -54,6 +71,8 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
             return row.forkBoundary;
         case ActivityGroupRole:
             return row.activityGroup;
+        case StandaloneActivityRole:
+            return row.activityGroup && row.activityKind == ActivityPresentationKind::ContextCompaction;
         case FromUserRole:
             return !row.activityGroup && row.message.role() == MessageRole::MESSAGE_ROLE_USER;
         case CommentaryRole:
@@ -61,7 +80,7 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
         case FinalAnswerRole:
             return !row.activityGroup && row.message.phase() == MessagePhase::MESSAGE_PHASE_FINAL_ANSWER;
         case TextRole:
-            return row.activityGroup ? QString() : row.message.text();
+            return row.activityGroup ? QString() : displayMessageText(row.message);
         case MarkupDocumentRole:
             return row.activityGroup ? QVariant()
                                      : QVariant::fromValue(static_cast<QObject*>(ensureMarkupDocument(row)));
@@ -75,6 +94,18 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
             return row.activityGroup && rowFailed(row);
         case RunningRole:
             return row.activityGroup && rowRunning(row);
+        case TurnStartedAtUnixSecondsRole:
+            return row.turnTiming.hasStartedAtUnixSeconds()
+                     ? QVariant::fromValue(static_cast<qint64>(row.turnTiming.startedAtUnixSeconds()))
+                     : QVariant();
+        case TurnCompletedAtUnixSecondsRole:
+            return row.turnTiming.hasCompletedAtUnixSeconds()
+                     ? QVariant::fromValue(static_cast<qint64>(row.turnTiming.completedAtUnixSeconds()))
+                     : QVariant();
+        case TurnDurationMillisecondsRole:
+            return row.turnTiming.hasDurationMilliseconds()
+                     ? QVariant::fromValue(static_cast<qint64>(row.turnTiming.durationMilliseconds()))
+                     : QVariant();
         default:
             return {};
     }
@@ -88,6 +119,7 @@ CodexTimelineModel::roleNames() const
         { TurnIdRole, "turnId" },
         { ForkBoundaryRole, "forkBoundary" },
         { ActivityGroupRole, "activityGroup" },
+        { StandaloneActivityRole, "standaloneActivity" },
         { FromUserRole, "fromUser" },
         { CommentaryRole, "commentary" },
         { FinalAnswerRole, "finalAnswer" },
@@ -98,11 +130,16 @@ CodexTimelineModel::roleNames() const
         { ActivityItemsRole, "activityItems" },
         { FailedRole, "failed" },
         { RunningRole, "running" },
+        { TurnStartedAtUnixSecondsRole, "turnStartedAtUnixSeconds" },
+        { TurnCompletedAtUnixSecondsRole, "turnCompletedAtUnixSeconds" },
+        { TurnDurationMillisecondsRole, "turnDurationMilliseconds" },
     };
 }
 
 QList<CodexTimelineModel::TimelineRow>
-CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline, const QSet<QString>& forkableTurnIds) const
+CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline,
+                              const QSet<QString>& forkableTurnIds,
+                              const QHash<QString, CodexTurnTiming>& turnTimings) const
 {
     QList<TimelineRow> rows;
     rows.reserve(timeline.size());
@@ -116,6 +153,7 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline, const QSet<QStr
               .turnId = item.turnId(),
               .activityGroup = false,
               .message = std::move(message),
+              .turnTiming = turnTimings.value(item.turnId()),
             });
             continue;
         }
@@ -124,7 +162,8 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline, const QSet<QStr
 
         CodexActivity activity = item.activity();
         const ActivityPresentationKind kind = presentationKind(activity);
-        if (!rows.isEmpty() && rows.last().activityGroup && rows.last().turnId == item.turnId() &&
+        if (kind != ActivityPresentationKind::ContextCompaction && !rows.isEmpty() && rows.last().activityGroup &&
+            rows.last().turnId == item.turnId() &&
             rows.last().activityKind == kind) {
             rows.last().activities.append(std::move(activity));
             continue;
@@ -136,6 +175,7 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline, const QSet<QStr
             .turnId = item.turnId(),
             .activityGroup = true,
             .activityKind = kind,
+            .turnTiming = turnTimings.value(item.turnId()),
         };
         row.activities.append(std::move(activity));
         rows.append(std::move(row));
@@ -410,15 +450,21 @@ CodexTimelineModel::rowsEqual(const TimelineRow& left, const TimelineRow& right)
     return left.entryId == right.entryId && left.turnId == right.turnId && left.forkBoundary == right.forkBoundary &&
            left.activityGroup == right.activityGroup && left.message == right.message &&
            left.markupFinalized == right.markupFinalized && left.activityKind == right.activityKind &&
-           left.activities == right.activities;
+           left.activities == right.activities && left.turnTiming == right.turnTiming;
 }
 
 MarkupDocumentModel::SourceFormat
 CodexTimelineModel::messageSourceFormat(const CodexMessage& message)
 {
     using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
-    return message.role() == MessageRole::MESSAGE_ROLE_AGENT ? MarkupDocumentModel::SourceFormat::Markdown
-                                                             : MarkupDocumentModel::SourceFormat::PlainText;
+    switch (message.role()) {
+        case MessageRole::MESSAGE_ROLE_USER:
+        case MessageRole::MESSAGE_ROLE_AGENT:
+            return MarkupDocumentModel::SourceFormat::Markdown;
+        case MessageRole::MESSAGE_ROLE_UNSPECIFIED:
+        default:
+            return MarkupDocumentModel::SourceFormat::PlainText;
+    }
 }
 
 MarkupDocumentModel*
@@ -428,7 +474,8 @@ CodexTimelineModel::ensureMarkupDocument(const TimelineRow& row) const
         return nullptr;
     if (!row.markupDocument) {
         row.markupDocument = std::make_shared<MarkupDocumentModel>(const_cast<CodexTimelineModel*>(this));
-        row.markupDocument->reconcileSource(row.message.text(), messageSourceFormat(row.message), row.markupFinalized);
+        row.markupDocument->reconcileSource(
+          displayMessageText(row.message), messageSourceFormat(row.message), row.markupFinalized);
     }
     return row.markupDocument.get();
 }
@@ -442,10 +489,19 @@ CodexTimelineModel::replaceRows(QList<TimelineRow> rows)
 }
 
 void
-CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline, const QStringList& forkableTurnIds)
+CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline,
+                                      const QStringList& forkableTurnIds,
+                                      const QList<CodexTurnTiming>& turnTimings)
 {
-    QList<TimelineRow> rows =
-      buildRows(std::move(timeline), QSet<QString>(forkableTurnIds.cbegin(), forkableTurnIds.cend()));
+    QHash<QString, CodexTurnTiming> turnTimingById;
+    turnTimingById.reserve(turnTimings.size());
+    for (const CodexTurnTiming& timing : turnTimings) {
+        if (!timing.turnId().isEmpty())
+            turnTimingById.insert(timing.turnId(), timing);
+    }
+    QList<TimelineRow> rows = buildRows(std::move(timeline),
+                                        QSet<QString>(forkableTurnIds.cbegin(), forkableTurnIds.cend()),
+                                        turnTimingById);
     const qsizetype sharedSize = std::min(rows_.size(), rows.size());
     qsizetype commonPrefix = 0;
     while (commonPrefix < sharedSize && rows_.at(commonPrefix).entryId == rows.at(commonPrefix).entryId)
@@ -461,8 +517,9 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline, const Q
             continue;
         rows[index].markupDocument = rows_[index].markupDocument;
         if (rows[index].markupDocument) {
-            rows[index].markupDocument->reconcileSource(
-              rows[index].message.text(), messageSourceFormat(rows[index].message), rows[index].markupFinalized);
+            rows[index].markupDocument->reconcileSource(displayMessageText(rows[index].message),
+                                                        messageSourceFormat(rows[index].message),
+                                                        rows[index].markupFinalized);
         }
     }
 

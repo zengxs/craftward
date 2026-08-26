@@ -293,7 +293,6 @@ Page {
                     topMargin: root.titleBarHeight + 14
                     leftMargin: 22
                     rightMargin: Math.max(22, root.SafeArea.margins.right)
-                    bottomMargin: 14
                 }
                 spacing: 12
 
@@ -426,25 +425,42 @@ Page {
                     visible: root.conversation.threadId.length > 0 && root.conversation.activityHistoryPartial
                 }
 
-                CodexTimelineView {
-                    id: timelineView
+                Item {
+                    id: conversationSurface
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    controller: root.conversation
-                    forkEnabled: historyActionState.canFork
-                    showForkActions: root.conversation.threadId.length > 0 && !root.controller.showingArchived
-                    onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
-                }
+                    readonly property real composerBottomMargin: 14
+                    readonly property real composerContentGap: 24
 
-                CodexComposer {
-                    Layout.fillWidth: true
-                    controller: root.conversation
-                    readOnly: root.controller.showingArchived
-                    startingThread: root.controller.startingThread
-                    enabled: !root.controller.startingThread && !root.controller.forkingThread
-                    visible: historyActionState.composerVisible
-                    onTurnSubmitted: timelineView.followLatest()
+                    CodexTimelineView {
+                        id: timelineView
+
+                        anchors.fill: parent
+                        bottomContentInset: composer.visible ? composer.height + conversationSurface.composerBottomMargin + conversationSurface.composerContentGap : 64
+                        controller: root.conversation
+                        forkEnabled: historyActionState.canFork
+                        showForkActions: root.conversation.threadId.length > 0 && !root.controller.showingArchived
+                        onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
+                    }
+
+                    CodexComposer {
+                        id: composer
+
+                        anchors {
+                            horizontalCenter: parent.horizontalCenter
+                            bottom: parent.bottom
+                            bottomMargin: conversationSurface.composerBottomMargin
+                        }
+                        width: timelineView.contentColumnWidth
+                        z: 1
+                        controller: root.conversation
+                        readOnly: root.controller.showingArchived
+                        startingThread: root.controller.startingThread
+                        enabled: !root.controller.startingThread && !root.controller.forkingThread
+                        visible: historyActionState.composerVisible
+                        onTurnSubmitted: timelineView.followLatest()
+                    }
                 }
             }
         }
