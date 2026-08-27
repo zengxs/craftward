@@ -63,8 +63,18 @@ Pane {
     }
 
     function submitPrompt() {
-        const accepted = root.controller.turnRunning ? root.controller.steerTurn(promptEditor.text) : root.controller.startTurn(promptEditor.text, composerState.attachmentUrls());
+        const attachments = composerState.attachmentUrls();
+        const guidance = root.controller.turnRunning;
+        const submittedText = promptEditor.text;
+        const accepted = guidance ? root.controller.steerTurn(submittedText, attachments) : root.controller.startTurn(submittedText, attachments);
+        if (accepted && guidance)
+            composerState.trackGuidanceSubmission(submittedText);
         if (accepted)
+            root.turnSubmitted();
+    }
+
+    function submitContinuation() {
+        if (root.controller.continueTurn())
             root.turnSubmitted();
     }
 
@@ -272,12 +282,14 @@ Pane {
                     }
 
                     ToolTip.delay: 500
-                    ToolTip.text: /*% "Attach local files to the next turn." */ qsTrId("craftward.codex.composer.attachment.tooltip")
+                    ToolTip.text: /*% "Attach local files." */ qsTrId("craftward.codex.composer.attachment.tooltip")
                     ToolTip.visible: hovered
                 }
 
                 TextArea {
                     id: promptEditor
+
+                    objectName: "codexComposerPromptEditor"
 
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(Math.max(contentHeight + topPadding + bottomPadding, 44), 120)
@@ -301,17 +313,13 @@ Pane {
                     }
                 }
 
-                Button {
-                    text: turnControlState.sendLabel
-                    enabled: turnControlState.sendEnabled
-                    onClicked: turnControlState.send()
-                }
-
-                Button {
-                    text: turnControlState.stopLabel
-                    enabled: turnControlState.stopEnabled
-                    visible: turnControlState.stopVisible
-                    onClicked: turnControlState.stop()
+                CodexComposerActionButton {
+                    objectName: "codexComposerPrimaryAction"
+                    Layout.alignment: Qt.AlignBottom
+                    composerAction: turnControlState.primaryAction
+                    enabled: turnControlState.primaryEnabled
+                    statusText: turnControlState.primaryToolTip
+                    onClicked: turnControlState.activatePrimaryAction()
                 }
             }
 
@@ -469,10 +477,13 @@ Pane {
         steerPending: root.controller.steeringTurn
         interruptPending: root.controller.interruptRequested
         writable: root.controller.writeAvailability === CodexConversationController.Writable
+        continuationRequestable: !root.readOnly && !root.startingThread && (root.controller.writeAvailability === CodexConversationController.NotRequested || writable)
         promptReady: promptEditor.text.trim().length > 0
         attachmentReady: composerState.attachments.length > 0
+        continuationAvailable: root.controller.hasInterruptedLatestTurn
         onSendRequested: root.submitPrompt()
         onStopRequested: root.controller.interruptTurn()
+        onContinueRequested: root.submitContinuation()
     }
 
     Connections {
@@ -495,7 +506,7 @@ Pane {
         }
 
         function onTurnSteered() {
-            composerState.confirmTextSubmission();
+            composerState.confirmGuidanceSubmission();
         }
     }
 }

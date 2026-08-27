@@ -10,11 +10,11 @@ async fn complete_fake_turn(state: &mut ObserverState, thread_id: &str, sink: &H
         deferred,
     } = state
         .run_turn(
-            TurnRequest {
-                thread_id: thread_id.to_owned(),
-                input: vec![TurnInput::Text("Seed the fork boundary".to_owned())],
-                options: TurnOptions::default(),
-            },
+            TurnRequest::start(
+                thread_id.to_owned(),
+                vec![TurnInput::Text("Seed the fork boundary".to_owned())],
+                TurnOptions::default(),
+            ),
             sink,
             &mut receiver,
             vec![],
@@ -110,15 +110,15 @@ async fn publishes_conversation_inference_changes_after_the_turn_is_accepted() {
 
     let result = state
         .run_turn(
-            TurnRequest {
-                thread_id: thread_id.clone(),
-                input: vec![TurnInput::Text("Use the faster model".to_owned())],
-                options: TurnOptions {
+            TurnRequest::start(
+                thread_id.clone(),
+                vec![TurnInput::Text("Use the faster model".to_owned())],
+                TurnOptions {
                     inference: ReasoningEffort::new("low")
                         .map(|effort| InferenceOverride::selection("gpt-fast", effort)),
                     ..TurnOptions::default()
                 },
-            },
+            ),
             &sink,
             &mut receiver,
             vec![],

@@ -5,6 +5,7 @@ import QtQuick
 import QtTest
 import Craftward.Components
 import "../../qml/Craftward/Pages" as Pages
+import "CodexTimelineTestFixtures.js" as Fixtures
 
 Item {
     id: suite
@@ -13,6 +14,7 @@ Item {
     height: 480
     property var viewport
     property bool hasRunningEvidence: false
+    property bool activityShimmerEnabled: false
     property bool forkEnabled: true
     property bool showForkActions: true
     property string lastForkedTurnId
@@ -67,6 +69,7 @@ Item {
             timelineModel: fakePageModel
             turnExpanded: false
             hasRunningEvidence: suite.hasRunningEvidence
+            activityShimmerEnabled: suite.activityShimmerEnabled
             forkEnabled: suite.forkEnabled
             showForkActions: suite.showForkActions
             wallClockUnixMilliseconds: 0
@@ -136,6 +139,7 @@ Item {
         function init() {
             ApplicationClipboard.reset();
             suite.hasRunningEvidence = false;
+            suite.activityShimmerEnabled = false;
             suite.forkEnabled = true;
             suite.showForkActions = true;
             suite.lastForkedTurnId = "";
@@ -237,6 +241,24 @@ Item {
             forkButton = findChild(row, "codexMessageForkButton");
             verify(forkButton !== null);
             verify(!forkButton.visible);
+        }
+
+        function test_runningParentActivityShimmerDoesNotChangeGeometry() {
+            const row = createViewport([Fixtures.standaloneActivityRow()]);
+            const shimmer = findChild(row, "codexActivityShimmer");
+            verify(shimmer !== null);
+            verify(!shimmer.visible);
+            const retainedHeight = row.implicitHeight;
+
+            suite.activityShimmerEnabled = true;
+
+            tryVerify(() => shimmer.visible);
+            compare(row.implicitHeight, retainedHeight);
+
+            suite.activityShimmerEnabled = false;
+
+            tryVerify(() => !shimmer.visible);
+            compare(row.implicitHeight, retainedHeight);
         }
     }
 }

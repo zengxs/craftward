@@ -9,10 +9,10 @@ use super::{
     TurnStartParams, TurnSteerParams, turn_stream_event,
 };
 use crate::{
-    Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CommandAction,
-    CommandActionKind, InferenceOverride, ReasoningEffort, ThreadActiveFlag, ThreadInferenceState,
-    ThreadItem, ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, TurnInput, TurnMode,
-    TurnOptions, TurnPermissionPreset, TurnTiming, UserInput,
+    Activity, ActivityKind, ActivityStatus, ActivityUpdate, AgentMessagePhase, CodexError,
+    CommandAction, CommandActionKind, InferenceOverride, ReasoningEffort, ThreadActiveFlag,
+    ThreadInferenceState, ThreadItem, ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent,
+    TurnInput, TurnMode, TurnOptions, TurnPermissionPreset, TurnTiming, UserInput,
 };
 
 fn inference_state(model: Option<&str>, reasoning_effort: Option<&str>) -> ThreadInferenceState {
@@ -755,13 +755,44 @@ fn serializes_typed_turn_input_in_order() {
 }
 
 #[test]
-fn rejects_empty_turn_input_before_sending_a_request() {
+fn serializes_empty_turn_input_for_continuation() {
+    let active_inference = inference_state(Some("gpt-5.6-sol"), Some("medium"));
+
+    assert_eq!(
+        serde_json::to_value(
+            TurnStartParams::continuation("thread-1", &active_inference, &TurnOptions::default(),)
+                .unwrap(),
+        )
+        .unwrap(),
+        serde_json::json!({
+            "threadId": "thread-1",
+            "input": [],
+            "collaborationMode": {
+                "mode": "default",
+                "settings": {
+                    "developer_instructions": null,
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium"
+                }
+            }
+        })
+    );
+}
+
+#[test]
+fn rejects_empty_input_for_a_regular_turn() {
     let active_inference = inference_state(Some("gpt-5.6-sol"), Some("medium"));
 
     assert!(matches!(
         TurnStartParams::new("thread-1", &[], &active_inference, &TurnOptions::default(),),
-        Err(crate::CodexError::InvalidTurnInput { .. })
+        Err(CodexError::InvalidTurnInput { .. })
     ));
+}
+
+#[test]
+fn rejects_invalid_typed_turn_input_before_sending_a_request() {
+    let active_inference = inference_state(Some("gpt-5.6-sol"), Some("medium"));
+
     assert!(matches!(
         TurnStartParams::new(
             "thread-1",
@@ -847,18 +878,29 @@ fn serializes_a_conversation_model_override_for_this_and_subsequent_turns() {
 }
 
 #[test]
-fn serializes_text_guidance_for_the_expected_active_turn() {
+fn serializes_typed_guidance_for_the_expected_active_turn() {
     assert_eq!(
-        serde_json::to_value(TurnSteerParams::text(
-            "thread-1",
-            "turn-2",
-            "Use the existing test seam",
-        ))
+        serde_json::to_value(
+            TurnSteerParams::new(
+                "thread-1",
+                "turn-2",
+                &[
+                    TurnInput::Text("Use the existing test seam".to_owned()),
+                    TurnInput::LocalImage {
+                        path: "/workspace/screenshot.png".into(),
+                    },
+                ],
+            )
+            .unwrap(),
+        )
         .unwrap(),
         serde_json::json!({
             "threadId": "thread-1",
             "expectedTurnId": "turn-2",
-            "input": [{ "type": "text", "text": "Use the existing test seam" }]
+            "input": [
+                { "type": "text", "text": "Use the existing test seam" },
+                { "type": "localImage", "path": "/workspace/screenshot.png" }
+            ]
         })
     );
 }

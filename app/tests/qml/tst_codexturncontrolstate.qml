@@ -31,6 +31,12 @@ Item {
         signalName: "stopRequested"
     }
 
+    SignalSpy {
+        id: continueSpy
+
+        signalName: "continueRequested"
+    }
+
     TestCase {
         name: "CodexTurnControlState"
 
@@ -39,30 +45,36 @@ Item {
             verify(suite.state !== null);
             sendSpy.target = suite.state;
             stopSpy.target = suite.state;
+            continueSpy.target = suite.state;
             sendSpy.clear();
             stopSpy.clear();
+            continueSpy.clear();
         }
 
         function cleanup() {
             sendSpy.target = null;
             stopSpy.target = null;
+            continueSpy.target = null;
             suite.state.destroy();
             suite.state = null;
         }
 
         function test_sendRequiresWritableNonemptyPrompt() {
             compare(suite.state.sendLabel, "Send");
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.SendAction);
             verify(!suite.state.sendEnabled);
+            verify(!suite.state.primaryEnabled);
 
             suite.state.writable = true;
             suite.state.promptReady = true;
             verify(suite.state.sendEnabled);
-            suite.state.send();
+            verify(suite.state.primaryEnabled);
+            suite.state.activatePrimaryAction();
             compare(sendSpy.count, 1);
             compare(stopSpy.count, 0);
         }
 
-        function test_attachmentCanStartButCannotGuideATurnWithoutText() {
+        function test_attachmentCanStartAndGuideATurnWithoutText() {
             suite.state.writable = true;
             suite.state.attachmentReady = true;
             verify(suite.state.sendEnabled);
@@ -71,10 +83,10 @@ Item {
             verify(!suite.state.sendEnabled);
 
             suite.state.turnRunning = true;
-            verify(!suite.state.sendEnabled);
-
-            suite.state.promptReady = true;
             verify(suite.state.sendEnabled);
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.SendAction);
+            suite.state.activatePrimaryAction();
+            compare(sendSpy.count, 1);
         }
 
         function test_inputFollowsTheSubmissionLifecycle() {
@@ -110,20 +122,20 @@ Item {
             verify(suite.state.attachmentInputEnabled);
         }
 
-        function test_runningTurnOffersGuidanceAndIndependentStop() {
+        function test_runningTurnUsesSendWhenGuidanceIsReady() {
             suite.state.turnInFlight = true;
             suite.state.turnRunning = true;
             suite.state.writable = true;
             suite.state.promptReady = true;
             compare(suite.state.sendLabel, "Guide");
             verify(suite.state.sendEnabled);
-            verify(suite.state.stopVisible);
             verify(suite.state.stopEnabled);
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.SendAction);
+            compare(suite.state.primaryToolTip, "Guide");
 
-            suite.state.send();
-            suite.state.stop();
+            suite.state.activatePrimaryAction();
             compare(sendSpy.count, 1);
-            compare(stopSpy.count, 1);
+            compare(stopSpy.count, 0);
         }
 
         function test_runningTurnCanStopWithoutGuidance() {
@@ -133,8 +145,27 @@ Item {
 
             verify(!suite.state.sendEnabled);
             verify(suite.state.stopEnabled);
-            suite.state.stop();
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.StopAction);
+            compare(suite.state.primaryToolTip, "Stop");
+            suite.state.activatePrimaryAction();
             compare(stopSpy.count, 1);
+        }
+
+        function test_interruptedTurnCanContinueWithoutNewInput() {
+            suite.state.continuationRequestable = true;
+            suite.state.continuationAvailable = true;
+
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.ContinueAction);
+            compare(suite.state.primaryToolTip, "Continue");
+            verify(suite.state.primaryEnabled);
+
+            suite.state.activatePrimaryAction();
+            compare(continueSpy.count, 1);
+            compare(sendSpy.count, 0);
+            compare(stopSpy.count, 0);
+
+            suite.state.promptReady = true;
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.SendAction);
         }
 
         function test_startingTurnCanStopWhileGuidanceStaysDisabled() {
@@ -144,11 +175,10 @@ Item {
 
             compare(suite.state.sendLabel, "Starting…");
             verify(!suite.state.sendEnabled);
-            verify(suite.state.stopVisible);
             verify(suite.state.stopEnabled);
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.StopAction);
 
-            suite.state.send();
-            suite.state.stop();
+            suite.state.activatePrimaryAction();
             compare(sendSpy.count, 0);
             compare(stopSpy.count, 1);
         }
@@ -162,9 +192,9 @@ Item {
             compare(suite.state.sendLabel, "Guiding…");
             verify(!suite.state.sendEnabled);
             verify(suite.state.stopEnabled);
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.StopAction);
 
-            suite.state.send();
-            suite.state.stop();
+            suite.state.activatePrimaryAction();
             compare(sendSpy.count, 0);
             compare(stopSpy.count, 1);
         }
@@ -178,9 +208,10 @@ Item {
             compare(suite.state.stopLabel, "Stopping…");
             verify(!suite.state.sendEnabled);
             verify(!suite.state.stopEnabled);
+            compare(suite.state.primaryAction, Pages.CodexComposerAction.StopAction);
+            verify(!suite.state.primaryEnabled);
 
-            suite.state.send();
-            suite.state.stop();
+            suite.state.activatePrimaryAction();
             compare(sendSpy.count, 0);
             compare(stopSpy.count, 0);
         }

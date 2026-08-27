@@ -17,6 +17,7 @@ Control {
     property int dataRevision: -1
     required property bool turnExpanded
     required property bool hasRunningEvidence
+    required property bool activityShimmerEnabled
     required property bool forkEnabled
     required property bool showForkActions
     required property double wallClockUnixMilliseconds
@@ -254,24 +255,15 @@ Control {
     Component {
         id: standaloneActivityComponent
 
-        RowLayout {
+        CodexActivityIdentity {
+            id: standaloneActivity
+
             width: standaloneActivityLoader.width
-            readonly property bool rowFailed: Boolean(root.value("failed"))
-            readonly property bool rowRunning: Boolean(root.value("running"))
-            spacing: 7
-
-            CodexActivityGlyph {
-                Layout.preferredWidth: 16
-                Layout.preferredHeight: 16
-                presentationKind: root.textValue("activityPresentationKind")
-                glyphColor: parent.rowFailed ? Theme.dangerForeground : (parent.rowRunning ? root.palette.highlight : root.palette.mid)
-            }
-
-            Label {
-                text: root.textValue("activityLabel")
-                color: root.palette.placeholderText
-                font.weight: Font.DemiBold
-            }
+            presentationKind: root.textValue("activityPresentationKind")
+            activityLabel: root.textValue("activityLabel")
+            failed: Boolean(root.value("failed"))
+            running: Boolean(root.value("running"))
+            shimmerEnabled: root.activityShimmerEnabled
         }
     }
 
@@ -301,24 +293,15 @@ Control {
                 contentItem: RowLayout {
                     spacing: 7
 
-                    CodexActivityGlyph {
-                        Layout.preferredWidth: 16
-                        Layout.preferredHeight: 16
+                    CodexActivityIdentity {
+                        Layout.preferredWidth: implicitWidth
+                        Layout.preferredHeight: implicitHeight
                         presentationKind: root.textValue("activityPresentationKind")
-                        glyphColor: activityGroup.rowFailed ? Theme.dangerForeground : (activityGroup.rowRunning ? root.palette.highlight : root.palette.mid)
-                    }
-
-                    Label {
-                        text: root.textValue("activityLabel")
-                        color: root.palette.placeholderText
-                        font.weight: Font.DemiBold
-                    }
-
-                    Label {
-                        text: /*% "× %1" */ qsTrId("craftward.codex.timeline.activity_count").arg(activityGroup.rowActivityCount)
-                        color: root.palette.placeholderText
-                        font.pixelSize: 11
-                        visible: activityGroup.rowActivityCount > 1
+                        activityLabel: root.textValue("activityLabel")
+                        activityCount: activityGroup.rowActivityCount
+                        failed: activityGroup.rowFailed
+                        running: activityGroup.rowRunning
+                        shimmerEnabled: root.activityShimmerEnabled
                     }
 
                     AnimatedChevron {

@@ -98,6 +98,33 @@ async fn starts_a_turn_with_typed_attachments_through_the_public_writer_seam() {
 }
 
 #[tokio::test]
+async fn continues_without_exposing_empty_input_as_a_regular_turn() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let source = fake_app_server.source();
+    let (mut writer, _) = CodexThreadWriter::start_on(
+        &source,
+        CodexHistoryCancellation::new(),
+        Path::new("/workspace"),
+        ThreadStartOptions::default(),
+    )
+    .await
+    .expect("the public writer seam should start a thread");
+
+    assert!(matches!(
+        writer.begin_turn(&[], TurnOptions::default()).await,
+        Err(CodexError::InvalidTurnInput { .. })
+    ));
+    writer
+        .continue_turn(TurnOptions::default())
+        .await
+        .expect("the explicit continuation should start a turn");
+    let outcome = finish_fake_turn(&mut writer).await;
+    assert_eq!(outcome.answer, "Done.");
+
+    writer.shutdown().await;
+}
+
+#[tokio::test]
 async fn changes_and_restores_conversation_inference_options_through_the_public_writer_seam() {
     let fake_app_server = FakeCodexAppServer::default();
     let source = fake_app_server.source();

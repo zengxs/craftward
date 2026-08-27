@@ -705,7 +705,8 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_release_write_async(
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id` and `prompt` must
-/// point to NUL-terminated strings. When `attachment_count` is nonzero,
+/// point to NUL-terminated strings. The prompt and attachments must contain at
+/// least one turn input item. When `attachment_count` is nonzero,
 /// `attachments` must point to that many attachment records. Every record must
 /// contain NUL-terminated `name` and `path` strings and a declared attachment
 /// kind.
@@ -740,94 +741,144 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn_async(
     else {
         return false;
     };
-    // SAFETY: The private C interface requires the documented string pointers.
-    let Some(prompt) = (unsafe { required_string(prompt, "the Codex prompt", output_error) })
-    else {
+    // SAFETY: The caller supplied the documented input pointers.
+    let Some(input) = (unsafe {
+        decode_turn_input(
+            prompt,
+            attachments,
+            attachment_count,
+            "the Codex prompt",
+            output_error,
+        )
+    }) else {
         return false;
     };
-    let raw_attachments = if attachment_count == 0 {
-        &[][..]
-    } else {
-        if attachments.is_null() {
-            // SAFETY: The caller supplied the optional error output pointer.
-            unsafe { write_error(output_error, "the Codex turn attachments are missing") };
-            return false;
-        }
-        // SAFETY: The private C interface requires an array containing the
-        // documented number of attachment records.
-        unsafe { std::slice::from_raw_parts(attachments, attachment_count) }
-    };
-    let mut input = Vec::with_capacity(usize::from(!prompt.trim().is_empty()) + attachment_count);
-    if !prompt.trim().is_empty() {
-        input.push(TurnInput::Text(prompt));
-    }
-    for attachment in raw_attachments {
-        // SAFETY: Every attachment must name NUL-terminated strings.
-        let Some(name) = (unsafe {
-            required_string(attachment.name, "the Codex attachment name", output_error)
-        }) else {
-            return false;
-        };
-        // SAFETY: Every attachment must name NUL-terminated strings.
-        let Some(path) = (unsafe {
-            required_string(attachment.path, "the Codex attachment path", output_error)
-        }) else {
-            return false;
-        };
-        if name.trim().is_empty() {
-            // SAFETY: The caller supplied the optional error output pointer.
-            unsafe { write_error(output_error, "the Codex attachment name is empty") };
-            return false;
-        }
-        if path.trim().is_empty() {
-            // SAFETY: The caller supplied the optional error output pointer.
-            unsafe { write_error(output_error, "the Codex attachment path is empty") };
-            return false;
-        }
-        let path = PathBuf::from(path);
-        input.push(match attachment.kind {
-            WardCodexTurnAttachmentKind::LocalImage => TurnInput::LocalImage { path },
-            WardCodexTurnAttachmentKind::LocalAudio => TurnInput::LocalAudio { path },
-            WardCodexTurnAttachmentKind::Mention => TurnInput::Mention { name, path },
-        });
-    }
     if input.is_empty() {
         // SAFETY: The caller supplied the optional error output pointer.
         unsafe { write_error(output_error, "the Codex turn input is empty") };
         return false;
     }
+    // SAFETY: The caller supplied the documented optional string pointers.
+    let Some(options) = (unsafe {
+        decode_turn_start_options(
+            model,
+            reasoning_effort,
+            turn_mode,
+            permission_preset,
+            output_error,
+        )
+    }) else {
+        return false;
+    };
+
+    send_exclusive_command(
+        observer,
+        ObserverOperation::Turn,
+        ObserverCommand::StartTurn(TurnRequest::start(thread_id, input, options)),
+        output_error,
+    )
+}
+
+/// Continues one interrupted persisted Codex thread without adding input.
+///
+/// The observer uses its previously acquired writer and emits ordered
+/// conversation updates until the turn completes.
+///
+/// A `true` return means the command was accepted; its final outcome is
+/// delivered through the Codex event callback. A `false` return means
+/// immediate rejection, and `output_error` receives an owned error when
+/// non-null.
+///
+/// # Safety
+///
+/// `observer` must point to a live handle returned by
+/// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
+/// NUL-terminated string. `model` and `reasoning_effort` use the same optional
+/// string convention as [`ward_core_codex_history_observer_start_turn_async`].
+/// `turn_mode` and `permission_preset` must use values declared by the private
+/// C interface. `output_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_codex_history_observer_continue_turn_async(
+    observer: *mut WardCodexHistoryObserver,
+    thread_id: *const c_char,
+    model: *const c_char,
+    reasoning_effort: *const c_char,
+    turn_mode: WardCodexTurnMode,
+    permission_preset: WardCodexPermissionPreset,
+    output_error: *mut *mut WardError,
+) -> bool {
+    // SAFETY: The caller supplied the optional error output pointer.
+    unsafe { clear_error(output_error) };
+    let Some(observer) = (unsafe { observer.as_ref() }) else {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex history observer is missing") };
+        return false;
+    };
+    // SAFETY: The private C interface requires the documented string pointer.
+    let Some(thread_id) =
+        (unsafe { required_string(thread_id, "the Codex thread identifier", output_error) })
+    else {
+        return false;
+    };
+    // SAFETY: The caller supplied the documented optional string pointers.
+    let Some(options) = (unsafe {
+        decode_turn_start_options(
+            model,
+            reasoning_effort,
+            turn_mode,
+            permission_preset,
+            output_error,
+        )
+    }) else {
+        return false;
+    };
+
+    send_exclusive_command(
+        observer,
+        ObserverOperation::Turn,
+        ObserverCommand::StartTurn(TurnRequest::continuation(thread_id, options)),
+        output_error,
+    )
+}
+
+/// Decodes inference and execution controls shared by turn-start operations.
+///
+/// # Safety
+///
+/// Non-null string pointers must name NUL-terminated strings. `output_error`,
+/// when non-null, must be writable.
+unsafe fn decode_turn_start_options(
+    model: *const c_char,
+    reasoning_effort: *const c_char,
+    turn_mode: WardCodexTurnMode,
+    permission_preset: WardCodexPermissionPreset,
+    output_error: *mut *mut WardError,
+) -> Option<TurnOptions> {
     let model = if model.is_null() {
         None
     } else {
-        // SAFETY: The private C interface requires a non-null model pointer to
-        // name a NUL-terminated string.
-        let Some(model) = (unsafe { required_string(model, "the Codex model", output_error) })
-        else {
-            return false;
-        };
+        // SAFETY: The caller supplied a non-null NUL-terminated string.
+        let model = unsafe { required_string(model, "the Codex model", output_error) }?;
         if model.trim().is_empty() {
             // SAFETY: The caller supplied the optional error output pointer.
             unsafe { write_error(output_error, "the Codex model is empty") };
-            return false;
+            return None;
         }
         Some(model)
     };
     let reasoning_effort = if reasoning_effort.is_null() {
         None
     } else {
-        // SAFETY: The private C interface requires a non-null reasoning-effort
-        // pointer to name a NUL-terminated string.
-        let Some(reasoning_effort) = (unsafe {
+        // SAFETY: The caller supplied a non-null NUL-terminated string.
+        let effort = unsafe {
             required_string(reasoning_effort, "the Codex reasoning effort", output_error)
-        }) else {
-            return false;
-        };
-        if reasoning_effort.trim().is_empty() {
+        }?;
+        if effort.trim().is_empty() {
             // SAFETY: The caller supplied the optional error output pointer.
             unsafe { write_error(output_error, "the Codex reasoning effort is empty") };
-            return false;
+            return None;
         }
-        ReasoningEffort::new(reasoning_effort)
+        ReasoningEffort::new(effort)
     };
     let mut options = decode_turn_options(turn_mode, permission_preset);
     options.inference = match (model, reasoning_effort) {
@@ -840,20 +891,72 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn_async(
         }
         (None, None) => None,
     };
-
-    send_exclusive_command(
-        observer,
-        ObserverOperation::Turn,
-        ObserverCommand::StartTurn(TurnRequest {
-            thread_id,
-            input,
-            options,
-        }),
-        output_error,
-    )
+    Some(options)
 }
 
-/// Adds text guidance to the selected thread's expected active Codex turn.
+/// Decodes one text-and-attachment input array owned by the caller.
+///
+/// The returned array may be empty. Every operation that requires content must
+/// reject an empty array before enqueueing its command.
+///
+/// # Safety
+///
+/// `prompt` must point to a NUL-terminated string. When `attachment_count` is
+/// nonzero, `attachments` must point to that many valid attachment records.
+/// `output_error`, when non-null, must be writable.
+unsafe fn decode_turn_input(
+    prompt: *const c_char,
+    attachments: *const WardCodexTurnAttachment,
+    attachment_count: usize,
+    prompt_description: &'static str,
+    output_error: *mut *mut WardError,
+) -> Option<Vec<TurnInput>> {
+    // SAFETY: The caller supplied the documented string pointer.
+    let prompt = unsafe { required_string(prompt, prompt_description, output_error) }?;
+    let raw_attachments = if attachment_count == 0 {
+        &[][..]
+    } else {
+        if attachments.is_null() {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex turn attachments are missing") };
+            return None;
+        }
+        // SAFETY: The caller supplied an array containing the documented
+        // number of attachment records.
+        unsafe { std::slice::from_raw_parts(attachments, attachment_count) }
+    };
+    let mut input = Vec::with_capacity(usize::from(!prompt.trim().is_empty()) + attachment_count);
+    if !prompt.trim().is_empty() {
+        input.push(TurnInput::Text(prompt));
+    }
+    for attachment in raw_attachments {
+        // SAFETY: Every attachment must name NUL-terminated strings.
+        let name =
+            unsafe { required_string(attachment.name, "the Codex attachment name", output_error) }?;
+        // SAFETY: Every attachment must name NUL-terminated strings.
+        let path =
+            unsafe { required_string(attachment.path, "the Codex attachment path", output_error) }?;
+        if name.trim().is_empty() {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex attachment name is empty") };
+            return None;
+        }
+        if path.trim().is_empty() {
+            // SAFETY: The caller supplied the optional error output pointer.
+            unsafe { write_error(output_error, "the Codex attachment path is empty") };
+            return None;
+        }
+        let path = PathBuf::from(path);
+        input.push(match attachment.kind {
+            WardCodexTurnAttachmentKind::LocalImage => TurnInput::LocalImage { path },
+            WardCodexTurnAttachmentKind::LocalAudio => TurnInput::LocalAudio { path },
+            WardCodexTurnAttachmentKind::Mention => TurnInput::Mention { name, path },
+        });
+    }
+    Some(input)
+}
+
+/// Adds typed guidance to the selected thread's expected active Codex turn.
 ///
 /// The asynchronous result is emitted as either a turn-steered event or a
 /// turn-steer-error event.
@@ -867,14 +970,18 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_start_turn_async(
 ///
 /// `observer` must point to a live handle returned by
 /// [`ward_core_codex_history_observer_open`]. `thread_id`, `expected_turn_id`,
-/// and `prompt` must point to NUL-terminated strings. `output_error`, when
-/// non-null, must be writable.
+/// and `prompt` must point to NUL-terminated strings. When `attachment_count`
+/// is nonzero, `attachments` must point to that many attachment records.
+/// Every record must contain NUL-terminated `name` and `path` strings and a
+/// declared attachment kind. `output_error`, when non-null, must be writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_codex_history_observer_steer_turn_async(
     observer: *mut WardCodexHistoryObserver,
     thread_id: *const c_char,
     expected_turn_id: *const c_char,
     prompt: *const c_char,
+    attachments: *const WardCodexTurnAttachment,
+    attachment_count: usize,
     output_error: *mut *mut WardError,
 ) -> bool {
     // SAFETY: The caller supplied the optional error output pointer.
@@ -900,15 +1007,26 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_steer_turn_async(
     }) else {
         return false;
     };
-    // SAFETY: The private C interface requires the documented string pointers.
-    let Some(prompt) = (unsafe { required_string(prompt, "the Codex guidance", output_error) })
-    else {
+    if thread_id.trim().is_empty() || expected_turn_id.trim().is_empty() {
+        // SAFETY: The caller supplied the optional error output pointer.
+        unsafe { write_error(output_error, "the Codex guidance target is empty") };
+        return false;
+    }
+    // SAFETY: The caller supplied the documented input pointers.
+    let Some(input) = (unsafe {
+        decode_turn_input(
+            prompt,
+            attachments,
+            attachment_count,
+            "the Codex guidance",
+            output_error,
+        )
+    }) else {
         return false;
     };
-    if thread_id.trim().is_empty() || expected_turn_id.trim().is_empty() || prompt.trim().is_empty()
-    {
+    if input.is_empty() {
         // SAFETY: The caller supplied the optional error output pointer.
-        unsafe { write_error(output_error, "the Codex guidance target or text is empty") };
+        unsafe { write_error(output_error, "the Codex guidance input is empty") };
         return false;
     }
 
@@ -917,7 +1035,7 @@ pub unsafe extern "C" fn ward_core_codex_history_observer_steer_turn_async(
         ObserverCommand::SteerTurn(TurnSteerRequest {
             thread_id,
             expected_turn_id,
-            prompt,
+            input,
         }),
         output_error,
     )

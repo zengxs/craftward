@@ -39,6 +39,19 @@ attachmentDescriptorList(const QList<CodexAttachmentDescriptor>& attachments)
     return described;
 }
 
+QList<WardCodexTurnAttachment>
+encodeTurnAttachments(const QList<CodexTurnAttachment>& attachments)
+{
+    QList<WardCodexTurnAttachment> encoded;
+    encoded.reserve(attachments.size());
+    for (const CodexTurnAttachment& attachment : attachments) {
+        encoded.append({ static_cast<WardCodexTurnAttachmentKind>(static_cast<int>(attachment.kind)),
+                         attachment.name.constData(),
+                         attachment.path.constData() });
+    }
+    return encoded;
+}
+
 static_assert(static_cast<int>(CodexConversationController::TurnMode::DefaultMode) == WardCodexTurnModeDefault);
 static_assert(static_cast<int>(CodexConversationController::TurnMode::PlanMode) == WardCodexTurnModePlan);
 static_assert(static_cast<int>(CodexConversationController::PermissionPreset::InheritPermissions) ==
@@ -96,13 +109,14 @@ CodexConversationController::failRefresh(const QString& message)
 void
 CodexConversationController::beginLoadingThread(const QString& threadId, const QString& title)
 {
+    pendingContinuationThreadId_.clear();
     threadId_ = threadId;
     title_ = title;
     restoreInferenceSelection();
     timelineModel_.clear();
     interactionModel_.clear();
     setActivityHistoryPartial(false);
-    resetPersistedRunEvidence();
+    resetPersistedTurnState();
     setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::NotRequested);
     setErrorMessage({});
@@ -217,6 +231,12 @@ bool
 CodexConversationController::activityHistoryPartial() const
 {
     return activityHistoryPartial_;
+}
+
+bool
+CodexConversationController::hasInterruptedLatestTurn() const
+{
+    return persistedTurnStatus_ == PersistedTurnStatus::Interrupted;
 }
 
 CodexConversationController::ThreadRunState
@@ -362,6 +382,7 @@ CodexConversationController::releaseWriteAccess()
     if (threadId_.isEmpty() || history_->startingThread() || history_->forkingThread() || turnInFlight() ||
         writeAvailability_ == WriteAvailability::NotRequested)
         return;
+    pendingContinuationThreadId_.clear();
     if (observer_ == nullptr) {
         setWriteAvailability(WriteAvailability::NotRequested);
         return;
@@ -384,8 +405,34 @@ CodexConversationController::releaseWriteAccess()
 bool
 CodexConversationController::startTurn(const QString& prompt, const QList<QUrl>& attachments)
 {
-    if (history_->showingArchived() || (prompt.trimmed().isEmpty() && attachments.isEmpty()) || threadId_.isEmpty() ||
-        mutationInFlight() || writeAvailability_ != WriteAvailability::Writable)
+    if (prompt.trimmed().isEmpty() && attachments.isEmpty())
+        return false;
+    return dispatchTurnStart(prompt, attachments);
+}
+
+bool
+CodexConversationController::continueTurn()
+{
+    if (!hasInterruptedLatestTurn() || history_->showingArchived() || threadId_.isEmpty() || mutationInFlight())
+        return false;
+    if (writeAvailability_ == WriteAvailability::Writable)
+        return dispatchContinuation();
+    if (writeAvailability_ != WriteAvailability::NotRequested)
+        return false;
+
+    pendingContinuationThreadId_ = threadId_;
+    acquireWriteAccess();
+    if (writeAvailability_ == WriteAvailability::Checking)
+        return true;
+    pendingContinuationThreadId_.clear();
+    return false;
+}
+
+bool
+CodexConversationController::dispatchTurnStart(const QString& prompt, const QList<QUrl>& attachments)
+{
+    if (history_->showingArchived() || threadId_.isEmpty() || mutationInFlight() ||
+        writeAvailability_ != WriteAvailability::Writable)
         return false;
     if (observer_ == nullptr) {
         setErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
@@ -400,13 +447,7 @@ CodexConversationController::startTurn(const QString& prompt, const QList<QUrl>&
         setErrorMessage(attachmentError);
         return false;
     }
-    QList<WardCodexTurnAttachment> encodedAttachments;
-    encodedAttachments.reserve(preparedAttachments->size());
-    for (const CodexTurnAttachment& attachment : *preparedAttachments) {
-        encodedAttachments.append({ static_cast<WardCodexTurnAttachmentKind>(static_cast<int>(attachment.kind)),
-                                    attachment.name.constData(),
-                                    attachment.path.constData() });
-    }
+    const QList<WardCodexTurnAttachment> encodedAttachments = encodeTurnAttachments(*preparedAttachments);
 
     const QByteArray threadId = threadId_.toUtf8();
     const QByteArray encodedPrompt = prompt.toUtf8();
@@ -427,6 +468,43 @@ CodexConversationController::startTurn(const QString& prompt, const QList<QUrl>&
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = /*% "The Codex turn could not be started." */ qtTrId("craftward.codex.error.turn_start");
+        setErrorMessage(message);
+        return false;
+    }
+
+    setErrorMessage({});
+    setInterruptRequested(false);
+    setTurnState(TurnState::Starting);
+    return true;
+}
+
+bool
+CodexConversationController::dispatchContinuation()
+{
+    if (!hasInterruptedLatestTurn() || history_->showingArchived() || threadId_.isEmpty() || mutationInFlight() ||
+        writeAvailability_ != WriteAvailability::Writable)
+        return false;
+    if (observer_ == nullptr) {
+        setErrorMessage(/*% "The Codex history observer is unavailable." */ qtTrId(
+          "craftward.codex.error.history_observer_unavailable"));
+        return false;
+    }
+
+    const QByteArray threadId = threadId_.toUtf8();
+    const QByteArray encodedModel = modelOverride().toUtf8();
+    const QByteArray encodedReasoningEffort = reasoningEffortOverride().toUtf8();
+    WardError* rawError = nullptr;
+    if (!ward_core_codex_history_observer_continue_turn_async(
+          observer_,
+          threadId.constData(),
+          encodedModel.isEmpty() ? nullptr : encodedModel.constData(),
+          encodedReasoningEffort.isEmpty() ? nullptr : encodedReasoningEffort.constData(),
+          static_cast<WardCodexTurnMode>(static_cast<int>(turnMode_)),
+          static_cast<WardCodexPermissionPreset>(static_cast<int>(permissionPreset_)),
+          &rawError)) {
+        QString message = ward::coreffi::takeErrorMessage(rawError);
+        if (message.isEmpty())
+            message = /*% "The Codex turn could not be continued." */ qtTrId("craftward.codex.error.turn_continue");
         setErrorMessage(message);
         return false;
     }
@@ -588,10 +666,11 @@ CodexConversationController::reasoningEffortOverride() const
 }
 
 bool
-CodexConversationController::steerTurn(const QString& prompt)
+CodexConversationController::steerTurn(const QString& prompt, const QList<QUrl>& attachments)
 {
-    if (history_->showingArchived() || history_->changingThreadLifecycle() || prompt.trimmed().isEmpty() ||
-        threadId_.isEmpty() || !turnRunning() || activeTurnId().isEmpty() || steeringTurn_ || interruptRequested_ ||
+    if (history_->showingArchived() || history_->changingThreadLifecycle() ||
+        (prompt.trimmed().isEmpty() && attachments.isEmpty()) || threadId_.isEmpty() || !turnRunning() ||
+        activeTurnId().isEmpty() || steeringTurn_ || interruptRequested_ ||
         writeAvailability_ != WriteAvailability::Writable)
         return false;
     if (observer_ == nullptr) {
@@ -600,12 +679,27 @@ CodexConversationController::steerTurn(const QString& prompt)
         return false;
     }
 
+    QString attachmentError;
+    const std::optional<QList<CodexTurnAttachment>> preparedAttachments =
+      CodexAttachmentInput::prepare(attachments, &attachmentError);
+    if (!preparedAttachments.has_value()) {
+        setErrorMessage(attachmentError);
+        return false;
+    }
+    const QList<WardCodexTurnAttachment> encodedAttachments = encodeTurnAttachments(*preparedAttachments);
+
     const QByteArray threadId = threadId_.toUtf8();
     const QByteArray turnId = activeTurnId().toUtf8();
     const QByteArray encodedPrompt = prompt.toUtf8();
     WardError* rawError = nullptr;
     if (!ward_core_codex_history_observer_steer_turn_async(
-          observer_, threadId.constData(), turnId.constData(), encodedPrompt.constData(), &rawError)) {
+          observer_,
+          threadId.constData(),
+          turnId.constData(),
+          encodedPrompt.constData(),
+          encodedAttachments.isEmpty() ? nullptr : encodedAttachments.constData(),
+          static_cast<size_t>(encodedAttachments.size()),
+          &rawError)) {
         QString message = ward::coreffi::takeErrorMessage(rawError);
         if (message.isEmpty())
             message = /*% "The Codex turn could not be guided." */ qtTrId("craftward.codex.error.turn_steer");
@@ -725,6 +819,7 @@ CodexConversationController::clearSelection()
 {
     const bool hadSelection = !threadId_.isEmpty() || !title_.isEmpty();
     const bool wasLoading = std::exchange(loading_, false);
+    pendingContinuationThreadId_.clear();
     threadId_.clear();
     title_.clear();
     setDisplayedModel({});
@@ -732,7 +827,7 @@ CodexConversationController::clearSelection()
     timelineModel_.clear();
     interactionModel_.clear();
     setActivityHistoryPartial(false);
-    resetPersistedRunEvidence();
+    resetPersistedTurnState();
     setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::NotRequested);
     setErrorMessage({});
@@ -753,39 +848,56 @@ CodexConversationController::setActivityHistoryPartial(bool partial)
 }
 
 void
-CodexConversationController::applyPersistedRunEvidence(const ward::codex::v1::Conversation& conversation)
+CodexConversationController::applyPersistedTurnState(const ward::codex::v1::Conversation& conversation)
 {
+    const bool wasInterrupted = hasInterruptedLatestTurn();
     const bool hadRunningEvidence = hasRunningEvidence();
-    PersistedRunStatus status = PersistedRunStatus::Unknown;
-    if (conversation.hasPersistedRunState()) {
-        const auto& state = conversation.persistedRunState();
-        using WirePersistedRunStatus = ward::codex::v1::PersistedRunStatusGadget::PersistedRunStatus;
+    PersistedTurnStatus status = PersistedTurnStatus::Unknown;
+    if (conversation.hasPersistedTurnState()) {
+        const auto& state = conversation.persistedTurnState();
+        using WirePersistedTurnStatus = ward::codex::v1::PersistedTurnStatusGadget::PersistedTurnStatus;
         switch (state.status()) {
-            case WirePersistedRunStatus::PERSISTED_RUN_STATUS_NOT_RUNNING:
-                status = PersistedRunStatus::NotRunning;
+            case WirePersistedTurnStatus::PERSISTED_TURN_STATUS_NONE:
+                status = PersistedTurnStatus::None;
                 break;
-            case WirePersistedRunStatus::PERSISTED_RUN_STATUS_IN_PROGRESS:
-                status = PersistedRunStatus::InProgress;
+            case WirePersistedTurnStatus::PERSISTED_TURN_STATUS_COMPLETED:
+                status = PersistedTurnStatus::Completed;
                 break;
-            case WirePersistedRunStatus::PERSISTED_RUN_STATUS_UNKNOWN:
-            case WirePersistedRunStatus::PERSISTED_RUN_STATUS_UNSPECIFIED:
+            case WirePersistedTurnStatus::PERSISTED_TURN_STATUS_INTERRUPTED:
+                status = PersistedTurnStatus::Interrupted;
+                break;
+            case WirePersistedTurnStatus::PERSISTED_TURN_STATUS_FAILED:
+                status = PersistedTurnStatus::Failed;
+                break;
+            case WirePersistedTurnStatus::PERSISTED_TURN_STATUS_IN_PROGRESS:
+                status = PersistedTurnStatus::InProgress;
+                break;
+            case WirePersistedTurnStatus::PERSISTED_TURN_STATUS_UNKNOWN:
+            case WirePersistedTurnStatus::PERSISTED_TURN_STATUS_UNSPECIFIED:
             default:
-                status = PersistedRunStatus::Unknown;
+                status = PersistedTurnStatus::Unknown;
                 break;
         }
     }
-    persistedRunStatus_ = status;
+    persistedTurnStatus_ = status;
+    if (!hasInterruptedLatestTurn())
+        pendingContinuationThreadId_.clear();
     reconcileThreadRunState();
+    if (wasInterrupted != hasInterruptedLatestTurn())
+        emit latestTurnStatusChanged();
     if (hadRunningEvidence != hasRunningEvidence())
         emit runningEvidenceChanged();
 }
 
 void
-CodexConversationController::resetPersistedRunEvidence()
+CodexConversationController::resetPersistedTurnState()
 {
+    const bool wasInterrupted = hasInterruptedLatestTurn();
     const bool hadRunningEvidence = hasRunningEvidence();
-    persistedRunStatus_ = PersistedRunStatus::Unknown;
+    persistedTurnStatus_ = PersistedTurnStatus::Unknown;
     reconcileThreadRunState();
+    if (wasInterrupted != hasInterruptedLatestTurn())
+        emit latestTurnStatusChanged();
     if (hadRunningEvidence != hasRunningEvidence())
         emit runningEvidenceChanged();
 }
@@ -809,14 +921,17 @@ CodexConversationController::reconcileThreadRunState()
             break;
     }
 
-    switch (persistedRunStatus_) {
-        case PersistedRunStatus::InProgress:
+    switch (persistedTurnStatus_) {
+        case PersistedTurnStatus::InProgress:
             setThreadRunState(ThreadRunState::RunStatePersistedInProgress);
             break;
-        case PersistedRunStatus::NotRunning:
+        case PersistedTurnStatus::None:
+        case PersistedTurnStatus::Completed:
+        case PersistedTurnStatus::Interrupted:
+        case PersistedTurnStatus::Failed:
             setThreadRunState(ThreadRunState::RunStateNotRunning);
             break;
-        case PersistedRunStatus::Unknown:
+        case PersistedTurnStatus::Unknown:
             setThreadRunState(ThreadRunState::RunStateUnknown);
             break;
     }
@@ -940,6 +1055,7 @@ CodexConversationController::adoptConversation(const QString& threadId,
                                                const ward::codex::v1::Conversation& conversation)
 {
     const bool wasLoading = std::exchange(loading_, false);
+    pendingContinuationThreadId_.clear();
     threadId_ = threadId;
     title_ = conversation.title();
     restoreInferenceSelection();
@@ -947,7 +1063,7 @@ CodexConversationController::adoptConversation(const QString& threadId,
     timelineModel_.reconcileTimeline(std::move(timeline), conversation.forkableTurnIds(), conversation.turnTimings());
     interactionModel_.clear();
     setActivityHistoryPartial(conversation.activityHistoryIsPartial());
-    applyPersistedRunEvidence(conversation);
+    applyPersistedTurnState(conversation);
     setTurnState(TurnState::Detached);
     setWriteAvailability(WriteAvailability::NotRequested);
     setErrorMessage({});

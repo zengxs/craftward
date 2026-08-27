@@ -4,6 +4,42 @@
 use super::*;
 
 #[tokio::test]
+async fn runs_an_explicit_continuation_through_the_observer_writer() {
+    let fake_app_server = FakeCodexAppServer::default();
+    let captured = Mutex::new(CapturedEvent::default());
+    let sink = event_sink(&captured);
+    let mut state = ObserverState::new(fake_app_server.source(), CodexHistoryCancellation::new());
+    let thread_id = state
+        .start_thread(
+            ThreadStartRequest {
+                working_directory: PathBuf::from("/workspace"),
+            },
+            &sink,
+        )
+        .await
+        .expect("the fake app-server should start a thread");
+    let (_commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+
+    let result = state
+        .run_turn(
+            TurnRequest::continuation(thread_id, TurnOptions::default()),
+            &sink,
+            &mut receiver,
+            vec![],
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        OperationDrive::Completed {
+            output: true,
+            deferred: None,
+        }
+    ));
+    state.shutdown().await;
+}
+
+#[tokio::test]
 async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
     let fake_app_server = FakeCodexAppServer::new(FakeCodexAppServerOptions {
         initial_thread_read_failures: 1,
@@ -26,9 +62,9 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
     let (_commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     let result = state
         .run_turn(
-            TurnRequest {
-                thread_id: started_thread_id.clone(),
-                input: vec![
+            TurnRequest::start(
+                started_thread_id.clone(),
+                vec![
                     TurnInput::Text("Hello".to_owned()),
                     TurnInput::LocalImage {
                         path: "/workspace/image.png".into(),
@@ -41,8 +77,8 @@ async fn keeps_a_new_conversation_singular_as_persisted_history_catches_up() {
                         path: "/workspace/requirements.pdf".into(),
                     },
                 ],
-                options: TurnOptions::default(),
-            },
+                TurnOptions::default(),
+            ),
             &sink,
             &mut receiver,
             vec![],
@@ -134,17 +170,17 @@ async fn steers_an_active_turn_and_reports_the_outcome() {
 
     let result = state
         .run_turn(
-            TurnRequest {
-                thread_id: thread_id.clone(),
-                input: vec![TurnInput::Text("Implement the change".to_owned())],
-                options: TurnOptions::default(),
-            },
+            TurnRequest::start(
+                thread_id.clone(),
+                vec![TurnInput::Text("Implement the change".to_owned())],
+                TurnOptions::default(),
+            ),
             &sink,
             &mut receiver,
             vec![ThreadControlRequest::Steer(TurnSteerRequest {
                 thread_id: thread_id.clone(),
                 expected_turn_id: "live-turn-1".to_owned(),
-                prompt: "Use the existing test seam".to_owned(),
+                input: vec![TurnInput::Text("Use the existing test seam".to_owned())],
             })],
         )
         .await;
@@ -295,11 +331,11 @@ async fn publishes_and_clears_command_approval_before_the_turn_completes() {
     let result = tokio::time::timeout(
         Duration::from_secs(5),
         state.run_turn(
-            TurnRequest {
-                thread_id: thread_id.clone(),
-                input: vec![TurnInput::Text("Run pwd".to_owned())],
-                options: TurnOptions::default(),
-            },
+            TurnRequest::start(
+                thread_id.clone(),
+                vec![TurnInput::Text("Run pwd".to_owned())],
+                TurnOptions::default(),
+            ),
             &sink,
             &mut receiver,
             vec![],

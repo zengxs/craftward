@@ -11,18 +11,18 @@ use super::*;
 use crate::ffi::codex::observer::COMMAND_QUEUE_CAPACITY;
 
 fn turn_request(thread_id: &str, prompt: &str) -> TurnRequest {
-    TurnRequest {
-        thread_id: thread_id.to_owned(),
-        input: vec![TurnInput::Text(prompt.to_owned())],
-        options: TurnOptions::default(),
-    }
+    TurnRequest::start(
+        thread_id.to_owned(),
+        vec![TurnInput::Text(prompt.to_owned())],
+        TurnOptions::default(),
+    )
 }
 
 fn steer_request(thread_id: &str, turn_id: &str, prompt: &str) -> TurnSteerRequest {
     TurnSteerRequest {
         thread_id: thread_id.to_owned(),
         expected_turn_id: turn_id.to_owned(),
-        prompt: prompt.to_owned(),
+        input: vec![TurnInput::Text(prompt.to_owned())],
     }
 }
 

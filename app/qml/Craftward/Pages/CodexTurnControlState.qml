@@ -11,19 +11,50 @@ QtObject {
     property bool steerPending: false
     property bool interruptPending: false
     property bool writable: false
+    property bool continuationRequestable: false
     property bool promptReady: false
     property bool attachmentReady: false
+    property bool continuationAvailable: false
+    readonly property QtObject actionDescriptor: CodexComposerAction {}
     readonly property bool inputEnabled: !steerPending && !interruptPending && (!turnInFlight || turnRunning)
     readonly property bool attachmentInputEnabled: !turnInFlight || turnRunning
-    readonly property bool contentReady: promptReady || (!turnRunning && attachmentReady)
+    readonly property bool contentReady: promptReady || attachmentReady
     readonly property bool sendEnabled: inputEnabled && writable && contentReady
-    readonly property string sendLabel: steerPending ? /*% "Guiding…" */ qsTrId("craftward.codex.turn.guiding") : (turnRunning ? /*% "Guide" */ qsTrId("craftward.codex.turn.guide") : (turnInFlight ? /*% "Starting…" */ qsTrId("craftward.codex.turn.starting") : /*% "Send" */ qsTrId("craftward.codex.turn.send")))
-    readonly property bool stopVisible: turnInFlight
+    readonly property string sendLabel: steerPending ? /*% "Guiding…" */ qsTrId("craftward.codex.turn.guiding") : (turnRunning ? /*% "Guide" */ qsTrId("craftward.codex.turn.guide") : (turnInFlight ? /*% "Starting…" */ qsTrId("craftward.codex.turn.starting") : actionDescriptor.label(CodexComposerAction.SendAction)))
     readonly property bool stopEnabled: turnInFlight && !interruptPending
-    readonly property string stopLabel: interruptPending ? /*% "Stopping…" */ qsTrId("craftward.codex.turn.stopping") : /*% "Stop" */ qsTrId("craftward.codex.turn.stop")
+    readonly property string stopLabel: interruptPending ? /*% "Stopping…" */ qsTrId("craftward.codex.turn.stopping") : actionDescriptor.label(CodexComposerAction.StopAction)
+    readonly property string continueLabel: actionDescriptor.label(CodexComposerAction.ContinueAction)
+    readonly property int primaryAction: {
+        if (turnInFlight)
+            return !turnRunning || !contentReady || steerPending || interruptPending ? CodexComposerAction.StopAction : CodexComposerAction.SendAction;
+        if (continuationAvailable && !contentReady)
+            return CodexComposerAction.ContinueAction;
+        return CodexComposerAction.SendAction;
+    }
+    readonly property bool primaryEnabled: {
+        switch (primaryAction) {
+        case CodexComposerAction.StopAction:
+            return stopEnabled;
+        case CodexComposerAction.ContinueAction:
+            return inputEnabled && continuationRequestable && continuationAvailable;
+        default:
+            return sendEnabled;
+        }
+    }
+    readonly property string primaryToolTip: {
+        switch (primaryAction) {
+        case CodexComposerAction.StopAction:
+            return stopLabel;
+        case CodexComposerAction.ContinueAction:
+            return continueLabel;
+        default:
+            return sendLabel;
+        }
+    }
 
     signal sendRequested
     signal stopRequested
+    signal continueRequested
 
     function send() {
         if (sendEnabled)
@@ -33,5 +64,19 @@ QtObject {
     function stop() {
         if (stopEnabled)
             stopRequested();
+    }
+
+    function continueTurn() {
+        if (primaryAction === CodexComposerAction.ContinueAction && primaryEnabled)
+            continueRequested();
+    }
+
+    function activatePrimaryAction() {
+        if (primaryAction === CodexComposerAction.SendAction)
+            send();
+        else if (primaryAction === CodexComposerAction.StopAction)
+            stop();
+        else
+            continueTurn();
     }
 }

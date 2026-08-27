@@ -17,14 +17,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// A Codex turn attachment kind passed through Ward Core's private C
-// interface.
-typedef enum WardCodexTurnAttachmentKind {
-    WardCodexTurnAttachmentKindLocalImage = 0,
-    WardCodexTurnAttachmentKindLocalAudio = 1,
-    WardCodexTurnAttachmentKindMention = 2,
-} WardCodexTurnAttachmentKind;
-
 // A Codex turn mode passed through Ward Core's private C interface.
 typedef enum WardCodexTurnMode {
     WardCodexTurnModeDefault = 0,
@@ -38,6 +30,14 @@ typedef enum WardCodexPermissionPreset {
     WardCodexPermissionPresetRequestApproval = 1,
     WardCodexPermissionPresetReadOnly = 2,
 } WardCodexPermissionPreset;
+
+// A Codex turn attachment kind passed through Ward Core's private C
+// interface.
+typedef enum WardCodexTurnAttachmentKind {
+    WardCodexTurnAttachmentKindLocalImage = 0,
+    WardCodexTurnAttachmentKindLocalAudio = 1,
+    WardCodexTurnAttachmentKindMention = 2,
+} WardCodexTurnAttachmentKind;
 
 // A source syntax accepted by Ward Core's app-only markup interface.
 typedef enum WardMarkupSourceFormat {
@@ -253,6 +253,32 @@ bool ward_core_codex_history_observer_acquire_write_async(struct WardCodexHistor
 bool ward_core_codex_history_observer_archive_thread_async(struct WardCodexHistoryObserver *observer,
                                                            const char *thread_id,
                                                            struct WardError **output_error);
+
+// Continues one interrupted persisted Codex thread without adding input.
+//
+// The observer uses its previously acquired writer and emits ordered
+// conversation updates until the turn completes.
+//
+// A `true` return means the command was accepted; its final outcome is
+// delivered through the Codex event callback. A `false` return means
+// immediate rejection, and `output_error` receives an owned error when
+// non-null.
+//
+// # Safety
+//
+// `observer` must point to a live handle returned by
+// [`ward_core_codex_history_observer_open`]. `thread_id` must point to a
+// NUL-terminated string. `model` and `reasoning_effort` use the same optional
+// string convention as [`ward_core_codex_history_observer_start_turn_async`].
+// `turn_mode` and `permission_preset` must use values declared by the private
+// C interface. `output_error`, when non-null, must be writable.
+bool ward_core_codex_history_observer_continue_turn_async(struct WardCodexHistoryObserver *observer,
+                                                          const char *thread_id,
+                                                          const char *model,
+                                                          const char *reasoning_effort,
+                                                          enum WardCodexTurnMode turn_mode,
+                                                          enum WardCodexPermissionPreset permission_preset,
+                                                          struct WardError **output_error);
 
 // Stops and destroys a Codex history observer.
 //
@@ -489,7 +515,8 @@ bool ward_core_codex_history_observer_start_thread_async(struct WardCodexHistory
 //
 // `observer` must point to a live handle returned by
 // [`ward_core_codex_history_observer_open`]. `thread_id` and `prompt` must
-// point to NUL-terminated strings. When `attachment_count` is nonzero,
+// point to NUL-terminated strings. The prompt and attachments must contain at
+// least one turn input item. When `attachment_count` is nonzero,
 // `attachments` must point to that many attachment records. Every record must
 // contain NUL-terminated `name` and `path` strings and a declared attachment
 // kind.
@@ -509,7 +536,7 @@ bool ward_core_codex_history_observer_start_turn_async(struct WardCodexHistoryOb
                                                        enum WardCodexPermissionPreset permission_preset,
                                                        struct WardError **output_error);
 
-// Adds text guidance to the selected thread's expected active Codex turn.
+// Adds typed guidance to the selected thread's expected active Codex turn.
 //
 // The asynchronous result is emitted as either a turn-steered event or a
 // turn-steer-error event.
@@ -523,12 +550,16 @@ bool ward_core_codex_history_observer_start_turn_async(struct WardCodexHistoryOb
 //
 // `observer` must point to a live handle returned by
 // [`ward_core_codex_history_observer_open`]. `thread_id`, `expected_turn_id`,
-// and `prompt` must point to NUL-terminated strings. `output_error`, when
-// non-null, must be writable.
+// and `prompt` must point to NUL-terminated strings. When `attachment_count`
+// is nonzero, `attachments` must point to that many attachment records.
+// Every record must contain NUL-terminated `name` and `path` strings and a
+// declared attachment kind. `output_error`, when non-null, must be writable.
 bool ward_core_codex_history_observer_steer_turn_async(struct WardCodexHistoryObserver *observer,
                                                        const char *thread_id,
                                                        const char *expected_turn_id,
                                                        const char *prompt,
+                                                       const struct WardCodexTurnAttachment *attachments,
+                                                       size_t attachment_count,
                                                        struct WardError **output_error);
 
 // Selects the persisted thread observed by a Codex history observer.

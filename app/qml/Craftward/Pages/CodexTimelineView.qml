@@ -17,6 +17,7 @@ Control {
     property var expandedTurns: ({})
     property double wallClockUnixMilliseconds: Date.now()
     readonly property real contentColumnWidth: timelineViewport.contentColumnWidth
+    readonly property bool activityShimmerEnabled: root.controller !== null && root.controller.hasRunningEvidence && !root.controller.waitingOnApproval && !root.controller.waitingOnUserInput
 
     signal forkRequested(string turnId)
 
@@ -80,6 +81,7 @@ Control {
             timelineModel: pageModel
             turnExpanded: root.turnExpanded(turnId)
             hasRunningEvidence: root.controller !== null && root.controller.hasRunningEvidence
+            activityShimmerEnabled: root.activityShimmerEnabled
             forkEnabled: root.forkEnabled
             showForkActions: root.showForkActions
             wallClockUnixMilliseconds: root.wallClockUnixMilliseconds

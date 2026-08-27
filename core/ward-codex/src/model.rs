@@ -183,7 +183,7 @@ pub enum TurnPermissionPreset {
     ReadOnly,
 }
 
-/// One user-supplied input item used to start a Codex turn.
+/// One user-supplied input item sent to a Codex turn.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TurnInput {

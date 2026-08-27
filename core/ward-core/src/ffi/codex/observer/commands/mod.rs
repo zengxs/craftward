@@ -67,15 +67,39 @@ pub(super) enum WriteAccessRequest {
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct TurnRequest {
     pub(super) thread_id: String,
-    pub(super) input: Vec<TurnInput>,
+    pub(super) action: TurnAction,
     pub(super) options: TurnOptions,
+}
+
+impl TurnRequest {
+    pub(super) fn start(thread_id: String, input: Vec<TurnInput>, options: TurnOptions) -> Self {
+        Self {
+            thread_id,
+            action: TurnAction::Start(input),
+            options,
+        }
+    }
+
+    pub(super) fn continuation(thread_id: String, options: TurnOptions) -> Self {
+        Self {
+            thread_id,
+            action: TurnAction::Continue,
+            options,
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum TurnAction {
+    Start(Vec<TurnInput>),
+    Continue,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct TurnSteerRequest {
     pub(super) thread_id: String,
     pub(super) expected_turn_id: String,
-    pub(super) prompt: String,
+    pub(super) input: Vec<TurnInput>,
 }
 
 #[derive(Debug, Eq, PartialEq)]

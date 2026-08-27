@@ -352,43 +352,10 @@ impl<'a> TurnStartParams<'a> {
     pub(crate) fn validate_input(input: &'a [TurnInput]) -> Result<(), CodexError> {
         if input.is_empty() {
             return Err(CodexError::InvalidTurnInput {
-                description: "at least one input item is required".to_owned(),
+                description: "at least one turn input item is required".to_owned(),
             });
         }
-        for input in input {
-            match input {
-                TurnInput::Text(text) if text.trim().is_empty() => {
-                    return Err(CodexError::InvalidTurnInput {
-                        description: "text input is empty".to_owned(),
-                    });
-                }
-                TurnInput::LocalImage { path } if path.as_os_str().is_empty() => {
-                    return Err(CodexError::InvalidTurnInput {
-                        description: "a local image path is empty".to_owned(),
-                    });
-                }
-                TurnInput::LocalAudio { path } if path.as_os_str().is_empty() => {
-                    return Err(CodexError::InvalidTurnInput {
-                        description: "a local audio path is empty".to_owned(),
-                    });
-                }
-                TurnInput::Mention { name, .. } if name.trim().is_empty() => {
-                    return Err(CodexError::InvalidTurnInput {
-                        description: "a mentioned file name is empty".to_owned(),
-                    });
-                }
-                TurnInput::Mention { path, .. } if path.as_os_str().is_empty() => {
-                    return Err(CodexError::InvalidTurnInput {
-                        description: "a mentioned file path is empty".to_owned(),
-                    });
-                }
-                TurnInput::Text(_)
-                | TurnInput::LocalImage { .. }
-                | TurnInput::LocalAudio { .. }
-                | TurnInput::Mention { .. } => {}
-            }
-        }
-        Ok(())
+        validate_turn_input_items(input)
     }
 
     pub(crate) fn new(
@@ -398,16 +365,16 @@ impl<'a> TurnStartParams<'a> {
         options: &'a TurnOptions,
     ) -> Result<Self, CodexError> {
         Self::validate_input(input)?;
-        let input = input
-            .iter()
-            .map(|input| match input {
-                TurnInput::Text(text) => WireTurnInput::Text { text },
-                TurnInput::LocalImage { path } => WireTurnInput::LocalImage { path },
-                TurnInput::LocalAudio { path } => WireTurnInput::LocalAudio { path },
-                TurnInput::Mention { name, path } => WireTurnInput::Mention { name, path },
-            })
-            .collect();
+        let input = wire_turn_input(input)?;
         Self::with_input(thread_id, input, active_inference, options)
+    }
+
+    pub(crate) fn continuation(
+        thread_id: &'a str,
+        active_inference: &'a ThreadInferenceState,
+        options: &'a TurnOptions,
+    ) -> Result<Self, CodexError> {
+        Self::with_input(thread_id, Vec::new(), active_inference, options)
     }
 
     #[cfg(test)]
@@ -573,13 +540,72 @@ pub(crate) struct TurnSteerParams<'a> {
 }
 
 impl<'a> TurnSteerParams<'a> {
-    pub(crate) fn text(thread_id: &'a str, expected_turn_id: &'a str, text: &'a str) -> Self {
-        Self {
+    pub(crate) fn new(
+        thread_id: &'a str,
+        expected_turn_id: &'a str,
+        input: &'a [TurnInput],
+    ) -> Result<Self, CodexError> {
+        if input.is_empty() {
+            return Err(CodexError::InvalidTurnInput {
+                description: "at least one guidance item is required".to_owned(),
+            });
+        }
+        Ok(Self {
             thread_id,
             expected_turn_id,
-            input: vec![WireTurnInput::Text { text }],
+            input: wire_turn_input(input)?,
+        })
+    }
+}
+
+fn wire_turn_input(input: &[TurnInput]) -> Result<Vec<WireTurnInput<'_>>, CodexError> {
+    validate_turn_input_items(input)?;
+    Ok(input
+        .iter()
+        .map(|input| match input {
+            TurnInput::Text(text) => WireTurnInput::Text { text },
+            TurnInput::LocalImage { path } => WireTurnInput::LocalImage { path },
+            TurnInput::LocalAudio { path } => WireTurnInput::LocalAudio { path },
+            TurnInput::Mention { name, path } => WireTurnInput::Mention { name, path },
+        })
+        .collect())
+}
+
+fn validate_turn_input_items(input: &[TurnInput]) -> Result<(), CodexError> {
+    for input in input {
+        match input {
+            TurnInput::Text(text) if text.trim().is_empty() => {
+                return Err(CodexError::InvalidTurnInput {
+                    description: "text input is empty".to_owned(),
+                });
+            }
+            TurnInput::LocalImage { path } if path.as_os_str().is_empty() => {
+                return Err(CodexError::InvalidTurnInput {
+                    description: "a local image path is empty".to_owned(),
+                });
+            }
+            TurnInput::LocalAudio { path } if path.as_os_str().is_empty() => {
+                return Err(CodexError::InvalidTurnInput {
+                    description: "a local audio path is empty".to_owned(),
+                });
+            }
+            TurnInput::Mention { name, .. } if name.trim().is_empty() => {
+                return Err(CodexError::InvalidTurnInput {
+                    description: "a mentioned file name is empty".to_owned(),
+                });
+            }
+            TurnInput::Mention { path, .. } if path.as_os_str().is_empty() => {
+                return Err(CodexError::InvalidTurnInput {
+                    description: "a mentioned file path is empty".to_owned(),
+                });
+            }
+            TurnInput::Text(_)
+            | TurnInput::LocalImage { .. }
+            | TurnInput::LocalAudio { .. }
+            | TurnInput::Mention { .. } => {}
         }
     }
+    Ok(())
 }
 
 #[derive(Deserialize)]

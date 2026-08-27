@@ -621,14 +621,36 @@ impl CodexClient {
             .await
     }
 
-    /// Starts one turn from typed user input and returns its initial streamed event.
+    /// Starts one turn from typed user input and returns its initial streamed
+    /// event.
     pub async fn begin_turn(
         &mut self,
         thread_id: &str,
         input: &[TurnInput],
-        mut options: TurnOptions,
+        options: TurnOptions,
     ) -> Result<ThreadStreamEvent, CodexError> {
         TurnStartParams::validate_input(input)?;
+        self.start_turn(thread_id, TurnStartInput::Items(input), options)
+            .await
+    }
+
+    /// Continues an interrupted thread without adding a synthetic user
+    /// message.
+    pub async fn continue_turn(
+        &mut self,
+        thread_id: &str,
+        options: TurnOptions,
+    ) -> Result<ThreadStreamEvent, CodexError> {
+        self.start_turn(thread_id, TurnStartInput::Continuation, options)
+            .await
+    }
+
+    async fn start_turn(
+        &mut self,
+        thread_id: &str,
+        input: TurnStartInput<'_>,
+        mut options: TurnOptions,
+    ) -> Result<ThreadStreamEvent, CodexError> {
         if let Some(selected_model) = options
             .inference
             .as_ref()
@@ -720,17 +742,17 @@ impl CodexClient {
         self.subscription_state.pending_for(thread_id)
     }
 
-    /// Adds text guidance to the expected active turn on this subscribed thread.
-    pub async fn steer_text_turn(
+    /// Adds typed guidance to the expected active turn on this subscribed thread.
+    pub async fn steer_turn(
         &mut self,
         thread_id: &str,
         expected_turn_id: &str,
-        text: &str,
+        input: &[TurnInput],
     ) -> Result<(), CodexError> {
         let response: TurnSteerResponse = self
             .request(
                 TURN_STEER_METHOD,
-                &TurnSteerParams::text(thread_id, expected_turn_id, text),
+                &TurnSteerParams::new(thread_id, expected_turn_id, input)?,
             )
             .await?;
         if response.turn_id != expected_turn_id {
@@ -831,7 +853,7 @@ where
 async fn begin_turn_on_connection<R, W>(
     connection: &mut Connection<R, W>,
     thread_id: &str,
-    input: &[TurnInput],
+    input: TurnStartInput<'_>,
     active_inference: &ThreadInferenceState,
     options: TurnOptions,
 ) -> Result<ThreadStreamEvent, CodexError>
@@ -839,7 +861,14 @@ where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let params = TurnStartParams::new(thread_id, input, active_inference, &options)?;
+    let params = match input {
+        TurnStartInput::Items(input) => {
+            TurnStartParams::new(thread_id, input, active_inference, &options)?
+        }
+        TurnStartInput::Continuation => {
+            TurnStartParams::continuation(thread_id, active_inference, &options)?
+        }
+    };
     let response: TurnStartResponse = connection.request(TURN_START_METHOD, &params).await?;
     let turn = response
         .into_turn()
@@ -851,6 +880,12 @@ where
         thread_id: thread_id.to_owned(),
         turn,
     })
+}
+
+#[derive(Clone, Copy)]
+enum TurnStartInput<'a> {
+    Items(&'a [TurnInput]),
+    Continuation,
 }
 
 #[cfg(test)]
@@ -968,7 +1003,7 @@ mod tests {
             begin_turn_on_connection(
                 &mut connection,
                 "thread-1",
-                &[TurnInput::Text("Continue".to_owned())],
+                TurnStartInput::Items(&[TurnInput::Text("Continue".to_owned())]),
                 &active_inference,
                 TurnOptions::default(),
             )

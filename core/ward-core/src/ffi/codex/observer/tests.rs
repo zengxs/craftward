@@ -13,19 +13,22 @@ use ward_codex::{
 
 use super::commands::{
     ObserverCommand, ThreadForkRequest, ThreadLifecycleAction, ThreadLifecycleRequest,
-    ThreadListScope, ThreadRenameRequest, TurnRequest,
+    ThreadListScope, ThreadRenameRequest, TurnRequest, TurnSteerRequest,
 };
 use super::{
     COMMAND_QUEUE_CAPACITY, ObserverOperation, ObserverOperationGate, WardCodexHistoryObserver,
     WardCodexPermissionPreset, WardCodexTurnAttachment, WardCodexTurnAttachmentKind,
     WardCodexTurnMode, decode_turn_options, ward_core_codex_history_observer_archive_thread_async,
+    ward_core_codex_history_observer_continue_turn_async,
     ward_core_codex_history_observer_fork_thread_async,
     ward_core_codex_history_observer_rename_thread_async,
     ward_core_codex_history_observer_restore_thread_async,
     ward_core_codex_history_observer_set_polling_enabled_async,
     ward_core_codex_history_observer_show_archived_async,
     ward_core_codex_history_observer_start_turn_async,
+    ward_core_codex_history_observer_steer_turn_async,
 };
+use crate::ffi::error::ward_core_error_destroy;
 
 fn test_observer(
     commands: mpsc::Sender<ObserverCommand>,
@@ -124,16 +127,76 @@ async fn queues_conversation_inference_overrides_through_the_private_c_interface
     assert!(error.is_null());
     assert_eq!(
         receiver.recv().await,
-        Some(ObserverCommand::StartTurn(TurnRequest {
-            thread_id: "thread-1".to_owned(),
-            input: vec![TurnInput::Text("Continue".to_owned())],
-            options: TurnOptions {
+        Some(ObserverCommand::StartTurn(TurnRequest::start(
+            "thread-1".to_owned(),
+            vec![TurnInput::Text("Continue".to_owned())],
+            TurnOptions {
                 inference: ReasoningEffort::new("low")
                     .map(|effort| InferenceOverride::selection("gpt-fast", effort)),
                 ..TurnOptions::default()
             },
-        }))
+        )))
     );
+}
+
+#[tokio::test]
+async fn queues_empty_turn_input_for_continuation_through_the_private_c_interface() {
+    let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (observer, _polling_enabled_updates) = test_observer(commands);
+    let thread_id = CString::new("thread-1").expect("the thread ID is valid");
+    let mut error = std::ptr::null_mut();
+
+    // SAFETY: The observer and strings remain live for the duration of the
+    // private C interface call, and the error output pointer is writable.
+    assert!(unsafe {
+        ward_core_codex_history_observer_continue_turn_async(
+            std::ptr::from_ref(&observer).cast_mut(),
+            thread_id.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            WardCodexTurnMode::Default,
+            WardCodexPermissionPreset::Inherit,
+            &mut error,
+        )
+    });
+    assert!(error.is_null());
+    assert_eq!(
+        receiver.recv().await,
+        Some(ObserverCommand::StartTurn(TurnRequest::continuation(
+            "thread-1".to_owned(),
+            TurnOptions::default(),
+        )))
+    );
+}
+
+#[tokio::test]
+async fn rejects_empty_input_through_the_regular_turn_start_interface() {
+    let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (observer, _polling_enabled_updates) = test_observer(commands);
+    let thread_id = CString::new("thread-1").expect("the thread ID is valid");
+    let prompt = CString::new("").expect("the empty prompt is valid");
+    let mut error = std::ptr::null_mut();
+
+    // SAFETY: The observer and strings remain live for the duration of the
+    // private C interface call, and the error output pointer is writable.
+    assert!(!unsafe {
+        ward_core_codex_history_observer_start_turn_async(
+            std::ptr::from_ref(&observer).cast_mut(),
+            thread_id.as_ptr(),
+            prompt.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+            WardCodexTurnMode::Default,
+            WardCodexPermissionPreset::Inherit,
+            &mut error,
+        )
+    });
+    assert!(!error.is_null());
+    assert!(receiver.try_recv().is_err());
+    // SAFETY: The failed private C interface call returned this owned error.
+    unsafe { ward_core_error_destroy(error) };
 }
 
 #[tokio::test]
@@ -187,9 +250,9 @@ async fn queues_typed_attachments_through_the_private_c_interface() {
     assert!(error.is_null());
     assert_eq!(
         receiver.recv().await,
-        Some(ObserverCommand::StartTurn(TurnRequest {
-            thread_id: "thread-1".to_owned(),
-            input: vec![
+        Some(ObserverCommand::StartTurn(TurnRequest::start(
+            "thread-1".to_owned(),
+            vec![
                 TurnInput::LocalImage {
                     path: "/workspace/first.png".into(),
                 },
@@ -201,7 +264,50 @@ async fn queues_typed_attachments_through_the_private_c_interface() {
                     path: "/workspace/requirements.pdf".into(),
                 },
             ],
-            options: TurnOptions::default(),
+            TurnOptions::default(),
+        )))
+    );
+}
+
+#[tokio::test]
+async fn queues_typed_guidance_through_the_private_c_interface() {
+    let (commands, mut receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let (observer, _polling_enabled_updates) = test_observer(commands);
+    let thread_id = CString::new("thread-1").expect("the thread ID is valid");
+    let turn_id = CString::new("turn-2").expect("the turn ID is valid");
+    let prompt = CString::new("").expect("the empty prompt is valid");
+    let image_name = CString::new("screenshot.png").expect("the image name is valid");
+    let image_path = CString::new("/workspace/screenshot.png").expect("the image path is valid");
+    let attachments = [WardCodexTurnAttachment {
+        kind: WardCodexTurnAttachmentKind::LocalImage,
+        name: image_name.as_ptr(),
+        path: image_path.as_ptr(),
+    }];
+    let mut error = std::ptr::null_mut();
+
+    // SAFETY: The observer, strings, and attachment array remain live for the
+    // duration of the private C interface call, and the error output pointer
+    // is writable.
+    assert!(unsafe {
+        ward_core_codex_history_observer_steer_turn_async(
+            std::ptr::from_ref(&observer).cast_mut(),
+            thread_id.as_ptr(),
+            turn_id.as_ptr(),
+            prompt.as_ptr(),
+            attachments.as_ptr(),
+            attachments.len(),
+            &mut error,
+        )
+    });
+    assert!(error.is_null());
+    assert_eq!(
+        receiver.recv().await,
+        Some(ObserverCommand::SteerTurn(TurnSteerRequest {
+            thread_id: "thread-1".to_owned(),
+            expected_turn_id: "turn-2".to_owned(),
+            input: vec![TurnInput::LocalImage {
+                path: "/workspace/screenshot.png".into(),
+            }],
         }))
     );
 }

@@ -76,7 +76,7 @@ impl From<CodexReasoningEffortOption> for ReasoningEffortOption {
 
 impl Conversation {
     pub(super) fn from_thread(thread: CodexThread, forkable_turn_ids: Vec<String>) -> Self {
-        let persisted_run_state = persisted_run_state(&thread);
+        let persisted_turn_state = persisted_turn_state(&thread);
         let title = thread
             .summary
             .name
@@ -106,9 +106,20 @@ impl Conversation {
             timeline,
             activity_history_is_partial: true,
             forkable_turn_ids,
-            persisted_run_state: Some(persisted_run_state),
+            persisted_turn_state: Some(persisted_turn_state),
             turn_timings,
         }
+    }
+}
+
+fn persisted_turn_status(status: &ward_codex::TurnStatus) -> PersistedTurnStatus {
+    match status {
+        ward_codex::TurnStatus::Completed => PersistedTurnStatus::Completed,
+        ward_codex::TurnStatus::Interrupted => PersistedTurnStatus::Interrupted,
+        ward_codex::TurnStatus::Failed => PersistedTurnStatus::Failed,
+        ward_codex::TurnStatus::InProgress => PersistedTurnStatus::InProgress,
+        ward_codex::TurnStatus::Unknown(_) => PersistedTurnStatus::Unknown,
+        _ => PersistedTurnStatus::Unknown,
     }
 }
 
@@ -121,29 +132,22 @@ fn turn_timing(turn: &ward_codex::Turn) -> TurnTiming {
     }
 }
 
-fn persisted_run_state(thread: &CodexThread) -> PersistedRunState {
+fn persisted_turn_state(thread: &CodexThread) -> PersistedTurnState {
     let Some(turn) = thread.turns.last() else {
-        return PersistedRunState {
-            status: PersistedRunStatus::NotRunning as i32,
+        return PersistedTurnState {
+            status: PersistedTurnStatus::None as i32,
             turn_id: None,
         };
     };
 
-    if turn.status.is_in_progress() {
-        PersistedRunState {
-            status: PersistedRunStatus::InProgress as i32,
-            turn_id: Some(turn.id.clone()),
-        }
-    } else if turn.status.is_terminal() {
-        PersistedRunState {
-            status: PersistedRunStatus::NotRunning as i32,
-            turn_id: None,
-        }
-    } else {
-        PersistedRunState {
-            status: PersistedRunStatus::Unknown as i32,
-            turn_id: None,
-        }
+    let status = persisted_turn_status(&turn.status);
+    PersistedTurnState {
+        status: status as i32,
+        turn_id: if status == PersistedTurnStatus::InProgress {
+            Some(turn.id.clone())
+        } else {
+            None
+        },
     }
 }
 
@@ -453,9 +457,9 @@ mod tests {
         assert!(decoded.activity_history_is_partial);
         assert_eq!(decoded.forkable_turn_ids, ["turn-1"]);
         assert_eq!(
-            decoded.persisted_run_state,
-            Some(PersistedRunState {
-                status: PersistedRunStatus::NotRunning as i32,
+            decoded.persisted_turn_state,
+            Some(PersistedTurnState {
+                status: PersistedTurnStatus::Completed as i32,
                 turn_id: None,
             })
         );
@@ -549,9 +553,9 @@ mod tests {
 
         let empty = Conversation::from_thread(thread_with_turns(vec![]), vec![]);
         assert_eq!(
-            empty.persisted_run_state,
-            Some(PersistedRunState {
-                status: PersistedRunStatus::NotRunning as i32,
+            empty.persisted_turn_state,
+            Some(PersistedTurnState {
+                status: PersistedTurnStatus::None as i32,
                 turn_id: None,
             })
         );
@@ -566,10 +570,27 @@ mod tests {
             vec![],
         );
         assert_eq!(
-            running.persisted_run_state,
-            Some(PersistedRunState {
-                status: PersistedRunStatus::InProgress as i32,
+            running.persisted_turn_state,
+            Some(PersistedTurnState {
+                status: PersistedTurnStatus::InProgress as i32,
                 turn_id: Some("turn-running".to_owned()),
+            })
+        );
+
+        let interrupted = Conversation::from_thread(
+            thread_with_turns(vec![Turn {
+                id: "turn-interrupted".to_owned(),
+                status: TurnStatus::Interrupted,
+                timing: Default::default(),
+                items: vec![],
+            }]),
+            vec![],
+        );
+        assert_eq!(
+            interrupted.persisted_turn_state,
+            Some(PersistedTurnState {
+                status: PersistedTurnStatus::Interrupted as i32,
+                turn_id: None,
             })
         );
 
@@ -583,9 +604,9 @@ mod tests {
             vec![],
         );
         assert_eq!(
-            unknown.persisted_run_state,
-            Some(PersistedRunState {
-                status: PersistedRunStatus::Unknown as i32,
+            unknown.persisted_turn_state,
+            Some(PersistedTurnState {
+                status: PersistedTurnStatus::Unknown as i32,
                 turn_id: None,
             })
         );

@@ -57,11 +57,13 @@ message Conversation {
   // Terminal turn identifiers confirmed by an authoritative persisted snapshot.
   repeated string forkable_turn_ids = 6;
 
-  // Best-effort execution evidence derived from the latest persisted turn.
-  PersistedRunState persisted_run_state = 7;
+  // Best-effort state derived from the latest persisted turn.
+  PersistedTurnState persisted_turn_state = 7;
 
   // Timing retained for turns that expose reliable app-server metadata.
   repeated TurnTiming turn_timings = 8;
+
+  reserved 9;
 }
 
 message TurnTiming {
@@ -74,17 +76,20 @@ message TurnTiming {
   optional int64 duration_milliseconds = 4;
 }
 
-// The execution status inferred from a persisted conversation snapshot.
-// This is not authoritative live state and may lag behind another app-server.
-enum PersistedRunStatus {
-  PERSISTED_RUN_STATUS_UNSPECIFIED = 0;
-  PERSISTED_RUN_STATUS_NOT_RUNNING = 1;
-  PERSISTED_RUN_STATUS_IN_PROGRESS = 2;
-  PERSISTED_RUN_STATUS_UNKNOWN = 3;
+// The latest status inferred from a persisted conversation snapshot. This is
+// not authoritative live state and may lag behind another app-server.
+enum PersistedTurnStatus {
+  PERSISTED_TURN_STATUS_UNSPECIFIED = 0;
+  PERSISTED_TURN_STATUS_NONE = 1;
+  PERSISTED_TURN_STATUS_COMPLETED = 2;
+  PERSISTED_TURN_STATUS_INTERRUPTED = 3;
+  PERSISTED_TURN_STATUS_FAILED = 4;
+  PERSISTED_TURN_STATUS_IN_PROGRESS = 5;
+  PERSISTED_TURN_STATUS_UNKNOWN = 6;
 }
 
-message PersistedRunState {
-  PersistedRunStatus status = 1;
+message PersistedTurnState {
+  PersistedTurnStatus status = 1;
   optional string turn_id = 2;
 }
 

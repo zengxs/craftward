@@ -62,7 +62,7 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
             timelineModel_.reconcileTimeline(
               std::move(timeline), conversation.forkableTurnIds(), conversation.turnTimings());
             setActivityHistoryPartial(conversation.activityHistoryIsPartial());
-            applyPersistedRunEvidence(conversation);
+            applyPersistedTurnState(conversation);
             finishLoading({});
             return true;
         }
@@ -124,6 +124,7 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
             if (threadId != threadId_)
                 return true;
             if (!event.hasThreadWriteState()) {
+                pendingContinuationThreadId_.clear();
                 setWriteAvailability(WriteAvailability::Unavailable,
                                      /*% "Ward Core returned a write-state update without a state." */ qtTrId(
                                        "craftward.codex.error.invalid_event.write_state_missing"));
@@ -134,6 +135,7 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
             using ThreadWriteStatus = ward::codex::v1::ThreadWriteStatusGadget::ThreadWriteStatus;
             switch (state.status()) {
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_IDLE:
+                    pendingContinuationThreadId_.clear();
                     setWriteAvailability(WriteAvailability::NotRequested);
                     break;
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_CHECKING:
@@ -141,15 +143,22 @@ CodexConversationController::applyHistoryEvent(ward::codex::v1::HistoryEvent& ev
                     break;
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_WRITABLE:
                     setWriteAvailability(WriteAvailability::Writable, message);
+                    if (pendingContinuationThreadId_ == threadId_) {
+                        pendingContinuationThreadId_.clear();
+                        dispatchContinuation();
+                    }
                     break;
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_BUSY:
+                    pendingContinuationThreadId_.clear();
                     setWriteAvailability(WriteAvailability::Busy, message);
                     break;
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_UNAVAILABLE:
+                    pendingContinuationThreadId_.clear();
                     setWriteAvailability(WriteAvailability::Unavailable, message);
                     break;
                 case ThreadWriteStatus::THREAD_WRITE_STATUS_UNSPECIFIED:
                 default:
+                    pendingContinuationThreadId_.clear();
                     setWriteAvailability(WriteAvailability::Unavailable,
                                          /*% "Ward Core returned an unsupported write state." */ qtTrId(
                                            "craftward.codex.error.invalid_event.write_state_unsupported"));

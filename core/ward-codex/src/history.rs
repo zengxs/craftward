@@ -658,6 +658,23 @@ impl CodexThreadWriter {
         }
     }
 
+    /// Continues an interrupted thread without adding a synthetic user
+    /// message, preserving the writer lease acquired on this connection.
+    pub async fn continue_turn(
+        &mut self,
+        options: crate::TurnOptions,
+    ) -> Result<ThreadStreamEvent, CodexError> {
+        if self.cancellation.is_cancelled() {
+            return Err(CodexError::Interrupted);
+        }
+        let result = self.client.continue_turn(&self.thread_id, options).await;
+        if self.cancellation.is_cancelled() {
+            Err(CodexError::Interrupted)
+        } else {
+            result
+        }
+    }
+
     /// Waits for the next event emitted by the subscribed thread connection.
     pub async fn next_subscription_event(&mut self) -> Result<ThreadStreamEvent, CodexError> {
         if self.cancellation.is_cancelled() {
@@ -689,11 +706,21 @@ impl CodexThreadWriter {
         expected_turn_id: &str,
         text: &str,
     ) -> Result<(), CodexError> {
+        self.steer_turn(expected_turn_id, &[TurnInput::Text(text.to_owned())])
+            .await
+    }
+
+    /// Adds typed guidance to the expected active turn.
+    pub async fn steer_turn(
+        &mut self,
+        expected_turn_id: &str,
+        input: &[TurnInput],
+    ) -> Result<(), CodexError> {
         if self.cancellation.is_cancelled() {
             return Err(CodexError::Interrupted);
         }
         self.client
-            .steer_text_turn(&self.thread_id, expected_turn_id, text)
+            .steer_turn(&self.thread_id, expected_turn_id, input)
             .await
     }
 

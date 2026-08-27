@@ -148,17 +148,54 @@ Item {
             compare(String(suite.state.attachments[0].url), "file:///workspace/note.wav");
         }
 
-        function test_confirmedGuidanceKeepsAttachmentsForTheNextTurn() {
+        function test_confirmedTypedGuidanceClearsOnlySubmittedInput() {
             suite.state.threadId = "thread-1";
             suite.state.saveDraft("Guide the active turn");
-            suite.state.addAttachments([suite.attachment("file:///workspace/next-turn.pdf", "next-turn.pdf", "mention")]);
+            suite.state.addAttachments([suite.attachment("file:///workspace/next-turn.pdf", "next-turn.pdf", "mention"), suite.attachment("file:///workspace/submitted.png", "submitted.png", "localImage")]);
+            suite.state.trackGuidanceSubmission("Guide the active turn");
+            suite.state.removeAttachment(0);
+            suite.state.addAttachments([suite.attachment("file:///workspace/next-turn.pdf", "next-turn.pdf", "mention"), suite.attachment("file:///workspace/later.png", "later.png", "localImage")]);
 
-            suite.state.confirmTextSubmission();
+            suite.state.confirmGuidanceSubmission();
 
             compare(suite.state.draft, "");
-            compare(suite.state.attachments.length, 1);
+            compare(suite.state.attachments.length, 2);
             compare(String(suite.state.attachments[0].url), "file:///workspace/next-turn.pdf");
+            compare(String(suite.state.attachments[1].url), "file:///workspace/later.png");
             compare(suite.state.draftCount(), 1);
+        }
+
+        function test_guidanceConfirmationPreservesANewerTextDraft() {
+            suite.state.threadId = "thread-1";
+            suite.state.saveDraft("Submitted guidance");
+            suite.state.trackGuidanceSubmission("Submitted guidance");
+            suite.state.saveDraft("Queued after submission");
+
+            suite.state.confirmGuidanceSubmission();
+
+            compare(suite.state.draft, "Queued after submission");
+            compare(suite.state.draftCount(), 1);
+        }
+
+        function test_guidanceConfirmationRemainsScopedToItsOriginatingThread() {
+            suite.state.threadId = "thread-1";
+            suite.state.saveDraft("Same guidance");
+            suite.state.addAttachments([suite.attachment("file:///workspace/submitted.png", "submitted.png", "localImage")]);
+            suite.state.trackGuidanceSubmission("Same guidance");
+
+            suite.state.threadId = "thread-2";
+            suite.state.saveDraft("Same guidance");
+            suite.state.addAttachments([suite.attachment("file:///workspace/queued.png", "queued.png", "localImage")]);
+
+            suite.state.confirmGuidanceSubmission();
+
+            compare(suite.state.draft, "Same guidance");
+            compare(suite.state.attachments.length, 1);
+            compare(String(suite.state.attachments[0].url), "file:///workspace/queued.png");
+
+            suite.state.threadId = "thread-1";
+            compare(suite.state.draft, "");
+            compare(suite.state.attachments.length, 0);
         }
 
         function test_emptyDraftsAreRemoved() {

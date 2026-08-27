@@ -5,6 +5,7 @@ import QtQuick
 import QtTest
 import Craftward.Codex
 import "../../qml/Craftward/Pages" as Pages
+import "CodexTimelineTestFixtures.js" as Fixtures
 
 Item {
     id: suite
@@ -87,6 +88,8 @@ Item {
 
         function init() {
             fakeController.hasRunningEvidence = false;
+            fakeController.waitingOnApproval = false;
+            fakeController.waitingOnUserInput = false;
             timelineData.rows = [answerRow()];
             ++timelineData.revision;
             suite.timelineView = createTemporaryObject(timelineViewComponent, suite);
@@ -114,6 +117,31 @@ Item {
 
             tryVerify(() => actions.available);
             verify(actions.visible);
+        }
+
+        function test_shimmerRequiresLiveEvidenceAndPausesForInteraction() {
+            suite.timelineView.destroy();
+            timelineData.rows = [Fixtures.standaloneActivityRow()];
+            ++timelineData.revision;
+            fakeController.hasRunningEvidence = true;
+            suite.timelineView = createTemporaryObject(timelineViewComponent, suite);
+            verify(suite.timelineView !== null);
+            const shimmer = findChild(suite.timelineView, "codexActivityShimmer");
+            verify(shimmer !== null);
+            tryVerify(() => shimmer.visible);
+
+            fakeController.waitingOnApproval = true;
+            tryVerify(() => !shimmer.visible);
+
+            fakeController.waitingOnApproval = false;
+            tryVerify(() => shimmer.visible);
+
+            fakeController.waitingOnUserInput = true;
+            tryVerify(() => !shimmer.visible);
+
+            fakeController.waitingOnUserInput = false;
+            fakeController.hasRunningEvidence = false;
+            tryVerify(() => !shimmer.visible);
         }
     }
 }

@@ -338,133 +338,133 @@ version 3 or later.</translation>
         <translation>Only local files can be attached.</translation>
     </message>
     <message id="craftward.codex.composer.file_dialog.title">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="89"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="99"/>
         <source>Attach local files</source>
         <translation>Attach local files</translation>
     </message>
     <message id="craftward.file_filter.all">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="91"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="101"/>
         <source>All files (*)</source>
         <translation>All files (*)</translation>
     </message>
     <message id="craftward.codex.composer.model.label">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="135"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="145"/>
         <source>Model</source>
         <translation>Model</translation>
     </message>
     <message id="craftward.codex.composer.reasoning.label">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="160"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="170"/>
         <source>Reasoning</source>
         <translation>Reasoning</translation>
     </message>
     <message id="craftward.codex.composer.mode.label">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="183"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="193"/>
         <source>Mode</source>
         <translation>Mode</translation>
     </message>
     <message id="craftward.codex.composer.mode.default">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="197"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="207"/>
         <source>Default</source>
         <translation>Default</translation>
     </message>
     <message id="craftward.codex.composer.mode.plan">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="202"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="212"/>
         <source>Plan</source>
         <translation>Plan</translation>
     </message>
     <message id="craftward.codex.composer.mode.plan.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="210"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="220"/>
         <source>Plan mode can pause to ask structured questions before acting.</source>
         <translation>Plan mode can pause to ask structured questions before acting.</translation>
     </message>
     <message id="craftward.codex.composer.mode.default.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="210"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="220"/>
         <source>Default mode is optimized for carrying out the requested work.</source>
         <translation>Default mode is optimized for carrying out the requested work.</translation>
     </message>
     <message id="craftward.codex.composer.permissions.label">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="215"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="225"/>
         <source>Permissions</source>
         <translation>Permissions</translation>
     </message>
     <message id="craftward.codex.composer.permissions.current">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="229"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="239"/>
         <source>Current</source>
         <translation>Current</translation>
     </message>
     <message id="craftward.codex.composer.permissions.ask">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="234"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="244"/>
         <source>Ask</source>
         <translation>Ask</translation>
     </message>
     <message id="craftward.codex.composer.permissions.read_only">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="239"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="249"/>
         <source>Read only</source>
         <translation>Read only</translation>
     </message>
     <message id="craftward.codex.composer.permissions.ask.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="249"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="259"/>
         <source>Allow workspace edits and ask before network access or sandbox escalation.</source>
         <translation>Allow workspace edits and ask before network access or sandbox escalation.</translation>
     </message>
     <message id="craftward.codex.composer.permissions.read_only.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="251"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="261"/>
         <source>Keep the turn read-only and ask before an escalation.</source>
         <translation>Keep the turn read-only and ask before an escalation.</translation>
     </message>
     <message id="craftward.codex.composer.permissions.current.description">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="252"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="262"/>
         <source>Keep the permission settings already associated with this conversation.</source>
         <translation>Keep the permission settings already associated with this conversation.</translation>
     </message>
     <message id="craftward.codex.composer.attachment.action">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="267"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="277"/>
         <source>Attach</source>
         <translation>Attach</translation>
     </message>
     <message id="craftward.codex.composer.attachment.tooltip">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="275"/>
-        <source>Attach local files to the next turn.</source>
-        <translation>Attach local files to the next turn.</translation>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="285"/>
+        <source>Attach local files.</source>
+        <translation>Attach local files.</translation>
     </message>
     <message id="craftward.codex.composer.placeholder.guide">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="284"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="296"/>
         <source>Guide Codex while it works…</source>
         <translation>Guide Codex while it works…</translation>
     </message>
     <message id="craftward.codex.composer.placeholder.continue">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="284"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="296"/>
         <source>Ask Codex to continue this conversation…</source>
         <translation>Ask Codex to continue this conversation…</translation>
     </message>
     <message id="craftward.codex.composer.attachment.remove">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="379"/>
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="380"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="387"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="388"/>
         <source>Remove attachment</source>
         <translation>Remove attachment</translation>
     </message>
     <message id="craftward.codex.composer.write_state.checking">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="412"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="420"/>
         <source>Checking whether this conversation is available for writing…</source>
         <translation>Checking whether this conversation is available for writing…</translation>
     </message>
     <message id="craftward.codex.composer.write_state.busy">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="416"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="424"/>
         <source>This conversation is open in another Codex client. Your draft is kept here.</source>
         <translation>This conversation is open in another Codex client. Your draft is kept here.</translation>
     </message>
     <message id="craftward.codex.composer.write_state.unavailable">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="417"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="425"/>
         <source>Writing is currently unavailable for this conversation.</source>
         <translation>Writing is currently unavailable for this conversation.</translation>
     </message>
     <message id="craftward.action.retry">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="425"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="433"/>
         <source>Retry</source>
         <translation>Retry</translation>
     </message>
     <message id="craftward.codex.composer.drop_files">
-        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="446"/>
+        <location filename="../qml/Craftward/Pages/CodexComposer.qml" line="454"/>
         <source>Drop files to attach</source>
         <translation>Drop files to attach</translation>
     </message>
@@ -767,7 +767,7 @@ version 3 or later.</translation>
         <translation>The selected effort is applied when the next turn starts and remains active for later turns.</translation>
     </message>
     <message id="craftward.codex.timeline.processed_seconds">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="61"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="62"/>
         <source>Processed %1 s</source>
         <translation>Processed %1 s</translation>
     </message>
@@ -810,7 +810,7 @@ version 3 or later.</translation>
         <translation type="vanished">Codex · Commentary</translation>
     </message>
     <message id="craftward.codex.timeline.activity_count">
-        <location filename="../qml/Craftward/Pages/CodexTimelineRow.qml" line="318"/>
+        <location filename="../qml/Craftward/Pages/CodexActivityIdentity.qml" line="44"/>
         <source>× %1</source>
         <translation>× %1</translation>
     </message>
@@ -830,49 +830,57 @@ version 3 or later.</translation>
         <translation>Copied</translation>
     </message>
     <message id="craftward.codex.timeline.loading">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="66"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="67"/>
         <source>Loading conversation…</source>
         <translation>Loading conversation…</translation>
     </message>
     <message id="craftward.codex.timeline.empty">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="66"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="67"/>
         <source>This conversation contains no displayable history.</source>
         <translation>This conversation contains no displayable history.</translation>
     </message>
     <message id="craftward.codex.timeline.no_selection">
-        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="66"/>
+        <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="67"/>
         <source>Select a conversation to read it.</source>
         <translation>Select a conversation to read it.</translation>
     </message>
     <message id="craftward.codex.turn.guiding">
-        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="20"/>
+        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="22"/>
         <source>Guiding…</source>
         <translation>Guiding…</translation>
     </message>
     <message id="craftward.codex.turn.guide">
-        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="20"/>
+        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="22"/>
         <source>Guide</source>
         <translation>Guide</translation>
     </message>
     <message id="craftward.codex.turn.starting">
-        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="20"/>
+        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="22"/>
         <source>Starting…</source>
         <translation>Starting…</translation>
     </message>
     <message id="craftward.codex.turn.send">
-        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="20"/>
+        <location filename="../qml/Craftward/Pages/CodexComposerAction.qml" line="31"/>
+        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="22"/>
         <source>Send</source>
         <translation>Send</translation>
     </message>
     <message id="craftward.codex.turn.stopping">
-        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="23"/>
+        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="24"/>
         <source>Stopping…</source>
         <translation>Stopping…</translation>
     </message>
     <message id="craftward.codex.turn.stop">
-        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="23"/>
+        <location filename="../qml/Craftward/Pages/CodexComposerAction.qml" line="27"/>
+        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="24"/>
         <source>Stop</source>
         <translation>Stop</translation>
+    </message>
+    <message id="craftward.codex.turn.continue">
+        <location filename="../qml/Craftward/Pages/CodexComposerAction.qml" line="29"/>
+        <location filename="../qml/Craftward/Pages/CodexTurnControlState.qml" line="25"/>
+        <source>Continue</source>
+        <translation>Continue</translation>
     </message>
     <message id="craftward.settings.language.system">
         <location filename="../qml/Craftward/Pages/SettingsGeneralPage.qml" line="16"/>
@@ -934,9 +942,10 @@ version 3 or later.</translation>
         <translation>Pasted image.png</translation>
     </message>
     <message id="craftward.codex.error.history_observer_unavailable">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="340"/>
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="391"/>
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="598"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="360"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="438"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="488"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="678"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="149"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="172"/>
         <location filename="../src/ward/codex/codexhistorycontroller.cpp" line="202"/>
@@ -949,38 +958,43 @@ version 3 or later.</translation>
         <translation>The Codex history observer is unavailable.</translation>
     </message>
     <message id="craftward.codex.error.write_access_check">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="350"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="370"/>
         <source>Writing access could not be checked for this conversation.</source>
         <translation>Writing access could not be checked for this conversation.</translation>
     </message>
     <message id="craftward.codex.error.write_access_release">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="375"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="396"/>
         <source>Writing access could not be released for this conversation.</source>
         <translation>Writing access could not be released for this conversation.</translation>
     </message>
     <message id="craftward.codex.error.turn_start">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="429"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="470"/>
         <source>The Codex turn could not be started.</source>
         <translation>The Codex turn could not be started.</translation>
     </message>
+    <message id="craftward.codex.error.turn_continue">
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="507"/>
+        <source>The Codex turn could not be continued.</source>
+        <translation>The Codex turn could not be continued.</translation>
+    </message>
     <message id="craftward.codex.error.turn_steer">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="611"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="706"/>
         <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="100"/>
         <source>The Codex turn could not be guided.</source>
         <translation>The Codex turn could not be guided.</translation>
     </message>
     <message id="craftward.codex.error.turn_stop">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="633"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="728"/>
         <source>The Codex turn could not be stopped.</source>
         <translation>The Codex turn could not be stopped.</translation>
     </message>
     <message id="craftward.codex.error.response_encode">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="897"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="1011"/>
         <source>The Codex response could not be encoded: %1</source>
         <translation>The Codex response could not be encoded: %1</translation>
     </message>
     <message id="craftward.codex.error.response_send">
-        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="910"/>
+        <location filename="../src/ward/codex/codexconversationcontroller.cpp" line="1024"/>
         <source>The Codex response could not be sent.</source>
         <translation>The Codex response could not be sent.</translation>
     </message>
@@ -1016,22 +1030,22 @@ version 3 or later.</translation>
         <translation>The Codex turn failed.</translation>
     </message>
     <message id="craftward.codex.error.invalid_event.write_state_missing">
-        <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="128"/>
+        <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="129"/>
         <source>Ward Core returned a write-state update without a state.</source>
         <translation>Ward Core returned a write-state update without a state.</translation>
     </message>
     <message id="craftward.codex.error.invalid_event.write_state_unsupported">
-        <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="154"/>
+        <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="163"/>
         <source>Ward Core returned an unsupported write state.</source>
         <translation>Ward Core returned an unsupported write state.</translation>
     </message>
     <message id="craftward.codex.error.invalid_event.runtime_state_missing">
-        <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="165"/>
+        <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="174"/>
         <source>Ward Core returned a runtime update without a state.</source>
         <translation>Ward Core returned a runtime update without a state.</translation>
     </message>
     <message id="craftward.codex.error.invalid_event.interactions_missing">
-        <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="217"/>
+        <location filename="../src/ward/codex/codexconversationcontroller_events.cpp" line="226"/>
         <source>Ward Core returned an interaction update without its interactions.</source>
         <translation>Ward Core returned an interaction update without its interactions.</translation>
     </message>

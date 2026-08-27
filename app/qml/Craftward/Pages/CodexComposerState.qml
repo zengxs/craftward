@@ -12,6 +12,8 @@ QtObject {
     property string threadId
     property string activeThreadId
     property var drafts: []
+    property int nextAttachmentId: 1
+    property var pendingGuidanceSubmission: null
 
     signal editorShouldLoseFocus
 
@@ -26,13 +28,56 @@ QtObject {
         return root.attachments.map(attachment => attachment.url);
     }
 
+    function attachmentIds() {
+        return root.attachments.map(attachment => attachment.draftAttachmentId);
+    }
+
     function confirmSubmission() {
         root.attachments = [];
         root.saveDraft("");
     }
 
-    function confirmTextSubmission() {
-        root.saveDraft("");
+    function trackGuidanceSubmission(text) {
+        root.pendingGuidanceSubmission = {
+            "threadId": root.activeThreadId,
+            "text": String(text),
+            "attachmentIds": root.attachmentIds()
+        };
+    }
+
+    function confirmGuidanceSubmission() {
+        const submission = root.pendingGuidanceSubmission;
+        root.pendingGuidanceSubmission = null;
+        if (submission === null)
+            return;
+
+        if (submission.threadId === root.activeThreadId) {
+            root.attachments = root.retainedAttachments(root.attachments, submission.attachmentIds);
+            if (root.draft === submission.text)
+                root.draft = "";
+            root.persistActiveDraft();
+            return;
+        }
+
+        const index = root.draftIndex(submission.threadId);
+        if (index < 0)
+            return;
+        const entry = root.drafts[index];
+        const retainedText = String(entry.text) === submission.text ? "" : String(entry.text);
+        const retained = root.retainedAttachments(entry.attachments ?? [], submission.attachmentIds);
+        if (retainedText.length === 0 && retained.length === 0) {
+            root.drafts.splice(index, 1);
+        } else {
+            root.drafts[index] = {
+                "threadId": submission.threadId,
+                "text": retainedText,
+                "attachments": retained
+            };
+        }
+    }
+
+    function retainedAttachments(source, submittedAttachmentIds) {
+        return source.filter(attachment => submittedAttachmentIds.indexOf(attachment.draftAttachmentId) < 0);
     }
 
     function addAttachments(candidates) {
@@ -43,8 +88,11 @@ QtObject {
         for (let index = 0; index < candidates.length; ++index) {
             const candidate = candidates[index];
             const candidateKey = String(candidate.url);
-            if (!nextAttachments.some(attachment => String(attachment.url) === candidateKey))
-                nextAttachments.push(candidate);
+            if (!nextAttachments.some(attachment => String(attachment.url) === candidateKey)) {
+                const attachment = Object.assign({}, candidate);
+                attachment.draftAttachmentId = root.nextAttachmentId++;
+                nextAttachments.push(attachment);
+            }
         }
         root.attachments = nextAttachments;
         root.persistActiveDraft();

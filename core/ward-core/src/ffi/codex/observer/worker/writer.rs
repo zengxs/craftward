@@ -13,8 +13,8 @@ use ward_codex::{
 use super::super::super::live::{LiveRuntimeState, LiveThreadProjection, event_is_incremental};
 use super::super::super::wire;
 use super::super::commands::{
-    DrainedCommands, ObserverCommand, ThreadControlRequest, TurnRequest, TurnSteerRequest,
-    drain_commands,
+    DrainedCommands, ObserverCommand, ThreadControlRequest, TurnAction, TurnRequest,
+    TurnSteerRequest, drain_commands,
 };
 use super::super::events::HistoryEventSink;
 use super::operation::{OperationDrive, drive_operation};
@@ -292,7 +292,7 @@ impl WriterRuntime {
                 let TurnSteerRequest {
                     thread_id,
                     expected_turn_id,
-                    prompt,
+                    input,
                 } = request;
                 let active_turn_matches = matches!(
                     self.live.runtime(),
@@ -319,7 +319,7 @@ impl WriterRuntime {
                     );
                     return;
                 };
-                match writer.steer_text_turn(&expected_turn_id, &prompt).await {
+                match writer.steer_turn(&expected_turn_id, &input).await {
                     Ok(()) => sink.emit_turn_steered(&thread_id),
                     Err(error) => sink.emit_turn_steer_error(&thread_id, &error.to_string()),
                 }
@@ -389,7 +389,7 @@ impl WriterRuntime {
     ) -> OperationDrive<bool> {
         let TurnRequest {
             thread_id,
-            input,
+            action,
             options,
         } = request;
         let inference_override_requested = options.inference.is_some();
@@ -419,7 +419,15 @@ impl WriterRuntime {
                 .writer
                 .as_mut()
                 .expect("the matching writer was checked above");
-            drive_operation(writer.begin_turn(&input, options), receiver, cancellation).await
+            match action {
+                TurnAction::Start(input) => {
+                    drive_operation(writer.begin_turn(&input, options), receiver, cancellation)
+                        .await
+                }
+                TurnAction::Continue => {
+                    drive_operation(writer.continue_turn(options), receiver, cancellation).await
+                }
+            }
         };
         let OperationDrive::Completed {
             output: result,

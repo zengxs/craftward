@@ -41,6 +41,7 @@ class CodexConversationController : public QObject
     Q_PROPERTY(QString modelCatalogErrorMessage READ modelCatalogErrorMessage NOTIFY modelCatalogStateChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(bool activityHistoryPartial READ activityHistoryPartial NOTIFY activityHistoryPartialChanged)
+    Q_PROPERTY(bool hasInterruptedLatestTurn READ hasInterruptedLatestTurn NOTIFY latestTurnStatusChanged)
     Q_PROPERTY(ThreadRunState threadRunState READ threadRunState NOTIFY threadRunStateChanged)
     Q_PROPERTY(bool hasRunningEvidence READ hasRunningEvidence NOTIFY runningEvidenceChanged)
     Q_PROPERTY(TurnState turnState READ turnState NOTIFY turnStateChanged)
@@ -147,6 +148,7 @@ class CodexConversationController : public QObject
     [[nodiscard]] QString modelCatalogErrorMessage() const;
     [[nodiscard]] bool loading() const;
     [[nodiscard]] bool activityHistoryPartial() const;
+    [[nodiscard]] bool hasInterruptedLatestTurn() const;
     [[nodiscard]] ThreadRunState threadRunState() const;
     [[nodiscard]] bool hasRunningEvidence() const;
     [[nodiscard]] TurnState turnState() const;
@@ -169,9 +171,10 @@ class CodexConversationController : public QObject
     Q_INVOKABLE QVariantList describeAttachments(const QList<QUrl>& attachments);
     Q_INVOKABLE QVariantList attachmentsFromClipboard();
     Q_INVOKABLE bool startTurn(const QString& prompt, const QList<QUrl>& attachments);
+    Q_INVOKABLE bool continueTurn();
     Q_INVOKABLE bool selectModel(const QString& model);
     Q_INVOKABLE bool selectReasoningEffort(const QString& effort);
-    Q_INVOKABLE bool steerTurn(const QString& prompt);
+    Q_INVOKABLE bool steerTurn(const QString& prompt, const QList<QUrl>& attachments);
     Q_INVOKABLE bool interruptTurn();
     Q_INVOKABLE bool respondToApproval(const QString& interactionId, InteractionDecision decision);
     Q_INVOKABLE bool respondToUserInput(const QString& interactionId, const QVariantMap& answers);
@@ -184,6 +187,7 @@ class CodexConversationController : public QObject
     void loadingChanged();
     void modelCatalogStateChanged();
     void activityHistoryPartialChanged();
+    void latestTurnStatusChanged();
     void threadRunStateChanged();
     void runningEvidenceChanged();
     void turnStateChanged();
@@ -207,10 +211,13 @@ class CodexConversationController : public QObject
         bool waitingOnUserInput = false;
     };
 
-    enum class PersistedRunStatus
+    enum class PersistedTurnStatus
     {
         Unknown,
-        NotRunning,
+        None,
+        Completed,
+        Interrupted,
+        Failed,
         InProgress,
     };
 
@@ -239,8 +246,8 @@ class CodexConversationController : public QObject
     void clearSelection();
     void setErrorMessage(const QString& message);
     void setActivityHistoryPartial(bool partial);
-    void applyPersistedRunEvidence(const ward::codex::v1::Conversation& conversation);
-    void resetPersistedRunEvidence();
+    void applyPersistedTurnState(const ward::codex::v1::Conversation& conversation);
+    void resetPersistedTurnState();
     void reconcileThreadRunState();
     void setThreadRunState(ThreadRunState state);
     void setTurnState(TurnState state,
@@ -258,6 +265,8 @@ class CodexConversationController : public QObject
     [[nodiscard]] QString modelOverride() const;
     [[nodiscard]] QString reasoningEffortOverride() const;
     [[nodiscard]] bool mutationInFlight() const;
+    bool dispatchTurnStart(const QString& prompt, const QList<QUrl>& attachments);
+    bool dispatchContinuation();
     bool sendInteractionResponse(const QString& interactionId,
                                  const ward::codex::v1::PendingInteractionResponse& response);
     void finishModelCatalogLoading(const QString& errorMessage);
@@ -278,7 +287,7 @@ class CodexConversationController : public QObject
     QString modelCatalogErrorMessage_;
     bool loading_ = false;
     bool activityHistoryPartial_ = false;
-    PersistedRunStatus persistedRunStatus_ = PersistedRunStatus::Unknown;
+    PersistedTurnStatus persistedTurnStatus_ = PersistedTurnStatus::Unknown;
     ThreadRunState threadRunState_ = ThreadRunState::RunStateUnknown;
     TurnRuntimeState turnRuntimeState_;
     bool steeringTurn_ = false;
@@ -287,4 +296,5 @@ class CodexConversationController : public QObject
     PermissionPreset permissionPreset_ = PermissionPreset::InheritPermissions;
     WriteAvailability writeAvailability_ = WriteAvailability::NotRequested;
     QString writeAvailabilityMessage_;
+    QString pendingContinuationThreadId_;
 };

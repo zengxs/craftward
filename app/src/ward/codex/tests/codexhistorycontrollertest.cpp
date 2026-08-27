@@ -27,7 +27,7 @@ using HistoryEventKind = ward::codex::v1::HistoryEventKindGadget::HistoryEventKi
 using Message = ward::codex::v1::Message;
 using MessagePhase = ward::codex::v1::MessagePhaseGadget::MessagePhase;
 using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
-using PersistedRunStatus = ward::codex::v1::PersistedRunStatusGadget::PersistedRunStatus;
+using PersistedTurnStatus = ward::codex::v1::PersistedTurnStatusGadget::PersistedTurnStatus;
 using ThreadPage = ward::codex::v1::ThreadPage;
 using ThreadRuntimeStatus = ward::codex::v1::ThreadRuntimeStatusGadget::ThreadRuntimeStatus;
 using ThreadSummary = ward::codex::v1::ThreadSummary;
@@ -140,16 +140,16 @@ conversationEvent(HistoryEventKind kind,
                   QList<TimelineItem> timeline,
                   const QString& title = QStringLiteral("New conversation"),
                   const QStringList& forkableTurnIds = {},
-                  PersistedRunStatus persistedRunStatus = PersistedRunStatus::PERSISTED_RUN_STATUS_UNSPECIFIED)
+                  PersistedTurnStatus persistedTurnStatus = PersistedTurnStatus::PERSISTED_TURN_STATUS_UNSPECIFIED)
 {
     Conversation conversation;
     conversation.setTitle(title);
     conversation.setTimeline(std::move(timeline));
     conversation.setForkableTurnIds(forkableTurnIds);
-    if (persistedRunStatus != PersistedRunStatus::PERSISTED_RUN_STATUS_UNSPECIFIED) {
-        ward::codex::v1::PersistedRunState runState;
-        runState.setStatus(persistedRunStatus);
-        conversation.setPersistedRunState(std::move(runState));
+    if (persistedTurnStatus != PersistedTurnStatus::PERSISTED_TURN_STATUS_UNSPECIFIED) {
+        ward::codex::v1::PersistedTurnState turnState;
+        turnState.setStatus(persistedTurnStatus);
+        conversation.setPersistedTurnState(std::move(turnState));
     }
 
     HistoryEvent event;
@@ -230,6 +230,7 @@ class CodexHistoryControllerTest : public QObject
     void trimsBoundaryLineBreaksFromDisplayedUserMessages();
     void adaptsMessageFormatsAndPreservesMarkupModelsAcrossStreamingUpdates();
     void reconcilesPersistedAndOwnedThreadRunState();
+    void exposesInterruptedLatestTurnForContinuation();
     void replacesLiveFirstTurnWithItsPersistedSnapshot();
     void marksOnlyAuthoritativeTurnEndsAsForkBoundaries();
     void confirmsAcceptedTurnGuidance();
@@ -561,7 +562,7 @@ CodexHistoryControllerTest::reconcilesPersistedAndOwnedThreadRunState()
                                                    {},
                                                    QStringLiteral("Running elsewhere"),
                                                    {},
-                                                   PersistedRunStatus::PERSISTED_RUN_STATUS_IN_PROGRESS),
+                                                   PersistedTurnStatus::PERSISTED_TURN_STATUS_IN_PROGRESS),
                                  {});
 
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStatePersistedInProgress);
@@ -605,7 +606,7 @@ CodexHistoryControllerTest::reconcilesPersistedAndOwnedThreadRunState()
                                                    {},
                                                    QStringLiteral("Completed"),
                                                    {},
-                                                   PersistedRunStatus::PERSISTED_RUN_STATUS_NOT_RUNNING),
+                                                   PersistedTurnStatus::PERSISTED_TURN_STATUS_COMPLETED),
                                  {});
 
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateNotRunning);
@@ -617,6 +618,45 @@ CodexHistoryControllerTest::reconcilesPersistedAndOwnedThreadRunState()
     QCOMPARE(conversation->threadRunState(), ThreadRunState::RunStateUnknown);
     QVERIFY(!conversation->hasRunningEvidence());
     QCOMPARE(runningEvidenceSpy.count(), 4);
+}
+
+void
+CodexHistoryControllerTest::exposesInterruptedLatestTurnForContinuation()
+{
+    CodexHistoryController controller(nullptr, nullptr);
+    CodexConversationController* conversation = controller.conversation();
+    QSignalSpy statusSpy(conversation, &CodexConversationController::latestTurnStatusChanged);
+
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED,
+                                                   {},
+                                                   QStringLiteral("Interrupted"),
+                                                   {},
+                                                   PersistedTurnStatus::PERSISTED_TURN_STATUS_INTERRUPTED),
+                                 {});
+
+    QVERIFY(conversation->hasInterruptedLatestTurn());
+    QCOMPARE(statusSpy.count(), 1);
+
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
+                                                   {},
+                                                   QStringLiteral("Continued"),
+                                                   {},
+                                                   PersistedTurnStatus::PERSISTED_TURN_STATUS_COMPLETED),
+                                 {});
+
+    QVERIFY(!conversation->hasInterruptedLatestTurn());
+    QCOMPARE(statusSpy.count(), 2);
+
+    controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
+                                                   {},
+                                                   QStringLiteral("Interrupted again"),
+                                                   {},
+                                                   PersistedTurnStatus::PERSISTED_TURN_STATUS_INTERRUPTED),
+                                 {});
+    QVERIFY(conversation->hasInterruptedLatestTurn());
+    conversation->beginLoadingThread(QStringLiteral("thread-next"), QStringLiteral("Next"));
+    QVERIFY(!conversation->hasInterruptedLatestTurn());
+    QCOMPARE(statusSpy.count(), 4);
 }
 
 void

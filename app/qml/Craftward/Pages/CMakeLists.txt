@@ -5,8 +5,12 @@ qt_add_qml_module(CraftwardPages
         AboutPage.qml
         CodexApprovalActionState.qml
         CodexActivityGlyph.qml
+        CodexActivityIdentity.qml
+        CodexActivityShimmer.qml
         CodexCatalogSelector.qml
         CodexComposer.qml
+        CodexComposerAction.qml
+        CodexComposerActionButton.qml
         CodexComposerState.qml
         CodexConversationRenameDialog.qml
         CodexConversationRenameState.qml
