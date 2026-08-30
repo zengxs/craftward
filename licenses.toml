@@ -34,16 +34,16 @@ license-url = "https://raw.githubusercontent.com/clap-rs/clap/4a622b4340d5e1ffff
 website = "https://github.com/clap-rs/clap"
 
 [[component]]
+name = "Fira Code"
+spdx-identifier = "OFL-1.1"
+license-url = "https://raw.githubusercontent.com/tonsky/FiraCode/refs/tags/6.2/LICENSE"
+website = "https://github.com/tonsky/FiraCode"
+
+[[component]]
 name = "fluentui-system-icons"
 spdx-identifier = "MIT"
 license-url = "https://github.com/microsoft/fluentui-system-icons/raw/refs/tags/1.1.338/LICENSE"
 website = "https://github.com/microsoft/fluentui-system-icons"
-
-[[component]]
-name = "Lilex"
-spdx-identifier = "OFL-1.1"
-license-url = "https://raw.githubusercontent.com/mishamyrt/Lilex/43cbe3f9e5b9214fdcf48d22fddcbb84d48c65cf/OFL.txt"
-website = "https://github.com/mishamyrt/Lilex"
 
 [[component]]
 name = "prost"

@@ -27,21 +27,13 @@ if(APPLE)
     set(CRAFTWARD_APP_ICON_FILE
         "${CMAKE_CURRENT_SOURCE_DIR}/macos/Ward.icns"
     )
-    set(CRAFTWARD_LILEX_FONT_FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Thin.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-ThinItalic.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-ExtraLight.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-ExtraLightItalic.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Light.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-LightItalic.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Regular.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Italic.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Medium.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-MediumItalic.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-SemiBold.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-SemiBoldItalic.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-Bold.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/lilex/Lilex-BoldItalic.ttf"
+    set(CRAFTWARD_FIRA_CODE_FONT_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/firacode/FiraCode-Light.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/firacode/FiraCode-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/firacode/FiraCode-Retina.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/firacode/FiraCode-Medium.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/firacode/FiraCode-SemiBold.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/firacode/FiraCode-Bold.ttf"
     )
     find_library(CRAFTWARD_APPKIT_FRAMEWORK AppKit REQUIRED)
     find_library(CRAFTWARD_COCOA_FRAMEWORK Cocoa REQUIRED)

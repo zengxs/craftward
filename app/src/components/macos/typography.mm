@@ -41,7 +41,8 @@ registerNativeFont(NSURL* fontUrl)
 QString
 loadApplicationMonoFont()
 {
-    NSArray<NSURL*>* fontUrls = [NSBundle.mainBundle URLsForResourcesWithExtension:@"ttf" subdirectory:@"fonts/lilex"];
+    NSArray<NSURL*>* fontUrls = [NSBundle.mainBundle URLsForResourcesWithExtension:@"ttf"
+                                                                      subdirectory:@"fonts/firacode"];
     if (fontUrls.count == 0) {
         qWarning() << "Bundled application fonts are missing";
         return {};
@@ -58,7 +59,7 @@ loadApplicationMonoFont()
         if (fontId < 0)
             qWarning() << "Failed to register Qt application font" << QString::fromNSString(fontUrl.path);
 
-        if ([fontUrl.lastPathComponent isEqualToString:@"Lilex-Medium.ttf"]) {
+        if ([fontUrl.lastPathComponent isEqualToString:@"FiraCode-Regular.ttf"]) {
             codeFontRegisteredNatively = registeredNatively;
             if (fontId >= 0) {
                 codeFontFamily = QFontDatabase::applicationFontFamilies(fontId).value(0);
@@ -68,7 +69,7 @@ loadApplicationMonoFont()
     }
 
     if (!codeFontRegisteredNatively || !codeFontRegisteredWithQt) {
-        qWarning() << "Required bundled application font is unavailable: Lilex-Medium.ttf";
+        qWarning() << "Required bundled application font is unavailable: FiraCode-Regular.ttf";
         return {};
     }
 
@@ -86,7 +87,6 @@ Typography::Typography(QObject* parent)
 
     m_codeFont.setFamily(m_monoFamily);
     m_codeFont.setPointSizeF(codeFontPointSize);
-    m_codeFont.setWeight(QFont::Medium);
 }
 
 QString
