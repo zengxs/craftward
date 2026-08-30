@@ -267,9 +267,8 @@ CodexTimelinePageModel::refreshFromSource()
     reconnectRoles();
     recomputeSnapshot();
     if (rowCount() > 0) {
-        emit dataChanged(index(0, 0),
-                         index(rowCount() - 1, 0),
-                         { DetailRowRole, FirstDetailInTurnRole, DetailCountInTurnRole });
+        emit dataChanged(
+          index(0, 0), index(rowCount() - 1, 0), { DetailRowRole, FirstDetailInTurnRole, DetailCountInTurnRole });
     }
     advanceRevision();
     emit statisticsChanged();

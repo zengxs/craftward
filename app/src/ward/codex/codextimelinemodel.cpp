@@ -172,8 +172,7 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline,
         CodexActivity activity = item.activity();
         const ActivityPresentationKind kind = presentationKind(activity);
         if (kind != ActivityPresentationKind::ContextCompaction && !rows.isEmpty() && rows.last().activityGroup &&
-            rows.last().turnId == item.turnId() &&
-            rows.last().activityKind == kind) {
+            rows.last().turnId == item.turnId() && rows.last().activityKind == kind) {
             rows.last().activities.append(std::move(activity));
             continue;
         }
@@ -195,8 +194,7 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline,
         TimelineRow& row = rows[index];
         row.turnForkable = forkableTurnIds.contains(row.turnId);
         row.latestTurn = row.turnId == lastTurnId;
-        row.forkBoundary = row.turnForkable &&
-                           (index + 1 == rows.size() || rows[index + 1].turnId != row.turnId);
+        row.forkBoundary = row.turnForkable && (index + 1 == rows.size() || rows[index + 1].turnId != row.turnId);
         row.markupFinalized = !row.activityGroup && (row.message.role() == MessageRole::MESSAGE_ROLE_USER ||
                                                      row.turnId != lastTurnId || forkableTurnIds.contains(row.turnId));
     }
@@ -552,9 +550,8 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline,
         if (!timing.turnId().isEmpty())
             turnTimingById.insert(timing.turnId(), timing);
     }
-    QList<TimelineRow> rows = buildRows(std::move(timeline),
-                                        QSet<QString>(forkableTurnIds.cbegin(), forkableTurnIds.cend()),
-                                        turnTimingById);
+    QList<TimelineRow> rows =
+      buildRows(std::move(timeline), QSet<QString>(forkableTurnIds.cbegin(), forkableTurnIds.cend()), turnTimingById);
     const qsizetype sharedSize = std::min(rows_.size(), rows.size());
     qsizetype commonPrefix = 0;
     while (commonPrefix < sharedSize && rows_.at(commonPrefix).entryId == rows.at(commonPrefix).entryId)
