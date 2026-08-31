@@ -87,9 +87,9 @@ pub unsafe extern "C" fn ward_core_syntax_highlighting_engine_destroy(
 ///
 /// `engine` must point to a live engine and remain valid for the call. The
 /// source and language ranges must be readable UTF-8 for their declared sizes;
-/// language may be null only when its size is zero. `theme` must be a valid
-/// [`WardSyntaxHighlightingTheme`] value. `output_error`, when non-null, must be
-/// writable.
+/// either pointer may be null only when its corresponding size is zero. `theme`
+/// must be a valid [`WardSyntaxHighlightingTheme`] value. `output_error`, when
+/// non-null, must be writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ward_core_syntax_highlight(
     engine: *const WardSyntaxHighlightingEngine,
@@ -109,7 +109,7 @@ pub unsafe extern "C" fn ward_core_syntax_highlight(
         return std::ptr::null_mut();
     };
     // SAFETY: The caller promises readable UTF-8 argument ranges.
-    let source = match unsafe { utf8_argument(source, source_size, "source", true) } {
+    let source = match unsafe { utf8_argument(source, source_size, "source") } {
         Ok(source) => source,
         Err(message) => {
             // SAFETY: The caller supplied the optional error output pointer.
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn ward_core_syntax_highlight(
         }
     };
     // SAFETY: The caller promises readable UTF-8 argument ranges.
-    let language = match unsafe { utf8_argument(language, language_size, "language", true) } {
+    let language = match unsafe { utf8_argument(language, language_size, "language") } {
         Ok(language) => (!language.is_empty()).then_some(language),
         Err(message) => {
             // SAFETY: The caller supplied the optional error output pointer.
@@ -143,9 +143,8 @@ unsafe fn utf8_argument<'a>(
     pointer: *const u8,
     size: usize,
     label: &str,
-    allow_null_when_empty: bool,
 ) -> Result<&'a str, String> {
-    let bytes = if size == 0 && (allow_null_when_empty || !pointer.is_null()) {
+    let bytes = if size == 0 {
         &[]
     } else {
         if pointer.is_null() {

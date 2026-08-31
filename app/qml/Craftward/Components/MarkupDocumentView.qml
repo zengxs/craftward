@@ -108,7 +108,7 @@ Control {
                     return syntaxHighlighter.syntaxName;
                 return root.titleCaseLanguage(language);
             }
-            readonly property bool actionsVisible: codeHover.hovered || codeText.activeFocus || copyButton.activeFocus || copyFeedbackTimer.running
+            readonly property bool actionsVisible: codeHover.hovered || codeText.activeFocus || copyButton.activeFocus || copyButton.copied
 
             objectName: "markupCodeSurface"
             implicitHeight: codeFlick.height + 16
@@ -192,22 +192,14 @@ Control {
 
                     spacing: 2
 
-                    IconButton {
+                    Components.CopyFeedbackButton {
                         id: copyButton
 
                         objectName: "markupCodeCopyButton"
-                        implicitWidth: 24
-                        implicitHeight: 24
-                        padding: 4
                         visible: codeSurface.actionsVisible
-                        icon.source: copyFeedbackTimer.running ? "qrc:///icons/fluent/checkmark-20-regular.svg" : "qrc:///icons/fluent/copy-20-regular.svg"
-                        icon.width: 16
-                        icon.height: 16
-                        toolTipText: copyFeedbackTimer.running ? /*% "Copied" */ qsTrId("craftward.markup.code.copy.copied") : /*% "Copy" */ qsTrId("craftward.markup.code.copy.action")
-                        forceToolTipVisible: copyFeedbackTimer.running
                         onClicked: {
                             if (Components.ApplicationClipboard.copyText(codeText.text))
-                                copyFeedbackTimer.restart();
+                                confirmCopied();
                         }
                     }
 
@@ -224,12 +216,6 @@ Control {
                         visible: text.length > 0
                     }
                 }
-            }
-
-            Timer {
-                id: copyFeedbackTimer
-
-                interval: 1600
             }
         }
     }

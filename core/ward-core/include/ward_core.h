@@ -817,9 +817,9 @@ void ward_core_runtime_destroy(struct WardRuntime *runtime);
 //
 // `engine` must point to a live engine and remain valid for the call. The
 // source and language ranges must be readable UTF-8 for their declared sizes;
-// language may be null only when its size is zero. `theme` must be a valid
-// [`WardSyntaxHighlightingTheme`] value. `output_error`, when non-null, must be
-// writable.
+// either pointer may be null only when its corresponding size is zero. `theme`
+// must be a valid [`WardSyntaxHighlightingTheme`] value. `output_error`, when
+// non-null, must be writable.
 struct WardOwnedBuffer *ward_core_syntax_highlight(const struct WardSyntaxHighlightingEngine *engine,
                                                    const uint8_t *source,
                                                    size_t source_size,

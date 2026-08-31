@@ -819,23 +819,13 @@ version 3 or later.</translation>
         <source>Fork from here</source>
         <translation>Fork from here</translation>
     </message>
-    <message id="craftward.codex.timeline.copy.action">
-        <location filename="../qml/Craftward/Pages/CodexMessageActions.qml" line="58"/>
+    <message id="craftward.components.copy.action">
+        <location filename="../qml/Craftward/Components/CopyFeedbackButton.qml" line="22"/>
         <source>Copy</source>
         <translation>Copy</translation>
     </message>
-    <message id="craftward.codex.timeline.copy.copied">
-        <location filename="../qml/Craftward/Pages/CodexMessageActions.qml" line="58"/>
-        <source>Copied</source>
-        <translation>Copied</translation>
-    </message>
-    <message id="craftward.markup.code.copy.action">
-        <location filename="../qml/Craftward/Components/MarkupDocumentView.qml" line="206"/>
-        <source>Copy</source>
-        <translation>Copy</translation>
-    </message>
-    <message id="craftward.markup.code.copy.copied">
-        <location filename="../qml/Craftward/Components/MarkupDocumentView.qml" line="206"/>
+    <message id="craftward.components.copy.copied">
+        <location filename="../qml/Craftward/Components/CopyFeedbackButton.qml" line="22"/>
         <source>Copied</source>
         <translation>Copied</translation>
     </message>

@@ -12,17 +12,15 @@ Item {
     property bool forkVisible: false
     property bool forkEnabled: false
     property int copyFeedbackDuration: 1600
-    property url copyIconSource: "qrc:///icons/fluent/copy-20-regular.svg"
-    property url copiedIconSource: "qrc:///icons/fluent/checkmark-20-regular.svg"
     property url forkIconSource: "qrc:///icons/fluent/arrow-split-20-regular.svg"
-    readonly property bool copied: copyFeedbackTimer.running
+    readonly property bool copied: copyButton.copied
     readonly property bool keyboardRevealed: copyButton.activeFocus || forkButton.activeFocus
 
     signal copyRequested
     signal forkRequested
 
     function confirmCopied() {
-        copyFeedbackTimer.restart();
+        copyButton.confirmCopied();
     }
 
     implicitWidth: actionRow.implicitWidth
@@ -45,18 +43,11 @@ Item {
 
         spacing: 2
 
-        IconButton {
+        CopyFeedbackButton {
             id: copyButton
 
             objectName: "codexMessageCopyButton"
-            implicitWidth: 24
-            implicitHeight: 24
-            padding: 4
-            icon.source: root.copied ? root.copiedIconSource : root.copyIconSource
-            icon.width: 16
-            icon.height: 16
-            toolTipText: root.copied ? /*% "Copied" */ qsTrId("craftward.codex.timeline.copy.copied") : /*% "Copy" */ qsTrId("craftward.codex.timeline.copy.action")
-            forceToolTipVisible: root.copied
+            feedbackDuration: root.copyFeedbackDuration
             onClicked: root.copyRequested()
         }
 
@@ -76,11 +67,5 @@ Item {
             toolTipText: /*% "Fork from here" */ qsTrId("craftward.codex.timeline.fork.action")
             onClicked: root.forkRequested()
         }
-    }
-
-    Timer {
-        id: copyFeedbackTimer
-
-        interval: root.copyFeedbackDuration
     }
 }

@@ -1,6 +1,7 @@
 module Craftward.Components
 singleton ApplicationClipboard 1.0 ApplicationClipboard.qml
 AnimatedChevron 1.0 AnimatedChevron.qml
+CopyFeedbackButton 1.0 CopyFeedbackButton.qml
 IconButton 1.0 IconButton.qml
 MarkupDocumentView 1.0 MarkupDocumentView.qml
 MenuComboBox 1.0 MenuComboBox.qml

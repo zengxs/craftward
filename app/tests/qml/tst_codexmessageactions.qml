@@ -23,8 +23,6 @@ Item {
             forkVisible: true
             forkEnabled: true
             copyFeedbackDuration: 40
-            copyIconSource: ""
-            copiedIconSource: ""
             forkIconSource: ""
         }
     }

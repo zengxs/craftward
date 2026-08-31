@@ -11,6 +11,7 @@ qt_add_qml_module(CraftwardComponents
     QML_FILES
         AnimatedChevron.qml
         ConfirmationDialog.qml
+        CopyFeedbackButton.qml
         IconButton.qml
         MenuComboBox.qml
         MarkupDocumentView.qml
