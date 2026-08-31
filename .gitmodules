@@ -2,3 +2,24 @@
 	path = app/third_party/scintilla
 	url = https://github.com/craftward/scintilla.git
 	shallow = true
+[submodule "core/ward-highlighting/assets/Packages"]
+	path = core/ward-highlighting/assets/Packages
+	url = https://github.com/sublimehq/Packages.git
+[submodule "core/ward-highlighting/assets/QML"]
+	path = core/ward-highlighting/assets/QML
+	url = https://github.com/SublimeText/QML.git
+[submodule "core/ward-highlighting/assets/INI"]
+	path = core/ward-highlighting/assets/INI
+	url = https://github.com/jwortmann/ini-syntax.git
+[submodule "core/ward-highlighting/assets/Swift-Next"]
+	path = core/ward-highlighting/assets/Swift-Next
+	url = https://github.com/Swift-Next/Swift-Next.git
+[submodule "core/ward-highlighting/assets/Zig"]
+	path = core/ward-highlighting/assets/Zig
+	url = https://codeberg.org/ziglang/sublime-zig-language.git
+[submodule "core/ward-highlighting/assets/Protobuf"]
+	path = core/ward-highlighting/assets/Protobuf
+	url = https://github.com/VcamX/protobuf-syntax-highlighting.git
+[submodule "core/ward-highlighting/assets/CMake"]
+	path = core/ward-highlighting/assets/CMake
+	url = https://github.com/zyxar/Sublime-CMakeLists.git

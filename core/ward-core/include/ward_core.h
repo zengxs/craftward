@@ -60,6 +60,12 @@ typedef enum WardRealmState {
     WardRealmStateSuspended = 10,
 } WardRealmState;
 
+// A syntax-highlighting theme selected by the application color scheme.
+typedef enum WardSyntaxHighlightingTheme {
+    WardSyntaxHighlightingThemeLight = 0,
+    WardSyntaxHighlightingThemeDark = 1,
+} WardSyntaxHighlightingTheme;
+
 // An opaque borrowed serialized payload passed through Ward Core's private C interface.
 typedef struct WardBuffer WardBuffer;
 
@@ -91,6 +97,9 @@ typedef struct WardRealm WardRealm;
 
 // An opaque owner of Ward Core's process-wide asynchronous runtime.
 typedef struct WardRuntime WardRuntime;
+
+// An immutable syntax-highlighting engine built from embedded application packs.
+typedef struct WardSyntaxHighlightingEngine WardSyntaxHighlightingEngine;
 
 // A BLAKE3-256 digest passed through Ward Core's private C interface.
 typedef struct WardBlake3Digest {
@@ -797,6 +806,47 @@ struct WardRuntime *ward_core_runtime_create(struct WardError **output_error);
 // `runtime` must be null or a live handle returned by
 // [`ward_core_runtime_create`], and ownership may be transferred only once.
 void ward_core_runtime_destroy(struct WardRuntime *runtime);
+
+// Highlights one complete source snapshot on the calling thread.
+//
+// The returned buffer is a `ward.highlighting.v1.HighlightedCode` payload
+// whose spans use UTF-8 byte ranges in `source`. The caller owns the buffer
+// and must destroy it with [`ward_core_owned_buffer_destroy`].
+//
+// # Safety
+//
+// `engine` must point to a live engine and remain valid for the call. The
+// source and language ranges must be readable UTF-8 for their declared sizes;
+// language may be null only when its size is zero. `theme` must be a valid
+// [`WardSyntaxHighlightingTheme`] value. `output_error`, when non-null, must be
+// writable.
+struct WardOwnedBuffer *ward_core_syntax_highlight(const struct WardSyntaxHighlightingEngine *engine,
+                                                   const uint8_t *source,
+                                                   size_t source_size,
+                                                   const uint8_t *language,
+                                                   size_t language_size,
+                                                   enum WardSyntaxHighlightingTheme theme,
+                                                   struct WardError **output_error);
+
+// Creates a syntax-highlighting engine from the application-maintained packs.
+//
+// The returned engine is immutable and may be used concurrently. The caller
+// owns it and must destroy it with
+// [`ward_core_syntax_highlighting_engine_destroy`].
+//
+// # Safety
+//
+// `output_error`, when non-null, must be writable.
+struct WardSyntaxHighlightingEngine *ward_core_syntax_highlighting_engine_create(struct WardError **output_error);
+
+// Destroys a syntax-highlighting engine.
+//
+// # Safety
+//
+// `engine` must be null or a live handle returned by
+// [`ward_core_syntax_highlighting_engine_create`], and ownership may be
+// transferred only once. No highlighting call may use it concurrently.
+void ward_core_syntax_highlighting_engine_destroy(struct WardSyntaxHighlightingEngine *engine);
 
 #ifdef __cplusplus
 }  // extern "C"

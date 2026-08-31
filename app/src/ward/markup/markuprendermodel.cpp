@@ -25,6 +25,16 @@ appendFragment(QString* target, const QString& fragment)
         target->append(QStringLiteral("\n\n"));
     target->append(fragment);
 }
+
+QString
+codeDisplayText(QString text)
+{
+    if (text.endsWith(QStringLiteral("\r\n")))
+        text.chop(2);
+    else if (text.endsWith(QLatin1Char('\n')) || text.endsWith(QLatin1Char('\r')))
+        text.chop(1);
+    return text;
+}
 }
 
 MarkupRenderModel::MarkupRenderModel(QObject* parent)
@@ -129,6 +139,8 @@ MarkupRenderModel::rebuild()
                     .language = sourceModel_->data(index, languageRole).toString(),
                     .markdown = sourceModel_->data(index, markdownRole).toBool(),
                 };
+                if (segment.codeBlock)
+                    segment.text = codeDisplayText(std::move(segment.text));
                 if (!segment.codeBlock && !segments.isEmpty() && !segments.constLast().codeBlock &&
                     segments.constLast().markdown == segment.markdown) {
                     Segment& previous = segments.last();

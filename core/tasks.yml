@@ -57,6 +57,7 @@ tasks:
       - "ward-*/**/*.m"
       - "ward-*/**/*.mm"
       - "ward-*/build.rs"
+      - "ward-highlighting/assets/**"
     generates:
       - "{{.LIBRARY}}"
     cmds:

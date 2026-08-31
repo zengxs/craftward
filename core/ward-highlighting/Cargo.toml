@@ -1,0 +1,19 @@
+[package]
+name = "ward-highlighting"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+syntect = { workspace = true, features = ["parsing", "regex-onig"] }
+thiserror = { workspace = true }
+
+[build-dependencies]
+plist = { workspace = true }
+syntect = { workspace = true, features = ["parsing", "plist-load", "regex-onig", "yaml-load"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+plist = { workspace = true }
+syntect = { workspace = true, features = ["parsing", "plist-load", "regex-onig", "yaml-load"] }

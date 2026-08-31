@@ -1,0 +1,2 @@
+module Craftward.Highlighting
+SyntaxDocumentHighlighter 1.0 SyntaxDocumentHighlighter.qml

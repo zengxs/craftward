@@ -62,6 +62,66 @@ license-url = "https://raw.githubusercontent.com/pulldown-cmark/pulldown-cmark/r
 website = "https://github.com/pulldown-cmark/pulldown-cmark"
 
 [[component]]
+name = "Oniguruma"
+spdx-identifier = "BSD-2-Clause"
+license-url = "https://raw.githubusercontent.com/kkos/oniguruma/v6.9.10/COPYING"
+website = "https://github.com/kkos/oniguruma"
+
+[[component]]
+name = "one-dark-theme"
+spdx-identifier = "MIT"
+license-url = "https://github.com/andresmichel/one-dark-theme/raw/9ecab1531c983680897b9a77190262561ce4fe0e/LICENSE"
+website = "https://github.com/andresmichel/one-dark-theme"
+
+[[component]]
+name = "vscode-theme-onelight"
+spdx-identifier = "MIT"
+license-url = "https://github.com/akamud/vscode-theme-onelight/raw/refs/heads/master/LICENSE"
+website = "https://github.com/akamud/vscode-theme-onelight"
+
+[[component]]
+name = "Packages"
+spdx-identifier = "LicenseRef-SublimePackages"
+license-file = "core/ward-highlighting/assets/Packages/LICENSE"
+website = "https://github.com/sublimehq/Packages"
+
+[[component]]
+name = "QML"
+spdx-identifier = "MIT"
+license-file = "core/ward-highlighting/assets/QML/LICENSE"
+website = "https://github.com/SublimeText/QML"
+
+[[component]]
+name = "ini-syntax"
+spdx-identifier = "Apache-2.0"
+license-file = "core/ward-highlighting/assets/INI/LICENSE"
+website = "https://github.com/jwortmann/ini-syntax"
+
+[[component]]
+name = "Swift-Next"
+spdx-identifier = "MIT"
+license-file = "core/ward-highlighting/assets/Swift-Next/LICENSE"
+website = "https://github.com/Swift-Next/Swift-Next"
+
+[[component]]
+name = "sublime-zig-language"
+spdx-identifier = "MIT"
+license-file = "core/ward-highlighting/assets/Zig/LICENSE"
+website = "https://github.com/ziglang/sublime-zig-language"
+
+[[component]]
+name = "Sublime-CMakeLists"
+spdx-identifier = "MIT"
+license-file = "core/ward-highlighting/assets/CMake/LICENSE"
+website = "https://github.com/zyxar/Sublime-CMakeLists"
+
+[[component]]
+name = "protobuf-syntax-highlighting"
+spdx-identifier = "MIT"
+license-file = "core/ward-highlighting/assets/Protobuf/LICENSE"
+website = "https://github.com/VcamX/protobuf-syntax-highlighting"
+
+[[component]]
 name = "Qt"
 spdx-identifier = "GPL-3.0-only"
 website = "https://www.qt.io/"
@@ -96,6 +156,18 @@ name = "serde_with"
 spdx-identifier = "MIT"
 license-url = "https://raw.githubusercontent.com/jonasbb/serde_with/88f576a17c5cd45cea6a30252ef10653dde69fa8/LICENSE-MIT"
 website = "https://github.com/jonasbb/serde_with"
+
+[[component]]
+name = "syntect"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/trishume/syntect/4aa78031e93ebd3e0be7278120d0bd9d2508b1a3/LICENSE.txt"
+website = "https://github.com/trishume/syntect"
+
+[[component]]
+name = "rust-onig"
+spdx-identifier = "MIT"
+license-url = "https://raw.githubusercontent.com/rust-onig/rust-onig/v6.5.3/LICENSE.md"
+website = "https://github.com/rust-onig/rust-onig"
 
 [[component]]
 name = "simple-icons"

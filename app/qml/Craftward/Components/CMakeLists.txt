@@ -28,6 +28,7 @@ target_include_directories(CraftwardComponents
 target_link_libraries(CraftwardComponents
     PRIVATE
         CraftwardDesign
+        CraftwardHighlightingplugin
         "${CRAFTWARD_APPKIT_FRAMEWORK}"
         "${CRAFTWARD_CORE_TEXT_FRAMEWORK}"
         "${CRAFTWARD_FOUNDATION_FRAMEWORK}"

@@ -1,0 +1,38 @@
+// Copyright (C) 2026 Xiangsong Zeng
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+syntax = "proto3";
+
+package ward.highlighting.v1;
+
+// One RGBA color with eight-bit channels.
+message Color {
+  uint32 red = 1;
+  uint32 green = 2;
+  uint32 blue = 3;
+  uint32 alpha = 4;
+}
+
+// The visual style resolved from a syntax scope and theme.
+message Style {
+  Color foreground = 1;
+  Color background = 2;
+  bool bold = 3;
+  bool italic = 4;
+  bool underline = 5;
+}
+
+// One styled UTF-8 byte range in the original source.
+message Span {
+  uint64 utf8_start = 1;
+  uint64 utf8_end = 2;
+  Style style = 3;
+}
+
+// A source snapshot highlighted independently of any rendering toolkit.
+message HighlightedCode {
+  string syntax_name = 1;
+  repeated Span spans = 2;
+  // True when the supplied language token matched a maintained syntax.
+  bool language_recognized = 3;
+}

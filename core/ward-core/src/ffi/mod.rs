@@ -7,6 +7,8 @@ mod codex;
 mod error;
 mod hash;
 #[cfg(feature = "app")]
+mod highlighting;
+#[cfg(feature = "app")]
 mod markup;
 mod realm;
 mod runtime;

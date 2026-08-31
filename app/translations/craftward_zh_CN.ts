@@ -828,6 +828,16 @@ version 3 or later.</source>
         <source>Copied</source>
         <translation>已复制</translation>
     </message>
+    <message id="craftward.markup.code.copy.action">
+        <location filename="../qml/Craftward/Components/MarkupDocumentView.qml" line="206"/>
+        <source>Copy</source>
+        <translation>复制</translation>
+    </message>
+    <message id="craftward.markup.code.copy.copied">
+        <location filename="../qml/Craftward/Components/MarkupDocumentView.qml" line="206"/>
+        <source>Copied</source>
+        <translation>已复制</translation>
+    </message>
     <message id="craftward.codex.timeline.loading">
         <location filename="../qml/Craftward/Pages/CodexTimelineView.qml" line="67"/>
         <source>Loading conversation…</source>

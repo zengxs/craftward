@@ -5,6 +5,7 @@ members = [
     "ward-codex",
     "ward-codex-test-support",
     "ward-core",
+    "ward-highlighting",
     "ward-markup",
     "ward-realm",
     "ward-realm-vz",
@@ -23,6 +24,7 @@ ward-cli = { path = "ward-cli" }
 ward-codex = { path = "ward-codex" }
 ward-codex-test-support = { path = "ward-codex-test-support" }
 ward-core = { path = "ward-core" }
+ward-highlighting = { path = "ward-highlighting" }
 ward-markup = { path = "ward-markup" }
 ward-realm = { path = "ward-realm" }
 ward-realm-vz = { path = "ward-realm-vz" }
@@ -40,6 +42,8 @@ thiserror = "2"
 tokio = { version = "1.53", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 uuid = "1"
+plist = "1"
 prost = "0.14"
 prost-build = "0.14"
 pulldown-cmark = { version = "0.13", default-features = false }
+syntect = { git = "https://github.com/trishume/syntect.git", rev = "4aa78031e93ebd3e0be7278120d0bd9d2508b1a3", default-features = false }

@@ -4,7 +4,10 @@
 use std::{env, io, path::PathBuf};
 
 const CORE_PROTO_FILES: &[&str] = &["ward/codex/v1/history.proto"];
-const APP_PROTO_FILES: &[&str] = &["ward/markup/v1/document.proto"];
+const APP_PROTO_FILES: &[&str] = &[
+    "ward/highlighting/v1/highlight.proto",
+    "ward/markup/v1/document.proto",
+];
 
 fn main() -> io::Result<()> {
     let manifest_dir = PathBuf::from(

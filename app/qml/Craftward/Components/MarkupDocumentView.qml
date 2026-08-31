@@ -5,7 +5,10 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Window
 import Craftward.Design
+import Craftward.Highlighting
+import Craftward.Components as Components
 
 Control {
     id: root
@@ -19,6 +22,16 @@ Control {
     implicitWidth: 0
     implicitHeight: segmentColumn.implicitHeight
     background: null
+
+    function titleCaseLanguage(language) {
+        const words = language.trim().replace(/[_-]+/g, " ").split(/\s+/);
+        for (let index = 0; index < words.length; ++index) {
+            const word = words[index];
+            if (word.length > 0)
+                words[index] = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        }
+        return words.join(" ");
+    }
 
     contentItem: Column {
         id: segmentColumn
@@ -85,59 +98,138 @@ Control {
             property string segmentText
             property string segmentLanguage
             property bool segmentMarkdown
+            readonly property string displaySyntaxName: {
+                const language = segmentLanguage.trim();
+                if (language.length === 0)
+                    return "";
+                if (syntaxHighlighter.syntaxName.length === 0)
+                    return "";
+                if (syntaxHighlighter.languageRecognized)
+                    return syntaxHighlighter.syntaxName;
+                return root.titleCaseLanguage(language);
+            }
+            readonly property bool actionsVisible: codeHover.hovered || codeText.activeFocus || copyButton.activeFocus || copyFeedbackTimer.running
 
-            implicitHeight: codeColumn.implicitHeight + 16
+            objectName: "markupCodeSurface"
+            implicitHeight: codeFlick.height + 16
             radius: 8
-            color: Theme.dark ? TailwindColors.zinc900 : TailwindColors.zinc100
-            border.color: Theme.dark ? TailwindColors.zinc700 : TailwindColors.zinc300
+            color: Theme.dark ? TailwindColors.zinc900 : TailwindColors.zinc50
+            border.width: 1 / Math.max(1, Screen.devicePixelRatio)
+            border.color: Qt.rgba(root.textColor.r, root.textColor.g, root.textColor.b, Theme.dark ? 0.22 : 0.16)
 
-            Column {
-                id: codeColumn
+            Flickable {
+                id: codeFlick
 
                 x: 10
                 y: 8
                 width: parent.width - 20
-                spacing: 5
+                height: codeText.implicitHeight
+                contentWidth: Math.max(width, codeText.implicitWidth)
+                contentHeight: height
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.HorizontalFlick
+                interactive: contentWidth > width
+                clip: true
 
-                Label {
-                    text: codeSurface.segmentLanguage
-                    color: root.palette.placeholderText
-                    font.pixelSize: 10
-                    font.weight: Font.DemiBold
-                    visible: text.length > 0
+                ScrollBar.horizontal: ScrollBar {
+                    policy: ScrollBar.AsNeeded
                 }
 
-                Flickable {
-                    id: codeFlick
+                TextEdit {
+                    id: codeText
 
-                    width: parent.width
-                    height: codeText.implicitHeight
-                    contentWidth: Math.max(width, codeText.implicitWidth)
-                    contentHeight: height
-                    boundsBehavior: Flickable.StopAtBounds
-                    flickableDirection: Flickable.HorizontalFlick
-                    interactive: contentWidth > width
-                    clip: true
+                    objectName: "markupCodeText"
+                    width: Math.max(codeFlick.width, implicitWidth)
+                    text: codeSurface.segmentText
+                    color: root.textColor
+                    font: root.codeFont
+                    readOnly: true
+                    selectByMouse: true
+                    selectedTextColor: Theme.textSelectionForeground
+                    selectionColor: Theme.textSelectionBackground
+                    wrapMode: TextEdit.NoWrap
+                    textFormat: TextEdit.PlainText
 
-                    ScrollBar.horizontal: ScrollBar {
-                        policy: ScrollBar.AsNeeded
-                    }
+                    SyntaxDocumentHighlighter {
+                        id: syntaxHighlighter
 
-                    TextEdit {
-                        id: codeText
-
-                        width: Math.max(codeFlick.width, implicitWidth)
-                        text: codeSurface.segmentText
-                        color: root.textColor
-                        font: root.codeFont
-                        readOnly: true
-                        selectByMouse: true
-                        selectedTextColor: Theme.textSelectionForeground
-                        selectionColor: Theme.textSelectionBackground
-                        wrapMode: TextEdit.NoWrap
-                        textFormat: TextEdit.PlainText
+                        textDocument: codeText.textDocument
+                        language: codeSurface.segmentLanguage
+                        darkTheme: Theme.dark
                     }
                 }
+            }
+
+            HoverHandler {
+                id: codeHover
+            }
+
+            Item {
+                id: codeToolbar
+
+                objectName: "markupCodeToolbar"
+                z: 1
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.topMargin: 4
+                anchors.rightMargin: 6
+                implicitWidth: toolbarRow.implicitWidth
+                implicitHeight: toolbarRow.implicitHeight
+                width: implicitWidth
+                height: implicitHeight
+                visible: codeSurface.displaySyntaxName.length > 0 || codeSurface.actionsVisible
+                opacity: codeSurface.actionsVisible ? 1 : 0.48
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 80
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                Row {
+                    id: toolbarRow
+
+                    spacing: 2
+
+                    IconButton {
+                        id: copyButton
+
+                        objectName: "markupCodeCopyButton"
+                        implicitWidth: 24
+                        implicitHeight: 24
+                        padding: 4
+                        visible: codeSurface.actionsVisible
+                        icon.source: copyFeedbackTimer.running ? "qrc:///icons/fluent/checkmark-20-regular.svg" : "qrc:///icons/fluent/copy-20-regular.svg"
+                        icon.width: 16
+                        icon.height: 16
+                        toolTipText: copyFeedbackTimer.running ? /*% "Copied" */ qsTrId("craftward.markup.code.copy.copied") : /*% "Copy" */ qsTrId("craftward.markup.code.copy.action")
+                        forceToolTipVisible: copyFeedbackTimer.running
+                        onClicked: {
+                            if (Components.ApplicationClipboard.copyText(codeText.text))
+                                copyFeedbackTimer.restart();
+                        }
+                    }
+
+                    Label {
+                        objectName: "markupCodeSyntaxLabel"
+                        height: 24
+                        leftPadding: 4
+                        rightPadding: 4
+                        text: codeSurface.displaySyntaxName
+                        color: root.palette.placeholderText
+                        font.pixelSize: 10
+                        font.weight: Font.DemiBold
+                        verticalAlignment: Text.AlignVCenter
+                        visible: text.length > 0
+                    }
+                }
+            }
+
+            Timer {
+                id: copyFeedbackTimer
+
+                interval: 1600
             }
         }
     }

@@ -21,6 +21,7 @@ class MarkupDocumentModelTest : public QObject
     void coalescesRapidStreamingSnapshots();
     void reparsesOnlyTheBoundedMutableTailBeforeFinalization();
     void groupsAdjacentProseForRendering();
+    void removesOneTerminalCodeLineEndingForRendering();
 };
 
 void
@@ -189,6 +190,49 @@ MarkupDocumentModelTest::groupsAdjacentProseForRendering()
     QCOMPARE(renderModel.data(renderModel.index(1), MarkupRenderModel::LanguageRole).toString(), QStringLiteral("cpp"));
     QCOMPARE(renderModel.data(renderModel.index(2), MarkupRenderModel::SegmentTextRole).toString(),
              QStringLiteral("Three"));
+}
+
+void
+MarkupDocumentModelTest::removesOneTerminalCodeLineEndingForRendering()
+{
+    enum Role
+    {
+        BlockIdRole = Qt::UserRole + 1,
+        CodeBlockRole,
+        BlockTextRole,
+        LanguageRole,
+        MarkdownRole,
+    };
+    QStandardItemModel source;
+    source.setItemRoleNames({
+      { BlockIdRole, "blockId" },
+      { CodeBlockRole, "codeBlock" },
+      { BlockTextRole, "blockText" },
+      { LanguageRole, "language" },
+      { MarkdownRole, "markdown" },
+    });
+    const auto appendCode = [&source](const QString& id, const QString& text) {
+        auto* item = new QStandardItem;
+        item->setData(id, BlockIdRole);
+        item->setData(true, CodeBlockRole);
+        item->setData(text, BlockTextRole);
+        item->setData(QStringLiteral("text"), LanguageRole);
+        item->setData(false, MarkdownRole);
+        source.appendRow(item);
+    };
+    appendCode(QStringLiteral("code:0"), QStringLiteral("answer()\n"));
+    appendCode(QStringLiteral("code:10"), QStringLiteral("answer()\n\n"));
+    appendCode(QStringLiteral("code:20"), QStringLiteral("\nanswer()"));
+
+    MarkupRenderModel renderModel;
+    renderModel.setSourceModel(&source);
+
+    QCOMPARE(renderModel.data(renderModel.index(0), MarkupRenderModel::SegmentTextRole).toString(),
+             QStringLiteral("answer()"));
+    QCOMPARE(renderModel.data(renderModel.index(1), MarkupRenderModel::SegmentTextRole).toString(),
+             QStringLiteral("answer()\n"));
+    QCOMPARE(renderModel.data(renderModel.index(2), MarkupRenderModel::SegmentTextRole).toString(),
+             QStringLiteral("\nanswer()"));
 }
 
 QTEST_GUILESS_MAIN(MarkupDocumentModelTest)

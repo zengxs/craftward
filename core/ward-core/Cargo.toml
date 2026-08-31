@@ -10,7 +10,7 @@ crate-type = ["rlib", "staticlib"]
 
 [features]
 default = []
-app = ["dep:ward-markup"]
+app = ["dep:ward-highlighting", "dep:ward-markup"]
 
 [dependencies]
 blake3 = { workspace = true }
@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 ward-cli = { workspace = true }
 ward-codex = { workspace = true }
+ward-highlighting = { workspace = true, optional = true }
 ward-markup = { workspace = true, optional = true }
 ward-realm = { workspace = true }
 ward-realm-vz = { workspace = true }
