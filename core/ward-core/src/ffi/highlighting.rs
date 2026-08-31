@@ -211,14 +211,15 @@ mod tests {
         assert!(error.is_null());
 
         let source = b"let answer = 42;\n";
+        let language = b"rs";
         // SAFETY: The engine and all borrowed argument ranges remain live.
         let buffer = unsafe {
             ward_core_syntax_highlight(
                 engine,
                 source.as_ptr(),
                 source.len(),
-                b"rs".as_ptr(),
-                2,
+                language.as_ptr(),
+                language.len(),
                 WardSyntaxHighlightingTheme::Light,
                 &raw mut error,
             )

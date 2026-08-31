@@ -68,16 +68,13 @@ license-url = "https://raw.githubusercontent.com/kkos/oniguruma/v6.9.10/COPYING"
 website = "https://github.com/kkos/oniguruma"
 
 [[component]]
-name = "one-dark-theme"
+name = "Sublime One Theme"
 spdx-identifier = "MIT"
-license-url = "https://github.com/andresmichel/one-dark-theme/raw/9ecab1531c983680897b9a77190262561ce4fe0e/LICENSE"
-website = "https://github.com/andresmichel/one-dark-theme"
-
-[[component]]
-name = "vscode-theme-onelight"
-spdx-identifier = "MIT"
-license-url = "https://github.com/akamud/vscode-theme-onelight/raw/refs/heads/master/LICENSE"
-website = "https://github.com/akamud/vscode-theme-onelight"
+license-url = "https://raw.githubusercontent.com/AmjadHD/sublime_one_theme/09eb6cad75d01a79e6ef76f48c95e34af347a7b7/LICENSE"
+website = "https://github.com/AmjadHD/sublime_one_theme"
+notice-text = '''
+Craftward includes derived One Light and One Dark syntax-highlighting themes.
+'''
 
 [[component]]
 name = "Packages"

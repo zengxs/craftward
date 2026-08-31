@@ -16,8 +16,16 @@
 #include <memory>
 
 namespace {
-constexpr auto ONE_DARK_KEYWORD = "#cd74e8";
-constexpr auto ONE_LIGHT_KEYWORD = "#a626a4";
+const craftward::highlighting::Span*
+spanAtUtf8Range(const craftward::highlighting::Result& highlighted, qsizetype start, qsizetype end)
+{
+    const auto span = std::find_if(highlighted.spans.cbegin(),
+                                   highlighted.spans.cend(),
+                                   [start, end](const craftward::highlighting::Span& candidate) {
+                                       return candidate.utf8Start == start && candidate.utf8End == end;
+                                   });
+    return span == highlighted.spans.cend() ? nullptr : std::addressof(*span);
+}
 
 bool
 hasFormat(const QTextDocument& document, int start, int length, const QColor& foreground)
@@ -54,12 +62,9 @@ SyntaxHighlightingTest::loadsMaintainedResources()
     QVERIFY2(highlighted.succeeded(), qPrintable(highlighted.errorMessage));
     QCOMPARE(highlighted.syntaxName, QStringLiteral("Rust"));
     QVERIFY(highlighted.languageRecognized);
-    const auto keyword =
-      std::find_if(highlighted.spans.cbegin(), highlighted.spans.cend(), [](const craftward::highlighting::Span& span) {
-          return span.utf8Start == 5 && span.utf8End == 8;
-      });
-    QVERIFY(keyword != highlighted.spans.cend());
-    QCOMPARE(keyword->style.foreground, QColor(QString::fromLatin1(ONE_LIGHT_KEYWORD)));
+    const craftward::highlighting::Span* keyword = spanAtUtf8Range(highlighted, 5, 8);
+    QVERIFY(keyword);
+    QVERIFY(keyword->style.foreground.isValid());
 
     const craftward::highlighting::Result plain = engine->highlight(source, {}, craftward::highlighting::Theme::Light);
     QVERIFY2(plain.succeeded(), qPrintable(plain.errorMessage));
@@ -77,13 +82,27 @@ SyntaxHighlightingTest::loadsMaintainedResources()
 void
 SyntaxHighlightingTest::appliesUtf8RangesToAQTextDocument()
 {
+    const QByteArray source = QString::fromUtf8("😀 let answer = 42;\n").toUtf8();
+    const auto engine = craftward::highlighting::SyntaxHighlightingEngine::shared();
+    const craftward::highlighting::Result dark =
+      engine->highlight(source, QByteArrayLiteral("rust"), craftward::highlighting::Theme::Dark);
+    const craftward::highlighting::Result light =
+      engine->highlight(source, QByteArrayLiteral("rust"), craftward::highlighting::Theme::Light);
+    QVERIFY2(dark.succeeded(), qPrintable(dark.errorMessage));
+    QVERIFY2(light.succeeded(), qPrintable(light.errorMessage));
+    const craftward::highlighting::Span* darkKeyword = spanAtUtf8Range(dark, 5, 8);
+    const craftward::highlighting::Span* lightKeyword = spanAtUtf8Range(light, 5, 8);
+    QVERIFY(darkKeyword);
+    QVERIFY(lightKeyword);
+    QVERIFY(darkKeyword->style.foreground != lightKeyword->style.foreground);
+
     QQmlEngine qmlEngine;
     QQmlComponent component(&qmlEngine);
     component.setData("import QtQuick\nTextEdit {}", QUrl(QStringLiteral("qrc:/SyntaxHighlightingTest.qml")));
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));
     const std::unique_ptr<QObject> textEdit(component.create());
     QVERIFY(textEdit);
-    QVERIFY(textEdit->setProperty("text", QString::fromUtf8("😀 let answer = 42;\n")));
+    QVERIFY(textEdit->setProperty("text", QString::fromUtf8(source)));
     QQuickTextDocument* quickDocument = textEdit->property("textDocument").value<QQuickTextDocument*>();
     QVERIFY(quickDocument);
     QTextDocument* document = quickDocument->textDocument();
@@ -94,12 +113,12 @@ SyntaxHighlightingTest::appliesUtf8RangesToAQTextDocument()
     highlighter.setDarkTheme(true);
     highlighter.setTextDocument(quickDocument);
 
-    QTRY_VERIFY_WITH_TIMEOUT(hasFormat(*document, 3, 3, QColor(QString::fromLatin1(ONE_DARK_KEYWORD))), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(hasFormat(*document, 3, 3, darkKeyword->style.foreground), 5000);
     QTRY_COMPARE_WITH_TIMEOUT(highlighter.syntaxName(), QStringLiteral("Rust"), 5000);
     QVERIFY(highlighter.languageRecognized());
 
     highlighter.setDarkTheme(false);
-    QTRY_VERIFY_WITH_TIMEOUT(hasFormat(*document, 3, 3, QColor(QString::fromLatin1(ONE_LIGHT_KEYWORD))), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(hasFormat(*document, 3, 3, lightKeyword->style.foreground), 5000);
 }
 
 QTEST_MAIN(SyntaxHighlightingTest)

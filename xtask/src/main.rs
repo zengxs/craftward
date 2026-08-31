@@ -3,6 +3,7 @@
 
 mod bindings;
 mod licenses;
+mod themes;
 mod version;
 
 use std::path::PathBuf;
@@ -24,6 +25,9 @@ enum Command {
 
     /// Manage bundled application and third-party license resources.
     Licenses(LicensesArgs),
+
+    /// Import maintained TextMate themes from Sublime color schemes.
+    Themes(ThemesArgs),
 
     /// Manage the synchronized Craftward product version.
     Version(VersionArgs),
@@ -74,6 +78,17 @@ enum LicensesCommand {
         #[arg(long, value_name = "PATH")]
         manifest: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Args)]
+struct ThemesArgs {
+    /// Source One Light .sublime-color-scheme file.
+    #[arg(long, value_name = "PATH")]
+    light: PathBuf,
+
+    /// Source One Dark .sublime-color-scheme file.
+    #[arg(long, value_name = "PATH")]
+    dark: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -137,6 +152,15 @@ fn main() -> Result<()> {
                     println!("Checked {checked} license documents.");
                 }
             }
+        }
+        Command::Themes(args) => {
+            let paths = themes::ProjectPaths::new(args.light, args.dark);
+            let summary = themes::import(&paths)?;
+            println!(
+                "Imported the maintained themes; {} file(s) changed and {} unsupported \
+                 foreground adjustment(s) were deliberately omitted.",
+                summary.changed_files, summary.omitted_foreground_adjustments
+            );
         }
         Command::Version(args) => {
             let paths = version::ProjectPaths::default();

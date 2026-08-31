@@ -62,3 +62,14 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     cmds:
       - cargo run --manifest-path xtask/Cargo.toml --locked -- licenses check
+
+  themes:import:
+    desc: Import One Light and One Dark from Sublime color-scheme files
+    dir: "{{.ROOT_DIR}}"
+    requires:
+      vars: [LIGHT_SOURCE, DARK_SOURCE]
+    cmds:
+      - >-
+        cargo run --manifest-path xtask/Cargo.toml --locked -- themes
+        --light "{{.LIGHT_SOURCE}}"
+        --dark "{{.DARK_SOURCE}}"

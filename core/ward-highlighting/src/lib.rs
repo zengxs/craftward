@@ -237,8 +237,9 @@ mod tests {
 
     #[test]
     fn highlights_with_application_supplied_resources() {
+        let source = "let value = 42;\n";
         let highlighted = highlighter()
-            .highlight("let value = 42;\n", Some("rust"), Theme::Light)
+            .highlight(source, Some("rust"), Theme::Light)
             .expect("the source should highlight");
 
         assert_eq!(highlighted.syntax_name, "Rust");
@@ -248,19 +249,28 @@ mod tests {
             0..3
         );
         assert_eq!(
-            highlighted
-                .spans
-                .first()
-                .expect("a keyword span")
-                .style
-                .foreground
-                .red,
-            0xa6
-        );
-        assert_eq!(
             highlighted.spans.last().expect("a final span").range.end,
-            16
+            source.len()
         );
+    }
+
+    #[test]
+    fn applies_the_sublime_one_yaml_mapping_key_rule() {
+        let highlighted = highlighter()
+            .highlight("name: Check dist/\n", Some("yaml"), Theme::Light)
+            .expect("the YAML source should highlight");
+        let key = highlighted
+            .spans
+            .iter()
+            .find(|span| span.range.contains(&1))
+            .expect("the mapping key should have a style");
+        let value = highlighted
+            .spans
+            .iter()
+            .find(|span| span.range.contains(&7))
+            .expect("the mapping value should have a style");
+
+        assert_ne!(key.style.foreground, value.style.foreground);
     }
 
     #[test]
