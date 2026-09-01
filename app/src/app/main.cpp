@@ -48,6 +48,15 @@ codexExecutable()
     const QByteArray configured = qgetenv("CRAFTWARD_CODEX_PATH");
     return configured.isEmpty() ? QByteArrayLiteral("codex") : configured;
 }
+
+bool
+frameTimingOverlayEnabled()
+{
+    const QByteArray configured = qgetenv("CRAFTWARD_FRAME_TIMING_OVERLAY").trimmed().toLower();
+    return configured == QByteArrayLiteral("1") || configured == QByteArrayLiteral("true") ||
+           configured == QByteArrayLiteral("yes") || configured == QByteArrayLiteral("on");
+}
+
 }
 
 int
@@ -114,6 +123,7 @@ main(int argc, char* argv[])
                              QUrl(QStringLiteral("image://application-icon/app")));
     initialProperties.insert(QStringLiteral("buildNumber"), QStringLiteral(CRAFTWARD_BUILD_NUMBER));
     initialProperties.insert(QStringLiteral("commitHash"), QStringLiteral(CRAFTWARD_COMMIT_HASH));
+    initialProperties.insert(QStringLiteral("frameTimingOverlayEnabled"), frameTimingOverlayEnabled());
     initialProperties.insert(QStringLiteral("localizationController"),
                              QVariant::fromValue(static_cast<QObject*>(&localizationController)));
     initialProperties.insert(QStringLiteral("applicationController"),

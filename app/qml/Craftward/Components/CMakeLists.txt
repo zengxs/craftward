@@ -12,6 +12,8 @@ qt_add_qml_module(CraftwardComponents
         AnimatedChevron.qml
         ConfirmationDialog.qml
         CopyFeedbackButton.qml
+        FrameTiming.js
+        FrameTimingOverlay.qml
         IconButton.qml
         MenuComboBox.qml
         MarkupDocumentView.qml

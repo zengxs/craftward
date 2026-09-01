@@ -4,12 +4,14 @@
 import QtQuick
 import QtQuick.Controls
 import Craftward.Codex
+import Craftward.Components
 import Craftward.Pages
 
 ApplicationWindow {
     id: window
 
     required property CodexHistoryController codexHistoryController
+    property bool frameTimingOverlayEnabled: false
 
     signal bringAllWindowsToFrontRequested
     signal closeWindowRequested
@@ -116,5 +118,14 @@ ApplicationWindow {
     CodexHistoryPage {
         anchors.fill: parent
         controller: window.codexHistoryController
+    }
+
+    FrameTimingOverlay {
+        anchors {
+            right: parent.right
+            top: parent.top
+        }
+        targetWindow: window
+        active: window.frameTimingOverlayEnabled
     }
 }
