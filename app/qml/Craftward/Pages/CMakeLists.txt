@@ -24,7 +24,6 @@ qt_add_qml_module(CraftwardPages
         CodexModelSelector.qml
         CodexReasoningEffortSelector.qml
         CodexTimelineDetailHeader.qml
-        CodexTimelinePageWindow.qml
         CodexTimelineRow.qml
         CodexTimelineView.qml
         CodexTimelineViewport.qml

@@ -18,8 +18,6 @@ qt_add_qml_module(CraftwardCodex
         codexthreadmodel.h
         codextimelinemodel.cpp
         codextimelinemodel.h
-        codextimelinepagemodel.cpp
-        codextimelinepagemodel.h
         codextimelinepresentationmodel.cpp
         codextimelinepresentationmodel.h
 )
@@ -67,26 +65,6 @@ if(BUILD_TESTING)
     add_test(
         NAME CraftwardCodexHistoryControllerTest
         COMMAND CraftwardCodexHistoryControllerTest
-    )
-
-    qt_add_executable(CraftwardCodexTimelinePageModelTest
-        codextimelinepagemodel.cpp
-        codextimelinepagemodel.h
-        tests/codextimelinepagemodeltest.cpp
-    )
-    target_include_directories(CraftwardCodexTimelinePageModelTest
-        PRIVATE
-            "${PROJECT_SOURCE_DIR}/src"
-    )
-    target_link_libraries(CraftwardCodexTimelinePageModelTest
-        PRIVATE
-            Qt6::Gui
-            Qt6::Qml
-            Qt6::Test
-    )
-    add_test(
-        NAME CraftwardCodexTimelinePageModelTest
-        COMMAND CraftwardCodexTimelinePageModelTest
     )
 
     qt_add_executable(CraftwardCodexTimelinePresentationModelTest
