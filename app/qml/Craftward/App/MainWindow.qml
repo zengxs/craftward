@@ -116,8 +116,11 @@ ApplicationWindow {
     }
 
     CodexHistoryPage {
+        id: historyPage
+
         anchors.fill: parent
         controller: window.codexHistoryController
+        timelineMotionDiagnosticsEnabled: window.frameTimingOverlayEnabled
     }
 
     FrameTimingOverlay {
@@ -127,5 +130,6 @@ ApplicationWindow {
         }
         targetWindow: window
         active: window.frameTimingOverlayEnabled
+        supplementalStatisticsText: historyPage.timelineMotionDiagnosticsText
     }
 }

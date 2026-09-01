@@ -15,7 +15,9 @@ Page {
     id: root
 
     required property CodexHistoryController controller
+    property bool timelineMotionDiagnosticsEnabled: false
     readonly property CodexConversationController conversation: root.controller.conversation
+    readonly property string timelineMotionDiagnosticsText: timelineView.motionDiagnosticsText
     property alias sidebarExpanded: layoutState.sidebarExpanded
     readonly property bool historyPollingEnabled: root.visible && root.ApplicationWindow.window !== null && root.ApplicationWindow.window.visible && root.ApplicationWindow.window.visibility !== Window.Minimized
     readonly property bool fullScreen: root.ApplicationWindow.window !== null && root.ApplicationWindow.window.visibility === Window.FullScreen
@@ -441,6 +443,7 @@ Page {
                         controller: root.conversation
                         forkEnabled: historyActionState.canFork
                         showForkActions: root.conversation.threadId.length > 0 && !root.controller.showingArchived
+                        motionDiagnosticsEnabled: root.timelineMotionDiagnosticsEnabled
                         onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
                     }
 

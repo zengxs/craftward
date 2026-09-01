@@ -15,8 +15,10 @@ Control {
     required property bool showForkActions
     property real bottomContentInset: 64
     property double wallClockUnixMilliseconds: Date.now()
+    property bool motionDiagnosticsEnabled: false
     readonly property real contentColumnWidth: timelineViewport.contentColumnWidth
     readonly property bool activityShimmerEnabled: root.controller !== null && root.controller.hasRunningEvidence && !root.controller.waitingOnApproval && !root.controller.waitingOnUserInput
+    readonly property string motionDiagnosticsText: motionDiagnostics.statisticsText
 
     signal forkRequested(string turnId)
 
@@ -37,6 +39,13 @@ Control {
         id: presentationModel
 
         sourceModel: root.controller ? root.controller.timeline : null
+    }
+
+    TimelineMotionDiagnostics {
+        id: motionDiagnostics
+
+        targetViewport: timelineViewport
+        active: root.motionDiagnosticsEnabled && root.visible
     }
 
     contentItem: Item {
