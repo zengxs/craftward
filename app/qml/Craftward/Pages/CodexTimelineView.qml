@@ -14,23 +14,15 @@ Control {
     required property bool forkEnabled
     required property bool showForkActions
     property real bottomContentInset: 64
-    property var expandedTurns: ({})
     property double wallClockUnixMilliseconds: Date.now()
     readonly property real contentColumnWidth: timelineViewport.contentColumnWidth
     readonly property bool activityShimmerEnabled: root.controller !== null && root.controller.hasRunningEvidence && !root.controller.waitingOnApproval && !root.controller.waitingOnUserInput
 
     signal forkRequested(string turnId)
 
-    function turnExpanded(turnId) {
-        return root.expandedTurns[String(turnId)] === true;
-    }
-
     function toggleTurn(turnId) {
         const anchor = timelineViewport.captureVisibleAnchor();
-        const next = Object.assign({}, root.expandedTurns);
-        const key = String(turnId);
-        next[key] = !root.turnExpanded(key);
-        root.expandedTurns = next;
+        presentationModel.toggleTurn(String(turnId));
         timelineViewport.followLiveTail = false;
         timelineViewport.scheduleAnchorRestore(anchor);
     }
@@ -41,11 +33,10 @@ Control {
 
     padding: 0
 
-    CodexTimelinePageModel {
-        id: pageModel
+    CodexTimelinePresentationModel {
+        id: presentationModel
 
         sourceModel: root.controller ? root.controller.timeline : null
-        turnsPerPage: 8
     }
 
     contentItem: Item {
@@ -53,7 +44,7 @@ Control {
             id: timelineViewport
 
             anchors.fill: parent
-            pageModel: pageModel
+            timelineModel: presentationModel
             rowDelegate: timelineRowComponent
             bottomContentInset: root.bottomContentInset
         }
@@ -69,7 +60,7 @@ Control {
             color: root.palette.placeholderText
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            visible: pageModel.totalRowCount === 0
+            visible: presentationModel.totalRowCount === 0
         }
     }
 
@@ -78,8 +69,11 @@ Control {
 
         CodexTimelineRow {
             width: parent ? parent.width : 0
-            timelineModel: pageModel
-            turnExpanded: root.turnExpanded(turnId)
+            timelineModel: presentationModel
+            turnExpanded: {
+                const currentRevision = dataRevision;
+                return currentRevision >= 0 ? Boolean(presentationModel.valueAt(sourceRow, "turnExpanded")) : false;
+            }
             hasRunningEvidence: root.controller !== null && root.controller.hasRunningEvidence
             activityShimmerEnabled: root.activityShimmerEnabled
             forkEnabled: root.forkEnabled
@@ -95,7 +89,7 @@ Control {
         target: root.controller
 
         function onSelectionChanged() {
-            root.expandedTurns = {};
+            presentationModel.clearExpandedTurns();
             timelineViewport.resetForNewContent();
         }
 

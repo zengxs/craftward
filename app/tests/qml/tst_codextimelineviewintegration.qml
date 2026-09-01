@@ -126,6 +126,7 @@ Item {
             fakeController.hasRunningEvidence = true;
             suite.timelineView = createTemporaryObject(timelineViewComponent, suite);
             verify(suite.timelineView !== null);
+            tryVerify(() => findChild(suite.timelineView, "codexActivityShimmer") !== null);
             const shimmer = findChild(suite.timelineView, "codexActivityShimmer");
             verify(shimmer !== null);
             tryVerify(() => shimmer.visible);

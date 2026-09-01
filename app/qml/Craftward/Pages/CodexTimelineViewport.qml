@@ -6,683 +6,660 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import Craftward.Components
+import "../Components/FrameTiming.js" as FrameTiming
 
 Control {
     id: root
 
-    required property var pageModel
-    // The delegate contract exposes sourceRow, dataRevision, entryId, and presentationVisible.
+    required property var timelineModel
+    // The delegate contract exposes sourceRow, dataRevision, entryId, and implicitHeight.
+    // Deferred delegates may also expose contentMaterializationRequested, contentMaterializationReady,
+    // contentMeasurementReady, contentMaterializationAllowed, and heightCacheKey.
     required property Component rowDelegate
     property real bottomContentInset: 64
     property real contentHorizontalInset: 20
     property real contentMaximumWidth: 920
-    property real estimatedPageHeight: 720
-    property var pageHeights: ({})
-    property int pageHeightRevision: 0
-    property int knownPageCount: 0
+    property real estimatedRowHeight: 72
+    property real rowSpacing: 10
+    property real contentMaterializationMargin: viewportHeight
+    property int maximumConcurrentContentMaterializations: 1
+    property int activeContentMaterializationCount: 0
     property bool followLiveTail: true
     property var lastVisibleAnchor: null
     property var pendingAnchor: null
     property int pendingAnchorPasses: 0
-    property real lastObservedContentY: 0
+    property int pendingAnchorStablePasses: 0
+    property int pendingAnchorHeightRevision: -1
+    property var rowHeights: ({})
+    property int rowHeightRevision: 0
     property bool adjustingAnchor: false
-    property int heightCompensationBeforePage: -1
-    property int lastScrollDirection: 0
+    property bool anchorRestoreRunning: false
+    property bool anchorSettlementSuppressed: false
+    property bool anchorSettlementResumeScheduled: false
+    property int anchorSettlementResumeFramesRemaining: 0
+    property int anchorSettlementQuietFrameCount: 3
+    property real pendingAnchorContentYAdjustment: 0
+    property bool anchorContentYAdjustmentScheduled: false
     property bool completed: false
-    readonly property int pageCount: pageModel ? Math.max(0, Number(pageModel.pageCount)) : 0
-    readonly property int modelRevision: pageModel ? Number(pageModel.revision) : 0
+    property int activeRowSlotCount: 0
+    property var activeRowSlots: []
+    property bool viewportUpdateScheduled: false
+    property bool liveTailUpdatePending: false
+    readonly property int modelRowCount: timelineModel ? Math.max(0, Number(timelineModel.totalRowCount)) : 0
+    readonly property int modelRevision: timelineModel ? Number(timelineModel.revision) : 0
     readonly property real contentColumnWidth: Math.max(0, Math.min(availableWidth - contentHorizontalInset * 2, contentMaximumWidth))
-    readonly property int activeFirstPage: pageWindow.firstPage
-    readonly property int activeLastPage: pageWindow.lastPage
-    readonly property int loadedPageCount: activePagesModel.count
-    readonly property real leadingPlaceholderHeight: leadingPlaceholder.height
-    readonly property real trailingPlaceholderHeight: trailingPlaceholder.height
+    readonly property real frameBudgetMilliseconds: FrameTiming.budgetMilliseconds(root.Window.window)
     readonly property real contentY: scrollViewport.contentY
     readonly property real scrollContentHeight: scrollViewport.contentHeight
     readonly property real viewportHeight: scrollViewport.height
+    readonly property bool moving: scrollViewport.moving
 
-    function pageIdAt(pageIndex) {
-        const currentRevision = root.modelRevision;
-        return root.pageModel && currentRevision >= 0 ? String(root.pageModel.pageId(pageIndex)) : "";
+    signal anchorPositionCorrected(real displacement)
+    signal rowGeometryChanged(int sourceRow, real heightDelta)
+
+    function modelMethod(methodName) {
+        return root.timelineModel ? root.timelineModel[methodName] : null;
     }
 
-    function pageFirstRowAt(pageIndex) {
-        const currentRevision = root.modelRevision;
-        return root.pageModel && currentRevision >= 0 ? Number(root.pageModel.pageFirstRow(pageIndex)) : -1;
+    function modelValueAt(row, roleName) {
+        const method = root.modelMethod("valueAt");
+        return typeof method === "function" ? method.call(root.timelineModel, row, roleName) : undefined;
     }
 
-    function pageRowCountAt(pageIndex) {
-        const currentRevision = root.modelRevision;
-        return root.pageModel && currentRevision >= 0 ? Number(root.pageModel.pageRowCount(pageIndex)) : 0;
+    function entryIdAt(row) {
+        const method = root.modelMethod("entryIdAt");
+        if (typeof method === "function")
+            return String(method.call(root.timelineModel, row) ?? "");
+        return String(root.modelValueAt(row, "entryId") ?? "");
     }
 
-    function cachedPageHeight(pageId) {
-        const currentRevision = root.pageHeightRevision;
-        const cached = currentRevision >= 0 ? Number(root.pageHeights[String(pageId)]) : 0;
+    function indexOfEntryId(entryId) {
+        const method = root.modelMethod("indexOfEntryId");
+        if (typeof method === "function")
+            return Number(method.call(root.timelineModel, entryId));
+        const target = String(entryId);
+        for (let row = 0; row < root.modelRowCount; ++row) {
+            if (root.entryIdAt(row) === target)
+                return row;
+        }
+        return -1;
+    }
+
+    function rowForAnchor(anchor) {
+        if (!anchor)
+            return -1;
+        const hintedRow = Number(anchor.row);
+        if (Number.isInteger(hintedRow) && hintedRow >= 0 && hintedRow < root.modelRowCount && root.entryIdAt(hintedRow) === String(anchor.entryId))
+            return hintedRow;
+        return root.indexOfEntryId(anchor.entryId);
+    }
+
+    function cachedRowHeight(heightCacheKey) {
+        const currentRevision = root.rowHeightRevision;
+        const cached = currentRevision >= 0 ? Number(root.rowHeights[String(heightCacheKey)]) : 0;
         return Number.isFinite(cached) && cached > 0 ? cached : 0;
     }
 
-    function pageHeightAt(pageIndex) {
-        const cached = root.cachedPageHeight(root.pageIdAt(pageIndex));
-        return cached > 0 ? cached : Math.max(1, root.estimatedPageHeight);
+    function rowHeightAt(heightCacheKey) {
+        const cached = root.cachedRowHeight(heightCacheKey);
+        return cached > 0 ? cached : Math.max(1, root.estimatedRowHeight);
     }
 
-    function aggregatePageHeight(firstPage, lastPage) {
-        const currentRevision = root.pageHeightRevision;
-        if (currentRevision < 0 || firstPage < 0 || lastPage < firstPage)
-            return 0;
-        const boundedLast = Math.min(root.pageCount - 1, lastPage);
-        let height = 0;
-        for (let page = firstPage; page <= boundedLast; ++page)
-            height += root.pageHeightAt(page);
-        return height;
-    }
-
-    function placeholderHeight(firstPage, lastPage) {
-        if (firstPage < 0 || lastPage < firstPage)
-            return 0;
-        return Math.max(scrollViewport.height, root.aggregatePageHeight(firstPage, lastPage));
-    }
-
-    function invokeDelegate(object, methodName, argument) {
-        const method = object ? object[methodName] : null;
-        return typeof method === "function" ? method.call(object, argument) : null;
-    }
-
-    function delegateProperty(object, propertyName, fallback) {
-        if (!object)
-            return fallback;
-        const value = object[propertyName];
-        return value === undefined ? fallback : value;
-    }
-
-    function rememberPageHeight(pageId, measuredHeight) {
-        const key = String(pageId);
+    function rememberRowHeight(heightCacheKey, measuredHeight) {
+        const key = String(heightCacheKey);
         const height = Math.ceil(Number(measuredHeight));
-        if (!key || !Number.isFinite(height) || height <= 0 || root.pageHeights[key] === height)
+        if (!key || !Number.isFinite(height) || height <= 0 || root.rowHeights[key] === height)
             return;
-        root.pageHeights[key] = height;
-        ++root.pageHeightRevision;
+        root.rowHeights[key] = height;
+        ++root.rowHeightRevision;
     }
 
-    function clearPageHeights() {
-        root.pageHeights = {};
-        ++root.pageHeightRevision;
+    function clearRowHeights() {
+        root.rowHeights = {};
+        ++root.rowHeightRevision;
     }
 
-    function synchronizeActivePages() {
-        const first = root.activeFirstPage;
-        const last = root.activeLastPage;
-        if (first < 0 || last < first) {
-            activePagesModel.clear();
+    function registerRowSlot(slot) {
+        root.activeRowSlots = root.activeRowSlots.concat([slot]);
+        root.scheduleViewportUpdate();
+    }
+
+    function unregisterRowSlot(slot) {
+        root.activeRowSlots = root.activeRowSlots.filter(candidate => candidate !== slot);
+        root.scheduleViewportUpdate();
+    }
+
+    function scheduleViewportUpdate(updateLiveTail = false) {
+        if (updateLiveTail)
+            root.liveTailUpdatePending = true;
+        if (root.viewportUpdateScheduled)
             return;
-        }
+        root.viewportUpdateScheduled = true;
+        Qt.callLater(root.applyScheduledViewportUpdate);
+    }
 
-        while (activePagesModel.count > 0 && Number(activePagesModel.get(0).pageIndex) < first)
-            activePagesModel.remove(0);
-        while (activePagesModel.count > 0 && Number(activePagesModel.get(activePagesModel.count - 1).pageIndex) > last)
-            activePagesModel.remove(activePagesModel.count - 1);
+    function applyScheduledViewportUpdate() {
+        root.viewportUpdateScheduled = false;
+        const updateLiveTail = root.liveTailUpdatePending;
+        root.liveTailUpdatePending = false;
+        root.updateContentMaterialization();
+        if (updateLiveTail && root.followLiveTail)
+            root.scrollToBottom();
+    }
 
-        if (activePagesModel.count === 0) {
-            for (let page = first; page <= last; ++page)
-                activePagesModel.append({
-                    pageIndex: page,
-                    stableId: root.pageIdAt(page),
-                    firstSourceRow: root.pageFirstRowAt(page),
-                    sourceRowCount: root.pageRowCountAt(page)
-                });
-        } else {
-            while (Number(activePagesModel.get(0).pageIndex) > first) {
-                const page = Number(activePagesModel.get(0).pageIndex) - 1;
-                activePagesModel.insert(0, {
-                    pageIndex: page,
-                    stableId: root.pageIdAt(page),
-                    firstSourceRow: root.pageFirstRowAt(page),
-                    sourceRowCount: root.pageRowCountAt(page)
-                });
+    function materializationDistance(slot) {
+        const viewportStart = scrollViewport.contentY;
+        const viewportEnd = viewportStart + scrollViewport.height;
+        const slotStart = slot.y;
+        const slotEnd = slotStart + slot.height;
+        if (slotEnd < viewportStart)
+            return viewportStart - slotEnd;
+        if (slotStart > viewportEnd)
+            return slotStart - viewportEnd;
+        return 0;
+    }
+
+    function updateContentMaterialization() {
+        const candidates = [];
+        const margin = Math.max(0, Number(root.contentMaterializationMargin));
+        for (const slot of root.activeRowSlots) {
+            if (!slot)
+                continue;
+            if (slot.pooled || !slot.loadedItem) {
+                slot.contentMaterializationAllowed = false;
+                continue;
             }
-            while (Number(activePagesModel.get(activePagesModel.count - 1).pageIndex) < last) {
-                const page = Number(activePagesModel.get(activePagesModel.count - 1).pageIndex) + 1;
-                activePagesModel.append({
-                    pageIndex: page,
-                    stableId: root.pageIdAt(page),
-                    firstSourceRow: root.pageFirstRowAt(page),
-                    sourceRowCount: root.pageRowCountAt(page)
-                });
+            const requested = slot.contentMaterializationRequested;
+            if (!requested) {
+                slot.contentMaterializationAllowed = false;
+                continue;
             }
+            if (slot.contentMaterializationReady) {
+                slot.contentMaterializationAllowed = true;
+                continue;
+            }
+            const eligible = root.materializationDistance(slot) <= margin;
+            if (!eligible) {
+                slot.contentMaterializationAllowed = false;
+                continue;
+            }
+            if (scrollViewport.moving || root.anchorSettlementSuppressed) {
+                slot.contentMaterializationAllowed = false;
+                continue;
+            }
+            candidates.push(slot);
         }
-
-        for (let row = 0; row < activePagesModel.count; ++row) {
-            const page = Number(activePagesModel.get(row).pageIndex);
-            activePagesModel.set(row, {
-                pageIndex: page,
-                stableId: root.pageIdAt(page),
-                firstSourceRow: root.pageFirstRowAt(page),
-                sourceRowCount: root.pageRowCountAt(page)
-            });
-        }
+        candidates.sort((left, right) => {
+            const distance = root.materializationDistance(left) - root.materializationDistance(right);
+            return distance !== 0 ? distance : left.sourceRow - right.sourceRow;
+        });
+        const allowedCount = Math.min(candidates.length, Math.max(0, Number(root.maximumConcurrentContentMaterializations)));
+        for (let index = 0; index < candidates.length; ++index)
+            candidates[index].contentMaterializationAllowed = index < allowedCount;
+        root.activeContentMaterializationCount = allowedCount;
     }
 
-    function resetWindowToLatest() {
-        root.knownPageCount = root.pageCount;
-        pageWindow.resetToLatest();
-        root.synchronizeActivePages();
-        root.followLiveTail = true;
-        Qt.callLater(root.scrollToBottom);
-    }
-
-    function resetForNewContent() {
-        windowCompactionTimer.stop();
-        overscanAdvanceCooldown.stop();
-        heightCompensationTimer.stop();
-        anchorRestoreTimer.stop();
-        root.pendingAnchor = null;
-        root.heightCompensationBeforePage = -1;
-        root.clearPageHeights();
-        root.followLiveTail = true;
-        root.resetWindowToLatest();
-    }
-
-    function synchronizePageWindow() {
-        const count = root.pageCount;
-        if (count <= 0) {
-            root.knownPageCount = 0;
-            pageWindow.clampToPageCount();
-            root.synchronizeActivePages();
+    function settleAnchorAfterRowHeightChange(sourceRow, previousHeight, currentHeight) {
+        const delta = Number(currentHeight) - Number(previousHeight);
+        if (!Number.isFinite(delta) || Math.abs(delta) < 0.5)
             return;
-        }
-
-        if (root.activeFirstPage < 0 || count < root.knownPageCount) {
-            root.resetWindowToLatest();
+        root.rowGeometryChanged(Number(sourceRow), delta);
+        if (root.adjustingAnchor || root.anchorSettlementSuppressed || root.followLiveTail)
             return;
-        }
+        if (scrollViewport.moving)
+            return;
+        const anchor = root.pendingAnchor ?? root.lastVisibleAnchor ?? root.captureVisibleAnchor();
+        if (!anchor)
+            return;
+        const anchorRow = root.rowForAnchor(anchor);
+        if (anchorRow >= 0 && Number(sourceRow) > anchorRow)
+            return;
+        if (anchorRow >= 0 && Number(sourceRow) < anchorRow)
+            root.scheduleAnchorContentYAdjustment(delta);
+        root.scheduleAnchorRestore(anchor);
+    }
 
-        if (root.followLiveTail) {
-            pageWindow.resetToLatest();
-            root.synchronizeActivePages();
-            Qt.callLater(root.scrollToBottom);
-        } else {
-            pageWindow.clampToPageCount();
-            root.synchronizeActivePages();
+    function scheduleAnchorContentYAdjustment(delta) {
+        root.pendingAnchorContentYAdjustment += Number(delta);
+        if (root.anchorContentYAdjustmentScheduled)
+            return;
+        root.anchorContentYAdjustmentScheduled = true;
+        Qt.callLater(root.applyPendingAnchorContentYAdjustment);
+    }
+
+    function applyPendingAnchorContentYAdjustment() {
+        root.anchorContentYAdjustmentScheduled = false;
+        const adjustment = root.pendingAnchorContentYAdjustment;
+        root.pendingAnchorContentYAdjustment = 0;
+        if (scrollViewport.moving || root.anchorSettlementSuppressed || !Number.isFinite(adjustment) || Math.abs(adjustment) < 0.5)
+            return;
+        scrollViewport.forceLayout();
+        root.restorePendingAnchor();
+    }
+
+    function firstInstantiatedIndexAt(contentY) {
+        if (root.modelRowCount <= 0)
+            return -1;
+        const x = Math.max(1, scrollViewport.width / 2);
+        const firstY = Math.max(scrollViewport.originY, Number(contentY));
+        const probeLimit = Math.max(32, root.rowSpacing + 4);
+        for (let offset = 0; offset <= probeLimit; offset += 2) {
+            const row = scrollViewport.indexAt(x, firstY + offset);
+            if (row >= 0)
+                return row;
         }
-        root.knownPageCount = count;
+        const center = scrollViewport.indexAt(x, firstY + scrollViewport.height / 2);
+        return center >= 0 ? center : 0;
     }
 
     function captureVisibleAnchor() {
-        for (let row = 0; row < pageRepeater.count; ++row) {
-            const page = pageRepeater.itemAt(row);
-            if (!page)
+        const first = root.firstInstantiatedIndexAt(scrollViewport.contentY);
+        if (first < 0)
+            return null;
+        const last = Math.min(root.modelRowCount - 1, first + 64);
+        for (let row = first; row <= last; ++row) {
+            const slot = scrollViewport.itemAtIndex(row);
+            if (!slot || slot.height <= 0)
                 continue;
-            const anchor = root.invokeDelegate(page, "captureVisibleAnchor", scrollViewport.contentY);
-            if (anchor)
-                return anchor;
+            const top = slot.mapToItem(scrollViewport.contentItem, 0, 0).y;
+            if (top + slot.height >= scrollViewport.contentY)
+                return {
+                    entryId: slot.entryId,
+                    offset: top - scrollViewport.contentY,
+                    row: row
+                };
         }
         return null;
     }
 
     function delegateForEntry(entryId) {
-        for (let row = 0; row < pageRepeater.count; ++row) {
-            const page = pageRepeater.itemAt(row);
-            if (!page)
-                continue;
-            const delegate = root.invokeDelegate(page, "delegateForEntry", entryId);
-            if (delegate)
-                return delegate;
-        }
-        return null;
+        const row = root.indexOfEntryId(entryId);
+        if (row < 0)
+            return null;
+        const slot = scrollViewport.itemAtIndex(row);
+        return slot ? slot.loadedItem : null;
     }
 
     function scheduleAnchorRestore(anchor) {
         if (!anchor)
             return;
-        root.pendingAnchor = anchor;
+        root.lastVisibleAnchor = {
+            entryId: String(anchor.entryId),
+            offset: Number(anchor.offset),
+            row: root.rowForAnchor(anchor)
+        };
+        root.pendingAnchor = root.lastVisibleAnchor;
         root.pendingAnchorPasses = 0;
-        anchorRestoreTimer.restart();
+        root.pendingAnchorStablePasses = 0;
+        root.pendingAnchorHeightRevision = root.rowHeightRevision;
+        root.anchorRestoreRunning = true;
     }
 
     function restorePendingAnchor() {
         if (!root.pendingAnchor)
             return false;
-        const item = root.delegateForEntry(root.pendingAnchor.entryId);
-        if (!item)
+        const row = root.rowForAnchor(root.pendingAnchor);
+        if (row < 0)
             return false;
-        const top = item.mapToItem(scrollViewport.contentItem, 0, 0).y;
+        const slot = scrollViewport.itemAtIndex(row);
+        if (!slot) {
+            scrollViewport.positionViewAtIndex(row, ListView.Beginning);
+            return false;
+        }
+        const top = slot.mapToItem(scrollViewport.contentItem, 0, 0).y;
         const minimumY = scrollViewport.originY;
         const maximumY = Math.max(minimumY, minimumY + scrollViewport.contentHeight - scrollViewport.height);
+        const previousContentY = scrollViewport.contentY;
         root.adjustingAnchor = true;
-        scrollViewport.contentY = Math.max(minimumY, Math.min(maximumY, top - root.pendingAnchor.offset));
-        root.lastObservedContentY = scrollViewport.contentY;
+        scrollViewport.contentY = Math.max(minimumY, Math.min(maximumY, top - Number(root.pendingAnchor.offset)));
         root.adjustingAnchor = false;
-        return true;
-    }
-
-    function activePageTop() {
-        const page = pageRepeater.itemAt(0);
-        return page ? page.mapToItem(scrollViewport.contentItem, 0, 0).y : leadingPlaceholder.height;
-    }
-
-    function activePageBottom() {
-        const page = pageRepeater.itemAt(pageRepeater.count - 1);
-        return page ? page.mapToItem(scrollViewport.contentItem, 0, page.height).y : leadingPlaceholder.height;
-    }
-
-    function expandWindow(direction) {
-        if (direction === 0 || pageWindow.activePageCount >= pageWindow.maximumWindowSize)
-            return false;
-        if (direction < 0 && root.activeFirstPage <= 0)
-            return false;
-        if (direction > 0 && root.activeLastPage >= root.pageCount - 1)
-            return false;
-        const previousFirstPage = root.activeFirstPage;
-        if (!pageWindow.expand(direction))
-            return false;
-        if (direction < 0)
-            root.heightCompensationBeforePage = previousFirstPage;
-        root.synchronizeActivePages();
-        root.followLiveTail = false;
-        if (direction < 0)
-            heightCompensationTimer.restart();
-        return true;
-    }
-
-    function advanceWindow(direction) {
-        if (direction === 0)
-            return false;
-        if (direction < 0 && root.activeFirstPage <= 0)
-            return false;
-        if (direction > 0 && root.activeLastPage >= root.pageCount - 1)
-            return false;
-        const previousFirstPage = root.activeFirstPage;
-        if (!pageWindow.advance(direction))
-            return false;
-        if (direction < 0)
-            root.heightCompensationBeforePage = previousFirstPage;
-        root.synchronizeActivePages();
-        root.followLiveTail = false;
-        if (direction < 0)
-            heightCompensationTimer.restart();
-        return true;
-    }
-
-    function pageAtContentY(contentY) {
-        let remaining = Math.max(0, Number(contentY) - timelineColumn.y);
-        for (let page = 0; page < root.pageCount; ++page) {
-            const height = root.pageHeightAt(page);
-            if (remaining < height)
-                return page;
-            remaining -= height;
-        }
-        return root.pageCount - 1;
-    }
-
-    function catchUpWindow(targetPage) {
-        if (targetPage < 0 || targetPage >= root.pageCount)
-            return false;
-        if (!pageWindow.setWindowAround(targetPage, pageWindow.maximumWindowSize))
-            return false;
-        root.heightCompensationBeforePage = targetPage;
-        root.synchronizeActivePages();
-        root.followLiveTail = false;
-        heightCompensationTimer.restart();
-        return true;
-    }
-
-    function compensateForPageHeightChange(pageIndex, heightDelta) {
-        if (root.heightCompensationBeforePage < 0 || pageIndex >= root.heightCompensationBeforePage || Math.abs(heightDelta) < 0.5)
-            return;
-        root.adjustingAnchor = true;
-        scrollViewport.contentY += heightDelta;
-        root.lastObservedContentY = scrollViewport.contentY;
-        root.adjustingAnchor = false;
-        heightCompensationTimer.restart();
-    }
-
-    function lookaheadDistance() {
-        const viewportHeight = Math.max(1, scrollViewport.height);
-        const velocityDistance = Math.min(viewportHeight * 1.5, Math.abs(scrollViewport.verticalVelocity) * 0.2);
-        return viewportHeight * 1.5 + velocityDistance;
-    }
-
-    function prepareOverscan(direction) {
-        if (direction === 0 || root.activeFirstPage < 0)
-            return;
-        root.lastScrollDirection = direction;
-
-        const targetPage = root.pageAtContentY(scrollViewport.contentY + scrollViewport.height / 2);
-        if (targetPage < root.activeFirstPage - 1 || targetPage > root.activeLastPage + 1) {
-            if (root.catchUpWindow(targetPage))
-                overscanAdvanceCooldown.restart();
-            return;
-        }
-
-        if (pageWindow.activePageCount < pageWindow.maximumWindowSize) {
-            if (root.expandWindow(direction))
-                overscanAdvanceCooldown.restart();
-            return;
-        }
-        if (overscanAdvanceCooldown.running)
-            return;
-
-        const lookahead = root.lookaheadDistance();
-        if (direction < 0 && root.activeFirstPage > 0 && scrollViewport.contentY - root.activePageTop() <= lookahead) {
-            if (root.advanceWindow(direction))
-                overscanAdvanceCooldown.restart();
-        } else if (direction > 0 && root.activeLastPage < root.pageCount - 1 && root.activePageBottom() - (scrollViewport.contentY + scrollViewport.height) <= lookahead) {
-            if (root.advanceWindow(direction))
-                overscanAdvanceCooldown.restart();
-        }
-    }
-
-    function pageAtViewportCenter() {
-        const centerY = scrollViewport.contentY + scrollViewport.height / 2;
-        for (let row = 0; row < pageRepeater.count; ++row) {
-            const page = pageRepeater.itemAt(row);
-            if (!page || page.height <= 0)
-                continue;
-            const top = page.mapToItem(scrollViewport.contentItem, 0, 0).y;
-            if (centerY >= top && centerY <= top + page.height)
-                return Number(activePagesModel.get(row).pageIndex);
-        }
-        return root.pageAtContentY(centerY);
-    }
-
-    function compactWindow() {
-        if (scrollViewport.moving || pageWindow.activePageCount <= pageWindow.baseWindowSize)
-            return false;
-        const focusPage = root.pageAtViewportCenter();
-        if (focusPage < 0)
-            return false;
-        const anchor = root.captureVisibleAnchor() ?? root.lastVisibleAnchor;
-        if (!pageWindow.compactAround(focusPage))
-            return false;
-        root.synchronizeActivePages();
-        root.scheduleAnchorRestore(anchor);
+        const displacement = scrollViewport.contentY - previousContentY;
+        if (Math.abs(displacement) >= 0.5)
+            root.anchorPositionCorrected(displacement);
         return true;
     }
 
     function scrollToBottom() {
-        const minimumY = scrollViewport.originY;
-        scrollViewport.contentY = Math.max(minimumY, minimumY + scrollViewport.contentHeight - scrollViewport.height);
-        root.lastObservedContentY = scrollViewport.contentY;
-        root.lastVisibleAnchor = root.captureVisibleAnchor();
+        if (!root.followLiveTail || root.modelRowCount <= 0)
+            return;
+        scrollViewport.positionViewAtEnd();
+        Qt.callLater(() => {
+            if (!root.followLiveTail)
+                return;
+            const minimumY = scrollViewport.originY;
+            scrollViewport.contentY = Math.max(minimumY, minimumY + scrollViewport.contentHeight - scrollViewport.height);
+            root.lastVisibleAnchor = root.captureVisibleAnchor();
+        });
     }
 
     function positionAtContentY(contentY) {
+        root.anchorRestoreRunning = false;
+        root.anchorSettlementSuppressed = false;
+        root.anchorSettlementResumeScheduled = false;
+        root.anchorSettlementResumeFramesRemaining = 0;
+        root.pendingAnchorContentYAdjustment = 0;
+        root.pendingAnchor = null;
         const minimumY = scrollViewport.originY;
         const maximumY = Math.max(minimumY, minimumY + scrollViewport.contentHeight - scrollViewport.height);
         scrollViewport.contentY = Math.max(minimumY, Math.min(maximumY, Number(contentY)));
+        root.lastVisibleAnchor = root.captureVisibleAnchor();
+        Qt.callLater(() => {
+            if (root.followLiveTail || scrollViewport.moving)
+                return;
+            root.lastVisibleAnchor = root.captureVisibleAnchor();
+        });
     }
 
     function followLatest() {
         root.followLiveTail = true;
-        pageWindow.resetToLatest();
-        root.synchronizeActivePages();
+        Qt.callLater(root.scrollToBottom);
+    }
+
+    function resetForNewContent() {
+        root.anchorRestoreRunning = false;
+        root.anchorSettlementSuppressed = false;
+        root.anchorSettlementResumeScheduled = false;
+        root.anchorSettlementResumeFramesRemaining = 0;
+        root.pendingAnchorContentYAdjustment = 0;
+        root.pendingAnchor = null;
+        root.lastVisibleAnchor = null;
+        root.clearRowHeights();
+        root.followLiveTail = true;
         Qt.callLater(root.scrollToBottom);
     }
 
     padding: 0
 
-    ListModel {
-        id: activePagesModel
-    }
-
-    CodexTimelinePageWindow {
-        id: pageWindow
-
-        pageCount: root.pageCount
-    }
-
-    contentItem: Flickable {
+    contentItem: ListView {
         id: scrollViewport
 
         objectName: "codexTimelineScrollViewport"
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        contentWidth: width
-        contentHeight: timelineColumn.y + timelineColumn.height + root.bottomContentInset
+        model: root.modelRowCount
+        spacing: root.rowSpacing
+        cacheBuffer: Math.max(height * 3, 1200)
+        reuseItems: true
         flickableDirection: Flickable.VerticalFlick
         ScrollBar.vertical: OverlayScrollBar {}
 
-        onContentHeightChanged: {
-            if (root.followLiveTail)
-                Qt.callLater(root.scrollToBottom);
+        header: Item {
+            width: 1
+            height: 20
         }
+
+        footer: Item {
+            width: 1
+            height: root.bottomContentInset
+        }
+
+        delegate: Item {
+            id: rowSlot
+
+            required property int index
+            property int sourceRow: index
+            property int dataRevision: root.modelRevision
+            property string loadedEntryId: ""
+            property int loaderGeneration: 0
+            property real lastEffectiveHeight: 0
+            property bool slotCompleted: false
+            property bool pooled: false
+            property bool contentMaterializationAllowed: false
+            property bool contentMaterializationRequested: false
+            property bool contentMaterializationReady: true
+            property bool contentMeasurementReady: false
+            property string heightCacheKey: entryId
+            property real measuredHeight: 0
+            readonly property string entryId: {
+                const currentRevision = dataRevision;
+                return currentRevision >= 0 ? root.entryIdAt(sourceRow) : "";
+            }
+            readonly property Item loadedItem: rowLoader.item
+
+            function synchronizeLoadedItemState() {
+                const loadedItem = rowLoader.item;
+                if (!loadedItem) {
+                    contentMaterializationRequested = false;
+                    contentMaterializationReady = true;
+                    contentMeasurementReady = false;
+                    heightCacheKey = entryId;
+                    measuredHeight = 0;
+                    return;
+                }
+                const requested = loadedItem["contentMaterializationRequested"];
+                contentMaterializationRequested = requested === undefined ? false : Boolean(requested);
+                const materializationReady = loadedItem["contentMaterializationReady"];
+                contentMaterializationReady = !contentMaterializationRequested || materializationReady === undefined || Boolean(materializationReady);
+                const measurementReady = loadedItem["contentMeasurementReady"];
+                contentMeasurementReady = measurementReady === undefined ? true : Boolean(measurementReady);
+                const loadedHeightCacheKey = loadedItem["heightCacheKey"];
+                heightCacheKey = loadedHeightCacheKey === undefined || String(loadedHeightCacheKey).length === 0 ? entryId : String(loadedHeightCacheKey);
+                const implicitHeight = Number(loadedItem.implicitHeight);
+                measuredHeight = contentMeasurementReady && Number.isFinite(implicitHeight) ? Math.ceil(implicitHeight) : 0;
+            }
+
+            function synchronizeItem() {
+                if (!rowLoader.item)
+                    return;
+                if (loadedEntryId !== root.entryIdAt(sourceRow)) {
+                    reloadItem();
+                    return;
+                }
+                rowLoader.item["sourceRow"] = sourceRow;
+                rowLoader.item["dataRevision"] = dataRevision;
+                if (rowLoader.item["contentMaterializationAllowed"] !== undefined)
+                    rowLoader.item["contentMaterializationAllowed"] = contentMaterializationAllowed;
+                synchronizeLoadedItemState();
+            }
+
+            function reloadItem() {
+                ++loaderGeneration;
+                const requestedGeneration = loaderGeneration;
+                rowLoader.active = false;
+                Qt.callLater(() => {
+                    if (requestedGeneration === loaderGeneration)
+                        rowLoader.active = true;
+                });
+            }
+
+            width: scrollViewport.width
+            height: measuredHeight > 0 ? measuredHeight : root.rowHeightAt(heightCacheKey)
+            onDataRevisionChanged: synchronizeItem()
+            onEntryIdChanged: {
+                contentMaterializationAllowed = false;
+                synchronizeLoadedItemState();
+                lastEffectiveHeight = height;
+                if (rowLoader.item && loadedEntryId !== entryId)
+                    reloadItem();
+                root.scheduleViewportUpdate();
+            }
+            onContentMaterializationAllowedChanged: synchronizeItem()
+            onContentMaterializationRequestedChanged: root.scheduleViewportUpdate()
+            onContentMaterializationReadyChanged: root.scheduleViewportUpdate()
+            onYChanged: root.scheduleViewportUpdate()
+            onHeightChanged: {
+                root.scheduleViewportUpdate();
+                if (!slotCompleted)
+                    return;
+                const previousHeight = lastEffectiveHeight;
+                lastEffectiveHeight = height;
+                root.settleAnchorAfterRowHeightChange(sourceRow, previousHeight, height);
+            }
+            onMeasuredHeightChanged: {
+                if (measuredHeight > 0)
+                    root.rememberRowHeight(heightCacheKey, measuredHeight);
+            }
+            Component.onCompleted: {
+                lastEffectiveHeight = height;
+                slotCompleted = true;
+                ++root.activeRowSlotCount;
+                root.registerRowSlot(rowSlot);
+            }
+            Component.onDestruction: {
+                root.unregisterRowSlot(rowSlot);
+                --root.activeRowSlotCount;
+            }
+            ListView.onPooled: {
+                pooled = true;
+                contentMaterializationAllowed = false;
+                root.scheduleViewportUpdate();
+            }
+            ListView.onReused: {
+                pooled = false;
+                contentMaterializationAllowed = false;
+                lastEffectiveHeight = height;
+                root.scheduleViewportUpdate();
+            }
+
+            Rectangle {
+                anchors {
+                    horizontalCenter: parent.horizontalCenter
+                    top: parent.top
+                }
+                width: root.contentColumnWidth
+                height: parent.height
+                radius: 8
+                color: root.palette.alternateBase
+                opacity: 0.42
+                visible: rowSlot.measuredHeight <= 0
+            }
+
+            Loader {
+                id: rowLoader
+
+                anchors {
+                    horizontalCenter: parent.horizontalCenter
+                    top: parent.top
+                }
+                width: root.contentColumnWidth
+                height: item ? item.implicitHeight : 0
+                asynchronous: true
+                sourceComponent: root.rowDelegate
+                onItemChanged: rowSlot.synchronizeLoadedItemState()
+                onLoaded: {
+                    rowSlot.loadedEntryId = rowSlot.entryId;
+                    rowSlot.synchronizeItem();
+                    root.scheduleViewportUpdate();
+                }
+            }
+
+            Connections {
+                target: rowLoader.item
+                ignoreUnknownSignals: true
+
+                function onContentMaterializationRequestedChanged() {
+                    rowSlot.synchronizeLoadedItemState();
+                }
+
+                function onContentMaterializationReadyChanged() {
+                    rowSlot.synchronizeLoadedItemState();
+                }
+
+                function onContentMeasurementReadyChanged() {
+                    rowSlot.synchronizeLoadedItemState();
+                }
+
+                function onHeightCacheKeyChanged() {
+                    rowSlot.synchronizeLoadedItemState();
+                }
+
+                function onImplicitHeightChanged() {
+                    rowSlot.synchronizeLoadedItemState();
+                }
+            }
+        }
+
+        onContentHeightChanged: {
+            root.scheduleViewportUpdate(true);
+        }
+        onContentYChanged: root.scheduleViewportUpdate()
         onMovementStarted: {
-            windowCompactionTimer.stop();
-            anchorRestoreTimer.stop();
+            root.anchorRestoreRunning = false;
+            root.anchorSettlementSuppressed = true;
+            root.anchorSettlementResumeScheduled = false;
+            root.anchorSettlementResumeFramesRemaining = 0;
+            root.pendingAnchorContentYAdjustment = 0;
             root.pendingAnchor = null;
             root.followLiveTail = false;
-            root.lastObservedContentY = contentY;
             root.lastVisibleAnchor = root.captureVisibleAnchor();
-        }
-        onContentYChanged: {
-            const delta = contentY - root.lastObservedContentY;
-            root.lastObservedContentY = contentY;
-            if (root.adjustingAnchor || Math.abs(delta) < 0.5)
-                return;
-            root.prepareOverscan(delta < 0 ? -1 : 1);
+            root.updateContentMaterialization();
         }
         onMovementEnded: {
-            root.followLiveTail = root.activeLastPage === root.pageCount - 1 && atYEnd;
+            root.followLiveTail = atYEnd;
             root.lastVisibleAnchor = root.captureVisibleAnchor();
-            windowCompactionTimer.restart();
-        }
-
-        Column {
-            id: timelineColumn
-
-            x: Math.round((scrollViewport.width - width) / 2)
-            y: 20
-            width: root.contentColumnWidth
-            spacing: 0
-
-            Item {
-                id: leadingPlaceholder
-
-                width: timelineColumn.width
-                height: root.activeFirstPage > 0 ? root.placeholderHeight(0, root.activeFirstPage - 1) : 0
-
-                BusyIndicator {
-                    anchors {
-                        horizontalCenter: parent.horizontalCenter
-                        bottom: parent.bottom
-                        bottomMargin: 16
-                    }
-                    width: 18
-                    height: 18
-                    visible: parent.height > 0 && scrollViewport.contentY <= parent.height + scrollViewport.height
-                    running: visible
-                }
-            }
-
-            Repeater {
-                id: pageRepeater
-
-                model: activePagesModel
-
-                delegate: Item {
-                    id: pageDelegate
-
-                    required property int pageIndex
-                    required property string stableId
-                    required property int firstSourceRow
-                    required property int sourceRowCount
-                    readonly property real retainedHeight: root.pageHeightAt(pageIndex)
-                    property real lastEffectiveHeight: retainedHeight
-
-                    function captureVisibleAnchor(contentY) {
-                        return pageContent.captureVisibleAnchor(contentY);
-                    }
-
-                    function delegateForEntry(entryId) {
-                        return pageContent.delegateForEntry(entryId);
-                    }
-
-                    width: timelineColumn.width
-                    height: pageContent.implicitHeight > 0 ? pageContent.implicitHeight : retainedHeight
-                    onHeightChanged: {
-                        const delta = height - lastEffectiveHeight;
-                        lastEffectiveHeight = height;
-                        root.compensateForPageHeightChange(pageIndex, delta);
-                    }
-
-                    Column {
-                        id: pageContent
-
-                        function captureVisibleAnchor(contentY) {
-                            for (let row = 0; row < rowRepeater.count; ++row) {
-                                const slot = rowRepeater.itemAt(row);
-                                const item = root.delegateProperty(slot, "item", null);
-                                if (!item || !item.visible || item.height <= 0)
-                                    continue;
-                                const top = item.mapToItem(scrollViewport.contentItem, 0, 0).y;
-                                if (top + item.height >= contentY)
-                                    return {
-                                        entryId: item.entryId,
-                                        offset: top - contentY
-                                    };
-                            }
-                            return null;
-                        }
-
-                        function delegateForEntry(entryId) {
-                            for (let row = 0; row < rowRepeater.count; ++row) {
-                                const slot = rowRepeater.itemAt(row);
-                                const item = root.delegateProperty(slot, "item", null);
-                                if (item && item.visible && item.entryId === entryId)
-                                    return item;
-                            }
-                            return null;
-                        }
-
-                        width: parent.width
-                        spacing: 10
-                        onImplicitHeightChanged: root.rememberPageHeight(pageDelegate.stableId, implicitHeight)
-
-                        Repeater {
-                            id: rowRepeater
-
-                            model: pageDelegate.sourceRowCount
-
-                            delegate: Loader {
-                                id: rowLoader
-
-                                required property int index
-                                property int sourceRow: pageDelegate.firstSourceRow + index
-                                property int dataRevision: root.modelRevision
-
-                                function synchronizeItem() {
-                                    if (!item)
-                                        return;
-                                    item["sourceRow"] = sourceRow;
-                                    item["dataRevision"] = dataRevision;
-                                }
-
-                                width: pageContent.width
-                                visible: Boolean(root.delegateProperty(item, "presentationVisible", true))
-                                sourceComponent: root.rowDelegate
-                                onDataRevisionChanged: synchronizeItem()
-                                onLoaded: synchronizeItem()
-                                onSourceRowChanged: synchronizeItem()
-                            }
-                        }
-
-                        Item {
-                            width: 1
-                            height: pageDelegate.sourceRowCount > 0 ? 10 : 0
-                        }
-
-                        Component.onCompleted: Qt.callLater(() => root.rememberPageHeight(pageDelegate.stableId, implicitHeight))
-                    }
-                }
-            }
-
-            Item {
-                id: trailingPlaceholder
-
-                width: timelineColumn.width
-                height: root.activeLastPage >= 0 && root.activeLastPage < root.pageCount - 1 ? root.placeholderHeight(root.activeLastPage + 1, root.pageCount - 1) : 0
-
-                BusyIndicator {
-                    anchors {
-                        horizontalCenter: parent.horizontalCenter
-                        top: parent.top
-                        topMargin: 16
-                    }
-                    width: 18
-                    height: 18
-                    visible: parent.height > 0 && scrollViewport.contentY + scrollViewport.height >= parent.y - scrollViewport.height
-                    running: visible
-                }
-            }
+            root.anchorSettlementResumeFramesRemaining = Math.max(1, root.anchorSettlementQuietFrameCount);
+            root.anchorSettlementResumeScheduled = true;
+            root.scheduleViewportUpdate();
         }
     }
 
     Connections {
-        target: root.pageModel
+        target: root.timelineModel
         ignoreUnknownSignals: true
 
-        function onStatisticsChanged() {
-            root.synchronizePageWindow();
+        function onRevisionChanged() {
+            root.scheduleViewportUpdate(true);
         }
 
-        function onRevisionChanged() {
-            root.synchronizeActivePages();
+        function onStatisticsChanged() {
+            root.scheduleViewportUpdate(true);
         }
     }
 
-    Timer {
-        id: anchorRestoreTimer
-
-        interval: 16
-        repeat: true
+    FrameAnimation {
+        running: root.anchorRestoreRunning
         onTriggered: {
+            if (scrollViewport.moving) {
+                root.anchorRestoreRunning = false;
+                root.pendingAnchor = null;
+                return;
+            }
+            scrollViewport.forceLayout();
             ++root.pendingAnchorPasses;
-            root.restorePendingAnchor();
-            if (root.pendingAnchorPasses >= 12) {
-                stop();
+            const restored = root.restorePendingAnchor();
+            if (restored && root.pendingAnchorHeightRevision === root.rowHeightRevision)
+                ++root.pendingAnchorStablePasses;
+            else
+                root.pendingAnchorStablePasses = 0;
+            root.pendingAnchorHeightRevision = root.rowHeightRevision;
+            if (root.pendingAnchorStablePasses >= 3 || root.pendingAnchorPasses >= 30) {
+                root.anchorRestoreRunning = false;
                 root.lastVisibleAnchor = root.captureVisibleAnchor();
                 root.pendingAnchor = null;
             }
         }
     }
 
-    Timer {
-        id: overscanAdvanceCooldown
-
-        interval: 48
+    FrameAnimation {
+        running: root.anchorSettlementResumeScheduled
         onTriggered: {
-            if (root.lastScrollDirection !== 0)
-                root.prepareOverscan(root.lastScrollDirection);
+            if (root.anchorSettlementResumeFramesRemaining > 1) {
+                --root.anchorSettlementResumeFramesRemaining;
+                return;
+            }
+            root.anchorSettlementResumeFramesRemaining = 0;
+            root.anchorSettlementResumeScheduled = false;
+            root.anchorSettlementSuppressed = false;
+            root.lastVisibleAnchor = root.captureVisibleAnchor();
+            root.scheduleViewportUpdate();
         }
     }
 
-    Timer {
-        id: heightCompensationTimer
-
-        interval: 750
-        onTriggered: root.heightCompensationBeforePage = -1
+    onModelRowCountChanged: {
+        root.scheduleViewportUpdate(true);
     }
-
-    Timer {
-        id: windowCompactionTimer
-
-        interval: 250
-        onTriggered: root.compactWindow()
-    }
-
-    onPageCountChanged: root.synchronizePageWindow()
-    onModelRevisionChanged: root.synchronizeActivePages()
+    onContentMaterializationMarginChanged: root.scheduleViewportUpdate()
+    onMaximumConcurrentContentMaterializationsChanged: root.scheduleViewportUpdate()
     onContentColumnWidthChanged: {
         if (!root.completed)
             return;
         const anchor = root.captureVisibleAnchor() ?? root.lastVisibleAnchor;
-        root.clearPageHeights();
+        root.clearRowHeights();
         root.scheduleAnchorRestore(anchor);
     }
 
     Component.onCompleted: {
         root.completed = true;
-        root.resetWindowToLatest();
+        Qt.callLater(root.scrollToBottom);
     }
 }

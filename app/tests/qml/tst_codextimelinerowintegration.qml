@@ -38,22 +38,15 @@ Item {
     }
 
     QtObject {
-        id: fakePageModel
+        id: fakeTimelineModel
 
         property int revision: 0
         property var rows: []
-        readonly property int pageCount: rows.length > 0 ? 1 : 0
+        readonly property int totalRowCount: rows.length
 
-        function pageId(page) {
-            return page === 0 ? "page:turn-1" : "";
-        }
-
-        function pageFirstRow(page) {
-            return page === 0 ? 0 : -1;
-        }
-
-        function pageRowCount(page) {
-            return page === 0 ? rows.length : 0;
+        function entryIdAt(sourceRow) {
+            const row = rows[sourceRow];
+            return row ? row.entryId : "";
         }
 
         function valueAt(sourceRow, roleName) {
@@ -66,7 +59,7 @@ Item {
         id: rowComponent
 
         Pages.CodexTimelineRow {
-            timelineModel: fakePageModel
+            timelineModel: fakeTimelineModel
             turnExpanded: false
             hasRunningEvidence: suite.hasRunningEvidence
             activityShimmerEnabled: suite.activityShimmerEnabled
@@ -83,12 +76,12 @@ Item {
         Pages.CodexTimelineViewport {
             width: 680
             height: 360
-            pageModel: fakePageModel
+            timelineModel: fakeTimelineModel
             rowDelegate: rowComponent
             bottomContentInset: 0
             contentHorizontalInset: 20
             contentMaximumWidth: 640
-            estimatedPageHeight: 120
+            estimatedRowHeight: 120
         }
     }
 
@@ -116,11 +109,11 @@ Item {
 
         function createViewport(rows) {
             destroyViewport();
-            fakePageModel.rows = rows;
-            ++fakePageModel.revision;
+            fakeTimelineModel.rows = rows;
+            ++fakeTimelineModel.revision;
             suite.viewport = createTemporaryObject(viewportComponent, suite);
             verify(suite.viewport !== null);
-            tryVerify(() => suite.viewport.loadedPageCount === 1);
+            tryVerify(() => suite.viewport.activeRowSlotCount > 0);
             tryVerify(() => suite.viewport.delegateForEntry(rows[0].entryId) !== null);
             const row = suite.viewport.delegateForEntry(rows[0].entryId);
             tryVerify(() => row.implicitHeight > 0);
@@ -147,8 +140,8 @@ Item {
 
         function cleanup() {
             destroyViewport();
-            fakePageModel.rows = [];
-            ++fakePageModel.revision;
+            fakeTimelineModel.rows = [];
+            ++fakeTimelineModel.revision;
         }
 
         function test_hoverRevealsOlderAnswerWithoutChangingRowHeight() {
