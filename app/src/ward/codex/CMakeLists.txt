@@ -20,6 +20,8 @@ qt_add_qml_module(CraftwardCodex
         codextimelinemodel.h
         codextimelinepresentationmodel.cpp
         codextimelinepresentationmodel.h
+        codextimelineviewportmodel.cpp
+        codextimelineviewportmodel.h
 )
 
 qt_add_protobuf(CraftwardCodex
@@ -85,5 +87,27 @@ if(BUILD_TESTING)
     add_test(
         NAME CraftwardCodexTimelinePresentationModelTest
         COMMAND CraftwardCodexTimelinePresentationModelTest
+    )
+
+    qt_add_executable(CraftwardCodexTimelineViewportModelTest
+        codextimelineviewportmodel.cpp
+        codextimelineviewportmodel.h
+        tests/codextimelineviewportmodeltest.cpp
+    )
+    target_include_directories(CraftwardCodexTimelineViewportModelTest
+        PRIVATE
+            "${PROJECT_SOURCE_DIR}/src"
+    )
+    target_link_libraries(CraftwardCodexTimelineViewportModelTest
+        PRIVATE
+            CraftwardMarkup
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Test
+            "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
+    )
+    add_test(
+        NAME CraftwardCodexTimelineViewportModelTest
+        COMMAND CraftwardCodexTimelineViewportModelTest
     )
 endif()
