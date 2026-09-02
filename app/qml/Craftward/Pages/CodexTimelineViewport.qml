@@ -52,6 +52,8 @@ Control {
     readonly property real contentY: scrollViewport.contentY
     readonly property real scrollContentHeight: scrollViewport.contentHeight
     readonly property real viewportHeight: scrollViewport.height
+    readonly property real minimumContentY: scrollViewport.originY
+    readonly property real maximumContentY: Math.max(scrollViewport.originY, scrollViewport.originY + scrollViewport.contentHeight - scrollViewport.height)
     readonly property bool moving: scrollViewport.moving
 
     signal anchorPositionCorrected(real displacement)
@@ -348,6 +350,24 @@ Control {
                 return;
             root.lastVisibleAnchor = root.captureVisibleAnchor();
         });
+    }
+
+    function flickContentForBenchmark(verticalVelocity) {
+        scrollViewport.flick(0, -Number(verticalVelocity));
+    }
+
+    function cancelFlickForBenchmark() {
+        scrollViewport.cancelFlick();
+    }
+
+    function anchorOffsetForBenchmark(anchor) {
+        const row = root.rowForAnchor(anchor);
+        if (row < 0)
+            return Number.NaN;
+        const slot = scrollViewport.itemAtIndex(row);
+        if (!slot)
+            return Number.NaN;
+        return slot.mapToItem(scrollViewport.contentItem, 0, 0).y - scrollViewport.contentY;
     }
 
     function followLatest() {

@@ -12,6 +12,9 @@ ApplicationWindow {
 
     required property CodexHistoryController codexHistoryController
     property bool frameTimingOverlayEnabled: false
+    property bool timelineRenderBenchmarkEnabled: false
+    property string timelineRenderBenchmarkThreadId: ""
+    property string timelineRenderBenchmarkRenderer: "current"
 
     signal bringAllWindowsToFrontRequested
     signal closeWindowRequested
@@ -25,6 +28,13 @@ ApplicationWindow {
         window.show();
         window.raise();
         window.requestActivate();
+    }
+
+    function beginTimelineRenderBenchmark() {
+        if (!window.timelineRenderBenchmarkEnabled || window.timelineRenderBenchmarkThreadId.length === 0)
+            return;
+        historyPage.sidebarExpanded = false;
+        window.codexHistoryController.selectThread(window.timelineRenderBenchmarkThreadId, "");
     }
 
     width: 960
@@ -121,6 +131,9 @@ ApplicationWindow {
         anchors.fill: parent
         controller: window.codexHistoryController
         timelineMotionDiagnosticsEnabled: window.frameTimingOverlayEnabled
+        timelineRenderBenchmarkEnabled: window.timelineRenderBenchmarkEnabled
+        timelineRenderBenchmarkThreadId: window.timelineRenderBenchmarkThreadId
+        timelineRenderBenchmarkRenderer: window.timelineRenderBenchmarkRenderer
     }
 
     FrameTimingOverlay {
@@ -132,4 +145,6 @@ ApplicationWindow {
         active: window.frameTimingOverlayEnabled
         supplementalStatisticsText: historyPage.timelineMotionDiagnosticsText
     }
+
+    Component.onCompleted: Qt.callLater(window.beginTimelineRenderBenchmark)
 }

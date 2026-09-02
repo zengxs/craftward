@@ -16,6 +16,9 @@ Control {
     property real bottomContentInset: 64
     property double wallClockUnixMilliseconds: Date.now()
     property bool motionDiagnosticsEnabled: false
+    property bool timelineRenderBenchmarkEnabled: false
+    property string timelineRenderBenchmarkThreadId: ""
+    property string timelineRenderBenchmarkRenderer: "current"
     readonly property real contentColumnWidth: timelineViewport.contentColumnWidth
     readonly property bool activityShimmerEnabled: root.controller !== null && root.controller.hasRunningEvidence && !root.controller.waitingOnApproval && !root.controller.waitingOnUserInput
     readonly property string motionDiagnosticsText: motionDiagnostics.statisticsText
@@ -46,6 +49,24 @@ Control {
 
         targetViewport: timelineViewport
         active: root.motionDiagnosticsEnabled && root.visible
+    }
+
+    TimelineRenderBenchmark {
+        id: renderBenchmark
+
+        targetViewport: timelineViewport
+        targetWindow: root.Window.window
+        active: root.timelineRenderBenchmarkEnabled && root.visible
+        rendererName: root.timelineRenderBenchmarkRenderer
+        requestedThreadId: root.timelineRenderBenchmarkThreadId
+        selectedThreadId: root.controller ? root.controller.threadId : ""
+        conversationLoading: root.controller ? root.controller.loading : false
+        rowCount: presentationModel.totalRowCount
+        frameBudgetMilliseconds: timelineViewport.frameBudgetMilliseconds
+        onFinished: benchmarkResult => {
+            console.log("TIMELINE_RENDER_BENCHMARK " + JSON.stringify(benchmarkResult));
+            Qt.exit(benchmarkResult.passed ? 0 : 2);
+        }
     }
 
     contentItem: Item {

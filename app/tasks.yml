@@ -156,6 +156,28 @@ tasks:
     cmds:
       - ./{{.BUILD_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/{{.APP_NAME}}
 
+  benchmark:timeline-render:
+    label: "app:benchmark:timeline-render:{{.BUILD_TYPE}}"
+    desc: Benchmark timeline rendering against a persisted Codex conversation
+    vars:
+      BUILD_TYPE: '{{default "Release" .BUILD_TYPE}}'
+      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      RENDERER: '{{default "current" .RENDERER}}'
+    requires:
+      vars: [QT6_ROOT, THREAD_ID]
+    deps:
+      - task: build
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+          SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    env:
+      CRAFTWARD_FRAME_TIMING_OVERLAY: "0"
+      CRAFTWARD_TIMELINE_RENDER_BENCHMARK_RENDERER: "{{.RENDERER}}"
+      CRAFTWARD_TIMELINE_RENDER_BENCHMARK_THREAD: "{{.THREAD_ID}}"
+      QT_MESSAGE_PATTERN: "%{message}"
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/{{.APP_NAME}}
+
   deploy:
     label: "app:deploy:{{.BUILD_TYPE}}"
     desc: Deploy the application

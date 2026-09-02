@@ -17,6 +17,7 @@
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
 #include <QSettings>
+#include <QString>
 #include <QUrl>
 #include <QVariantMap>
 #include <QtQml/QQmlExtensionPlugin>
@@ -55,6 +56,19 @@ frameTimingOverlayEnabled()
     const QByteArray configured = qgetenv("CRAFTWARD_FRAME_TIMING_OVERLAY").trimmed().toLower();
     return configured == QByteArrayLiteral("1") || configured == QByteArrayLiteral("true") ||
            configured == QByteArrayLiteral("yes") || configured == QByteArrayLiteral("on");
+}
+
+QString
+timelineRenderBenchmarkThreadId()
+{
+    return QString::fromUtf8(qgetenv("CRAFTWARD_TIMELINE_RENDER_BENCHMARK_THREAD")).trimmed();
+}
+
+QString
+timelineRenderBenchmarkRenderer()
+{
+    const QString configured = QString::fromUtf8(qgetenv("CRAFTWARD_TIMELINE_RENDER_BENCHMARK_RENDERER")).trimmed();
+    return configured.isEmpty() ? QStringLiteral("current") : configured;
 }
 
 }
@@ -124,6 +138,10 @@ main(int argc, char* argv[])
     initialProperties.insert(QStringLiteral("buildNumber"), QStringLiteral(CRAFTWARD_BUILD_NUMBER));
     initialProperties.insert(QStringLiteral("commitHash"), QStringLiteral(CRAFTWARD_COMMIT_HASH));
     initialProperties.insert(QStringLiteral("frameTimingOverlayEnabled"), frameTimingOverlayEnabled());
+    const QString benchmarkThreadId = timelineRenderBenchmarkThreadId();
+    initialProperties.insert(QStringLiteral("timelineRenderBenchmarkEnabled"), !benchmarkThreadId.isEmpty());
+    initialProperties.insert(QStringLiteral("timelineRenderBenchmarkThreadId"), benchmarkThreadId);
+    initialProperties.insert(QStringLiteral("timelineRenderBenchmarkRenderer"), timelineRenderBenchmarkRenderer());
     initialProperties.insert(QStringLiteral("localizationController"),
                              QVariant::fromValue(static_cast<QObject*>(&localizationController)));
     initialProperties.insert(QStringLiteral("applicationController"),

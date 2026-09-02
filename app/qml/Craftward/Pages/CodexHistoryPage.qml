@@ -16,6 +16,9 @@ Page {
 
     required property CodexHistoryController controller
     property bool timelineMotionDiagnosticsEnabled: false
+    property bool timelineRenderBenchmarkEnabled: false
+    property string timelineRenderBenchmarkThreadId: ""
+    property string timelineRenderBenchmarkRenderer: "current"
     readonly property CodexConversationController conversation: root.controller.conversation
     readonly property string timelineMotionDiagnosticsText: timelineView.motionDiagnosticsText
     property alias sidebarExpanded: layoutState.sidebarExpanded
@@ -444,6 +447,9 @@ Page {
                         forkEnabled: historyActionState.canFork
                         showForkActions: root.conversation.threadId.length > 0 && !root.controller.showingArchived
                         motionDiagnosticsEnabled: root.timelineMotionDiagnosticsEnabled
+                        timelineRenderBenchmarkEnabled: root.timelineRenderBenchmarkEnabled
+                        timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
+                        timelineRenderBenchmarkRenderer: root.timelineRenderBenchmarkRenderer
                         onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
                     }
 

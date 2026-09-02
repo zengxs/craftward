@@ -30,6 +30,7 @@ qt_add_qml_module(CraftwardPages
         CodexTurnControlState.qml
         SettingsGeneralPage.qml
         TimelineMotionDiagnostics.qml
+        TimelineRenderBenchmark.qml
 )
 
 target_link_libraries(CraftwardPages
