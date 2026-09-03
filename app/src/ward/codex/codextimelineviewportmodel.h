@@ -7,7 +7,6 @@
 #include <QHash>
 #include <QMetaObject>
 #include <QPointer>
-#include <QSet>
 #include <QString>
 #include <QVector>
 #include <QtQmlIntegration/qqmlintegration.h>
@@ -68,15 +67,25 @@ class CodexTimelineViewportModel : public QAbstractListModel
         QString sourceEntryId;
     };
 
+    struct BlockModelSubscription
+    {
+        QList<int> sourceRows;
+        QVector<QMetaObject::Connection> connections;
+    };
+
     [[nodiscard]] int roleForName(const QByteArray& roleName) const;
     [[nodiscard]] QVariant sourceValue(const ViewportRow& row, int role) const;
     [[nodiscard]] QVariant blockValue(const ViewportRow& row, const QByteArray& roleName) const;
+    [[nodiscard]] bool sourceRolesAffectStructure(const QList<int>& roles) const;
     void forwardSourceDataChanged(const QModelIndex& topLeft, const QModelIndex& bottomRight, const QList<int>& roles);
+    void reconcileSourceRows(QList<int> sourceRows);
     void reconcileBlockModel(QAbstractItemModel* blockModel);
     void insertSourceRows(const QModelIndex& parent, int first, int last);
     void removeSourceRows(const QModelIndex& parent, int first, int last);
     [[nodiscard]] QList<ViewportRow> viewportRowsForSourceRow(int sourceRow);
     void connectBlockModel(QAbstractItemModel* blockModel, int sourceRow);
+    void disconnectBlockModelSourceRow(QAbstractItemModel* blockModel, int sourceRow);
+    void disconnectBlockModels();
     void reconnectBlockModels();
     void reconnectSourceRoles();
     void disconnectModels();
@@ -85,11 +94,11 @@ class CodexTimelineViewportModel : public QAbstractListModel
     QPointer<QAbstractItemModel> sourceModel_;
     QHash<QByteArray, int> sourceRolesByName_;
     QVector<QMetaObject::Connection> sourceConnections_;
-    QVector<QMetaObject::Connection> blockConnections_;
-    QSet<QAbstractItemModel*> connectedBlockModels_;
-    QHash<QAbstractItemModel*, QList<int>> blockSourceRows_;
+    QHash<QAbstractItemModel*, BlockModelSubscription> blockSubscriptions_;
     QList<ViewportRow> rows_;
     int entryIdRole_ = -1;
     int markupDocumentRole_ = -1;
+    int detailRowRole_ = -1;
+    int turnExpandedRole_ = -1;
     int revision_ = 0;
 };

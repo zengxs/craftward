@@ -12,6 +12,8 @@
 namespace {
 constexpr auto entryIdRoleName = "entryId";
 constexpr auto markupDocumentRoleName = "markupDocument";
+constexpr auto detailRowRoleName = "detailRow";
+constexpr auto turnExpandedRoleName = "turnExpanded";
 constexpr auto blockIdRoleName = "blockId";
 constexpr auto segmentIdRoleName = "segmentId";
 constexpr auto codeBlockRoleName = "codeBlock";
@@ -237,6 +239,24 @@ CodexTimelineViewportModel::blockValue(const ViewportRow& row, const QByteArray&
     return role < 0 ? QVariant{} : row.blockModel->data(row.blockModel->index(row.blockRow, 0), role);
 }
 
+bool
+CodexTimelineViewportModel::sourceRolesAffectStructure(const QList<int>& roles) const
+{
+    if (roles.isEmpty())
+        return true;
+    const int structuralRoles[] = {
+        entryIdRole_,
+        markupDocumentRole_,
+        detailRowRole_,
+        turnExpandedRole_,
+    };
+    for (int role : structuralRoles) {
+        if (role >= 0 && roles.contains(role))
+            return true;
+    }
+    return false;
+}
+
 void
 CodexTimelineViewportModel::forwardSourceDataChanged(const QModelIndex& topLeft,
                                                      const QModelIndex& bottomRight,
@@ -244,8 +264,14 @@ CodexTimelineViewportModel::forwardSourceDataChanged(const QModelIndex& topLeft,
 {
     if (!sourceModel_ || !topLeft.isValid() || !bottomRight.isValid())
         return;
-    if (roles.contains(entryIdRole_) || roles.contains(markupDocumentRole_)) {
-        rebuild();
+    if (sourceRolesAffectStructure(roles)) {
+        QList<int> sourceRows;
+        const int firstSourceRow = std::max(0, topLeft.row());
+        const int lastSourceRow = std::min(sourceModel_->rowCount() - 1, bottomRight.row());
+        sourceRows.reserve(std::max(0, lastSourceRow - firstSourceRow + 1));
+        for (int sourceRow = firstSourceRow; sourceRow <= lastSourceRow; ++sourceRow)
+            sourceRows.append(sourceRow);
+        reconcileSourceRows(std::move(sourceRows));
         return;
     }
 
@@ -267,16 +293,19 @@ CodexTimelineViewportModel::forwardSourceDataChanged(const QModelIndex& topLeft,
 }
 
 void
-CodexTimelineViewportModel::reconcileBlockModel(QAbstractItemModel* blockModel)
+CodexTimelineViewportModel::reconcileSourceRows(QList<int> sourceRows)
 {
-    if (!blockModel)
+    if (!sourceModel_ || sourceRows.isEmpty())
         return;
 
-    QList<int> sourceRows = blockSourceRows_.value(blockModel);
     std::sort(sourceRows.begin(), sourceRows.end(), std::greater<>());
+    sourceRows.erase(std::unique(sourceRows.begin(), sourceRows.end()), sourceRows.end());
     bool rowCountChanged = false;
-    const int blockIdRole = semanticIdRole(blockModel);
     for (int sourceRow : std::as_const(sourceRows)) {
+        if (sourceRow < 0 || sourceRow >= sourceModel_->rowCount()) {
+            rebuild();
+            return;
+        }
         const auto firstSourceRow =
           std::lower_bound(rows_.cbegin(), rows_.cend(), sourceRow, [](const ViewportRow& row, int candidateSourceRow) {
               return row.sourceRow < candidateSourceRow;
@@ -292,27 +321,15 @@ CodexTimelineViewportModel::reconcileBlockModel(QAbstractItemModel* blockModel)
 
         const int firstViewportRow = static_cast<int>(std::distance(rows_.cbegin(), firstSourceRow));
         const int oldRowCount = static_cast<int>(std::distance(firstSourceRow, firstNextSourceRow));
-        const QString sourceEntryId = rows_.at(firstViewportRow).sourceEntryId;
-        QList<ViewportRow> replacementRows;
-        if (blockModel->rowCount() == 0) {
-            replacementRows.append(ViewportRow{
-              .sourceRow = sourceRow,
-              .blockModel = blockModel,
-              .entryId = sourceEntryId,
-              .sourceEntryId = sourceEntryId,
-            });
-        } else {
-            replacementRows.reserve(blockModel->rowCount());
-            for (int blockRow = 0; blockRow < blockModel->rowCount(); ++blockRow) {
-                replacementRows.append(ViewportRow{
-                  .sourceRow = sourceRow,
-                  .blockModel = blockModel,
-                  .blockRow = blockRow,
-                  .entryId = viewportEntryId(sourceEntryId, blockModel, blockRow, blockIdRole),
-                  .sourceEntryId = sourceEntryId,
-                });
-            }
+        QAbstractItemModel* previousBlockModel = rows_.at(firstViewportRow).blockModel;
+        QList<ViewportRow> replacementRows = viewportRowsForSourceRow(sourceRow);
+        if (replacementRows.isEmpty()) {
+            rebuild();
+            return;
         }
+        QAbstractItemModel* replacementBlockModel = replacementRows.constFirst().blockModel;
+        if (previousBlockModel != replacementBlockModel)
+            disconnectBlockModelSourceRow(previousBlockModel, sourceRow);
 
         const int replacementRowCount = static_cast<int>(replacementRows.size());
         rowCountChanged = rowCountChanged || oldRowCount != replacementRowCount;
@@ -338,25 +355,21 @@ CodexTimelineViewportModel::reconcileBlockModel(QAbstractItemModel* blockModel)
             endInsertRows();
         }
         if (commonPrefix > 0) {
-            emit dataChanged(index(firstViewportRow),
-                             index(firstViewportRow + commonPrefix - 1),
-                             { SemanticBlockRole,
-                               BlockIdRole,
-                               BlockIndexRole,
-                               BlockCountRole,
-                               CodeBlockRole,
-                               BlockTextRole,
-                               PlainTextRole,
-                               LanguageRole,
-                               MarkdownRole,
-                               FirstBlockInEntryRole,
-                               LastBlockInEntryRole });
+            emit dataChanged(index(firstViewportRow), index(firstViewportRow + commonPrefix - 1));
         }
     }
     ++revision_;
     emit revisionChanged();
     if (rowCountChanged)
         emit statisticsChanged();
+}
+
+void
+CodexTimelineViewportModel::reconcileBlockModel(QAbstractItemModel* blockModel)
+{
+    const auto subscription = blockSubscriptions_.constFind(blockModel);
+    if (subscription != blockSubscriptions_.cend())
+        reconcileSourceRows(subscription->sourceRows);
 }
 
 void
@@ -449,7 +462,10 @@ CodexTimelineViewportModel::viewportRowsForSourceRow(int sourceRow)
     auto* blockModel = documentObject ? documentObject->property("renderModel").value<QAbstractItemModel*>() : nullptr;
     if (!blockModel)
         blockModel = qobject_cast<QAbstractItemModel*>(documentObject);
-    if (!blockModel || blockModel->rowCount() == 0) {
+    const bool collapsedDetail = blockModel && detailRowRole_ >= 0 && turnExpandedRole_ >= 0 &&
+                                 sourceModel_->data(sourceIndex, detailRowRole_).toBool() &&
+                                 !sourceModel_->data(sourceIndex, turnExpandedRole_).toBool();
+    if (!blockModel || blockModel->rowCount() == 0 || collapsedDetail) {
         if (blockModel)
             connectBlockModel(blockModel, sourceRow);
         return {
@@ -483,30 +499,55 @@ CodexTimelineViewportModel::connectBlockModel(QAbstractItemModel* blockModel, in
 {
     if (!blockModel)
         return;
-    QList<int>& sourceRows = blockSourceRows_[blockModel];
-    if (!sourceRows.contains(sourceRow))
-        sourceRows.append(sourceRow);
-    if (connectedBlockModels_.contains(blockModel))
+    BlockModelSubscription& subscription = blockSubscriptions_[blockModel];
+    if (!subscription.sourceRows.contains(sourceRow))
+        subscription.sourceRows.append(sourceRow);
+    if (!subscription.connections.isEmpty())
         return;
-    connectedBlockModels_.insert(blockModel);
+
     const auto reconcile = [this, blockModel] { reconcileBlockModel(blockModel); };
-    blockConnections_.append(connect(blockModel, &QAbstractItemModel::modelReset, this, reconcile));
-    blockConnections_.append(connect(blockModel, &QAbstractItemModel::rowsInserted, this, reconcile));
-    blockConnections_.append(connect(blockModel, &QAbstractItemModel::rowsRemoved, this, reconcile));
-    blockConnections_.append(connect(blockModel, &QAbstractItemModel::rowsMoved, this, reconcile));
-    blockConnections_.append(connect(blockModel, &QAbstractItemModel::layoutChanged, this, reconcile));
-    blockConnections_.append(connect(blockModel, &QAbstractItemModel::dataChanged, this, reconcile));
-    blockConnections_.append(connect(blockModel, &QObject::destroyed, this, &CodexTimelineViewportModel::rebuild));
+    subscription.connections.append(connect(blockModel, &QAbstractItemModel::modelReset, this, reconcile));
+    subscription.connections.append(connect(blockModel, &QAbstractItemModel::rowsInserted, this, reconcile));
+    subscription.connections.append(connect(blockModel, &QAbstractItemModel::rowsRemoved, this, reconcile));
+    subscription.connections.append(connect(blockModel, &QAbstractItemModel::rowsMoved, this, reconcile));
+    subscription.connections.append(connect(blockModel, &QAbstractItemModel::layoutChanged, this, reconcile));
+    subscription.connections.append(connect(blockModel, &QAbstractItemModel::dataChanged, this, reconcile));
+    subscription.connections.append(
+      connect(blockModel, &QObject::destroyed, this, &CodexTimelineViewportModel::rebuild));
+}
+
+void
+CodexTimelineViewportModel::disconnectBlockModelSourceRow(QAbstractItemModel* blockModel, int sourceRow)
+{
+    if (!blockModel)
+        return;
+
+    auto subscription = blockSubscriptions_.find(blockModel);
+    if (subscription == blockSubscriptions_.end())
+        return;
+    subscription->sourceRows.removeAll(sourceRow);
+    if (!subscription->sourceRows.isEmpty())
+        return;
+
+    for (const QMetaObject::Connection& connection : std::as_const(subscription->connections))
+        disconnect(connection);
+    blockSubscriptions_.erase(subscription);
+}
+
+void
+CodexTimelineViewportModel::disconnectBlockModels()
+{
+    for (const BlockModelSubscription& subscription : std::as_const(blockSubscriptions_)) {
+        for (const QMetaObject::Connection& connection : subscription.connections)
+            disconnect(connection);
+    }
+    blockSubscriptions_.clear();
 }
 
 void
 CodexTimelineViewportModel::reconnectBlockModels()
 {
-    for (const QMetaObject::Connection& connection : std::as_const(blockConnections_))
-        disconnect(connection);
-    blockConnections_.clear();
-    connectedBlockModels_.clear();
-    blockSourceRows_.clear();
+    disconnectBlockModels();
     for (const ViewportRow& row : std::as_const(rows_)) {
         if (row.blockModel)
             connectBlockModel(row.blockModel, row.sourceRow);
@@ -524,6 +565,8 @@ CodexTimelineViewportModel::reconnectSourceRoles()
     }
     entryIdRole_ = sourceRolesByName_.value(entryIdRoleName, -1);
     markupDocumentRole_ = sourceRolesByName_.value(markupDocumentRoleName, -1);
+    detailRowRole_ = sourceRolesByName_.value(detailRowRoleName, -1);
+    turnExpandedRole_ = sourceRolesByName_.value(turnExpandedRoleName, -1);
 }
 
 void
@@ -531,22 +574,14 @@ CodexTimelineViewportModel::disconnectModels()
 {
     for (const QMetaObject::Connection& connection : std::as_const(sourceConnections_))
         disconnect(connection);
-    for (const QMetaObject::Connection& connection : std::as_const(blockConnections_))
-        disconnect(connection);
     sourceConnections_.clear();
-    blockConnections_.clear();
-    connectedBlockModels_.clear();
-    blockSourceRows_.clear();
+    disconnectBlockModels();
 }
 
 void
 CodexTimelineViewportModel::rebuild()
 {
-    for (const QMetaObject::Connection& connection : std::as_const(blockConnections_))
-        disconnect(connection);
-    blockConnections_.clear();
-    connectedBlockModels_.clear();
-    blockSourceRows_.clear();
+    disconnectBlockModels();
 
     reconnectSourceRoles();
     QList<ViewportRow> rows;

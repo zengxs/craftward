@@ -5,6 +5,7 @@
 #include "ward/markup/markupdocumentmodel.h"
 
 #include <QAbstractItemModelTester>
+#include <QMetaMethod>
 #include <QSignalSpy>
 #include <QStandardItem>
 #include <QStandardItemModel>
@@ -19,6 +20,8 @@ enum SourceRole
     TurnIdRole,
     MarkupDocumentRole,
     ActivityLabelRole,
+    DetailRowRole,
+    TurnExpandedRole,
 };
 
 enum BlockRole
@@ -45,6 +48,8 @@ configureSourceRoles(QStandardItemModel& model)
       { TurnIdRole, "turnId" },
       { MarkupDocumentRole, "markupDocument" },
       { ActivityLabelRole, "activityLabel" },
+      { DetailRowRole, "detailRow" },
+      { TurnExpandedRole, "turnExpanded" },
     });
 }
 
@@ -127,6 +132,32 @@ class InspectableSourceModel : public QStandardItemModel
     mutable int dataReadCount_ = 0;
 };
 
+class ConnectionCountingBlockModel : public QStandardItemModel
+{
+  public:
+    using QStandardItemModel::QStandardItemModel;
+
+    [[nodiscard]] int connectionNotificationCount() const { return connectionNotificationCount_; }
+    [[nodiscard]] int disconnectionNotificationCount() const { return disconnectionNotificationCount_; }
+
+  protected:
+    void connectNotify(const QMetaMethod& signal) override
+    {
+        ++connectionNotificationCount_;
+        QStandardItemModel::connectNotify(signal);
+    }
+
+    void disconnectNotify(const QMetaMethod& signal) override
+    {
+        ++disconnectionNotificationCount_;
+        QStandardItemModel::disconnectNotify(signal);
+    }
+
+  private:
+    int connectionNotificationCount_ = 0;
+    int disconnectionNotificationCount_ = 0;
+};
+
 class ResettableRenderModel : public QAbstractListModel
 {
   public:
@@ -191,6 +222,9 @@ class CodexTimelineViewportModelTest : public QObject
 
   private slots:
     void expandsOneMessageIntoStableSemanticBlockRows();
+    void expandsAndCollapsesOneDetailWithoutResettingViewport();
+    void replacesOneDocumentWithoutReconnectingUnchangedBlockModels();
+    void retainsOneSharedBlockModelSubscriptionForRemainingRows();
     void usesDocumentRenderSegmentsAsViewportRows();
     void reconcilesOneRenderResetWithoutResettingViewport();
     void integratesOneRealMarkupDocumentWithoutResettingViewport();
@@ -236,6 +270,146 @@ CodexTimelineViewportModelTest::expandsOneMessageIntoStableSemanticBlockRows()
     QCOMPARE(model.valueAt(1, QStringLiteral("language")).toString(), QStringLiteral("cpp"));
     QVERIFY(model.valueAt(0, QStringLiteral("firstBlockInEntry")).toBool());
     QVERIFY(model.valueAt(2, QStringLiteral("lastBlockInEntry")).toBool());
+}
+
+void
+CodexTimelineViewportModelTest::expandsAndCollapsesOneDetailWithoutResettingViewport()
+{
+    QStandardItemModel document;
+    configureBlockRoles(document);
+    appendBlock(document, QStringLiteral("prose:0"), QStringLiteral("Before"));
+    appendBlock(document, QStringLiteral("code:8"), QStringLiteral("return 0;"), true, QStringLiteral("cpp"));
+    appendBlock(document, QStringLiteral("prose:24"), QStringLiteral("After"));
+
+    QStandardItemModel source;
+    configureSourceRoles(source);
+    auto* detail = new QStandardItem;
+    detail->setData(QStringLiteral("commentary:turn-1:item-1"), EntryIdRole);
+    detail->setData(QStringLiteral("turn-1"), TurnIdRole);
+    detail->setData(QVariant::fromValue(static_cast<QObject*>(&document)), MarkupDocumentRole);
+    detail->setData(true, DetailRowRole);
+    detail->setData(false, TurnExpandedRole);
+    source.appendRow(detail);
+
+    CodexTimelineViewportModel model;
+    model.setSourceModel(&source);
+    QAbstractItemModelTester modelTester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const QString stableEntryId = model.entryIdAt(0);
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy insertedSpy(&model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy removedSpy(&model, &QAbstractItemModel::rowsRemoved);
+
+    QCOMPARE(model.rowCount(), 1);
+    QVERIFY(!model.valueAt(0, QStringLiteral("semanticBlock")).toBool());
+
+    detail->setData(true, TurnExpandedRole);
+
+    QCOMPARE(resetSpy.size(), 0);
+    QCOMPARE(insertedSpy.size(), 1);
+    QCOMPARE(model.rowCount(), 3);
+    QCOMPARE(model.entryIdAt(0), stableEntryId);
+    QVERIFY(model.valueAt(0, QStringLiteral("semanticBlock")).toBool());
+    QVERIFY(model.valueAt(2, QStringLiteral("lastBlockInEntry")).toBool());
+
+    detail->setData(false, TurnExpandedRole);
+
+    QCOMPARE(resetSpy.size(), 0);
+    QCOMPARE(removedSpy.size(), 1);
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.entryIdAt(0), stableEntryId);
+    QVERIFY(!model.valueAt(0, QStringLiteral("semanticBlock")).toBool());
+}
+
+void
+CodexTimelineViewportModelTest::replacesOneDocumentWithoutReconnectingUnchangedBlockModels()
+{
+    ConnectionCountingBlockModel firstDocument;
+    configureBlockRoles(firstDocument);
+    appendBlock(firstDocument, QStringLiteral("prose:0"), QStringLiteral("First"));
+    ConnectionCountingBlockModel secondDocument;
+    configureBlockRoles(secondDocument);
+    appendBlock(secondDocument, QStringLiteral("prose:0"), QStringLiteral("Second"));
+    ConnectionCountingBlockModel replacementDocument;
+    configureBlockRoles(replacementDocument);
+    appendBlock(replacementDocument, QStringLiteral("prose:0"), QStringLiteral("Replacement"));
+
+    QStandardItemModel source;
+    configureSourceRoles(source);
+    auto* firstMessage = new QStandardItem;
+    firstMessage->setData(QStringLiteral("message:turn-1:answer"), EntryIdRole);
+    firstMessage->setData(QVariant::fromValue(static_cast<QObject*>(&firstDocument)), MarkupDocumentRole);
+    source.appendRow(firstMessage);
+    auto* secondMessage = new QStandardItem;
+    secondMessage->setData(QStringLiteral("message:turn-2:answer"), EntryIdRole);
+    secondMessage->setData(QVariant::fromValue(static_cast<QObject*>(&secondDocument)), MarkupDocumentRole);
+    source.appendRow(secondMessage);
+
+    CodexTimelineViewportModel model;
+    model.setSourceModel(&source);
+    const int retainedConnectionNotifications = firstDocument.connectionNotificationCount();
+    const int retainedDisconnectionNotifications = firstDocument.disconnectionNotificationCount();
+    const int replacedDisconnectionNotifications = secondDocument.disconnectionNotificationCount();
+
+    secondMessage->setData(QVariant::fromValue(static_cast<QObject*>(&replacementDocument)), MarkupDocumentRole);
+
+    QCOMPARE(model.valueAt(1, QStringLiteral("blockText")).toString(), QStringLiteral("Replacement"));
+    QCOMPARE(firstDocument.connectionNotificationCount(), retainedConnectionNotifications);
+    QCOMPARE(firstDocument.disconnectionNotificationCount(), retainedDisconnectionNotifications);
+    QVERIFY(secondDocument.disconnectionNotificationCount() > replacedDisconnectionNotifications);
+    QVERIFY(replacementDocument.connectionNotificationCount() > 0);
+
+    QSignalSpy changedSpy(&model, &QAbstractItemModel::dataChanged);
+    replacementDocument.item(0)->setData(QStringLiteral("Updated replacement"), BlockTextRole);
+
+    QCOMPARE(changedSpy.size(), 1);
+    QCOMPARE(model.valueAt(1, QStringLiteral("blockText")).toString(), QStringLiteral("Updated replacement"));
+
+    changedSpy.clear();
+    secondDocument.item(0)->setData(QStringLiteral("Detached document"), BlockTextRole);
+
+    QCOMPARE(changedSpy.size(), 0);
+}
+
+void
+CodexTimelineViewportModelTest::retainsOneSharedBlockModelSubscriptionForRemainingRows()
+{
+    ConnectionCountingBlockModel sharedDocument;
+    configureBlockRoles(sharedDocument);
+    appendBlock(sharedDocument, QStringLiteral("prose:0"), QStringLiteral("Shared"));
+    ConnectionCountingBlockModel replacementDocument;
+    configureBlockRoles(replacementDocument);
+    appendBlock(replacementDocument, QStringLiteral("prose:0"), QStringLiteral("Replacement"));
+
+    QStandardItemModel source;
+    configureSourceRoles(source);
+    auto* firstMessage = new QStandardItem;
+    firstMessage->setData(QStringLiteral("message:turn-1:answer"), EntryIdRole);
+    firstMessage->setData(QVariant::fromValue(static_cast<QObject*>(&sharedDocument)), MarkupDocumentRole);
+    source.appendRow(firstMessage);
+    auto* secondMessage = new QStandardItem;
+    secondMessage->setData(QStringLiteral("message:turn-2:answer"), EntryIdRole);
+    secondMessage->setData(QVariant::fromValue(static_cast<QObject*>(&sharedDocument)), MarkupDocumentRole);
+    source.appendRow(secondMessage);
+
+    CodexTimelineViewportModel model;
+    model.setSourceModel(&source);
+    const int retainedConnectionNotifications = sharedDocument.connectionNotificationCount();
+    const int retainedDisconnectionNotifications = sharedDocument.disconnectionNotificationCount();
+
+    secondMessage->setData(QVariant::fromValue(static_cast<QObject*>(&replacementDocument)), MarkupDocumentRole);
+
+    QCOMPARE(sharedDocument.connectionNotificationCount(), retainedConnectionNotifications);
+    QCOMPARE(sharedDocument.disconnectionNotificationCount(), retainedDisconnectionNotifications);
+
+    QSignalSpy changedSpy(&model, &QAbstractItemModel::dataChanged);
+    sharedDocument.item(0)->setData(QStringLiteral("Updated shared"), BlockTextRole);
+
+    QCOMPARE(changedSpy.size(), 1);
+    const QList<QVariant> arguments = changedSpy.takeFirst();
+    QCOMPARE(qvariant_cast<QModelIndex>(arguments.at(0)).row(), 0);
+    QCOMPARE(qvariant_cast<QModelIndex>(arguments.at(1)).row(), 0);
+    QCOMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("Updated shared"));
+    QCOMPARE(model.valueAt(1, QStringLiteral("blockText")).toString(), QStringLiteral("Replacement"));
 }
 
 void
