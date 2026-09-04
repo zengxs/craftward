@@ -1,33 +1,39 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import QtQml
+import QtQml.Models
 
-QtObject {
+ListModel {
     id: root
 
     property var sourceModel
     property var expandedTurns: ({})
     property int expansionRevision: 0
-    readonly property int revision: (sourceModel ? Number(sourceModel.revision) : 0) + expansionRevision
-    readonly property var visibleSourceRows: {
-        const currentRevision = revision;
-        const rows = [];
+    readonly property int sourceRevision: sourceModel ? Number(sourceModel.revision) : 0
+    readonly property int revision: sourceRevision + expansionRevision
+    readonly property int totalRowCount: count
+
+    function rebuild() {
+        clear();
+        if (!sourceModel)
+            return;
         const declaredCount = sourceModel && sourceModel["totalRowCount"] !== undefined ? Number(sourceModel["totalRowCount"]) : Number.NaN;
-        const count = Number.isFinite(declaredCount) ? declaredCount : (sourceModel && sourceModel.rows ? sourceModel.rows.length : 0);
-        for (let sourceRow = 0; sourceRow < count; ++sourceRow) {
+        const sourceRowCount = Number.isFinite(declaredCount) ? declaredCount : (sourceModel.rows ? sourceModel.rows.length : 0);
+        for (let sourceRow = 0; sourceRow < sourceRowCount; ++sourceRow) {
             const detail = Boolean(sourceModel.valueAt(sourceRow, "detailRow"));
             const firstDetail = Boolean(sourceModel.valueAt(sourceRow, "firstDetailInTurn"));
             const turnId = String(sourceModel.valueAt(sourceRow, "turnId") ?? "");
-            if (!detail || firstDetail || root.expandedTurns[turnId] === true)
-                rows.push(sourceRow);
+            if (!detail || firstDetail || root.expandedTurns[turnId] === true) {
+                append({
+                    entryId: String(sourceModel.valueAt(sourceRow, "entryId") ?? ""),
+                    sourceRow: sourceRow
+                });
+            }
         }
-        return currentRevision >= 0 ? rows : [];
     }
-    readonly property int totalRowCount: visibleSourceRows.length
 
     function sourceRowAt(row) {
-        return row >= 0 && row < visibleSourceRows.length ? visibleSourceRows[row] : -1;
+        return row >= 0 && row < count ? Number(get(row).sourceRow) : -1;
     }
 
     function valueAt(row, roleName) {
@@ -42,7 +48,7 @@ QtObject {
     }
 
     function entryIdAt(row) {
-        return String(valueAt(row, "entryId") ?? "");
+        return row >= 0 && row < count ? String(get(row).entryId) : "";
     }
 
     function indexOfEntryId(entryId) {
@@ -60,10 +66,15 @@ QtObject {
         next[key] = next[key] !== true;
         expandedTurns = next;
         ++expansionRevision;
+        rebuild();
     }
 
     function clearExpandedTurns() {
         expandedTurns = {};
         ++expansionRevision;
+        rebuild();
     }
+
+    onSourceModelChanged: rebuild()
+    onSourceRevisionChanged: rebuild()
 }

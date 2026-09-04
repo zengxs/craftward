@@ -583,8 +583,30 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline,
             firstChanged = index;
         lastChanged = index;
     }
-    if (firstChanged >= 0)
-        emit dataChanged(this->index(firstChanged), this->index(lastChanged));
+    if (firstChanged >= 0) {
+        emit dataChanged(this->index(firstChanged),
+                         this->index(lastChanged),
+                         { TurnIdRole,
+                           ForkBoundaryRole,
+                           TurnForkableRole,
+                           LatestTurnRole,
+                           ActivityGroupRole,
+                           StandaloneActivityRole,
+                           FromUserRole,
+                           CommentaryRole,
+                           FinalAnswerRole,
+                           TextRole,
+                           MarkupDocumentRole,
+                           ActivityLabelRole,
+                           ActivityCountRole,
+                           ActivityItemsRole,
+                           FailedRole,
+                           RunningRole,
+                           TurnStartedAtUnixSecondsRole,
+                           TurnCompletedAtUnixSecondsRole,
+                           TurnDurationMillisecondsRole,
+                           ActivityPresentationKindRole });
+    }
 
     if (rows.size() > rows_.size()) {
         const qsizetype first = rows_.size();

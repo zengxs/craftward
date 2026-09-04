@@ -14,11 +14,22 @@ Item {
     property bool tallRows: false
     readonly property var conversationRowGroups: [683, 614, 245, 166, 362, 123]
 
-    QtObject {
+    ListModel {
         id: fakeTimelineModel
 
         property int revision: 1
-        readonly property int totalRowCount: suite.conversationRowGroups.reduce((sum, rows) => sum + rows, 0)
+        readonly property int totalRowCount: count
+
+        function resetRows() {
+            clear();
+            const rowCount = suite.conversationRowGroups.reduce((sum, rows) => sum + rows, 0);
+            for (let row = 0; row < rowCount; ++row) {
+                append({
+                    entryId: "entry:" + row
+                });
+            }
+            ++revision;
+        }
 
         function entryIdAt(sourceRow) {
             return "entry:" + sourceRow;
@@ -58,6 +69,15 @@ Item {
             default:
                 return undefined;
             }
+        }
+
+        function indexOfEntryId(entryId) {
+            const prefix = "entry:";
+            const value = String(entryId);
+            if (!value.startsWith(prefix))
+                return -1;
+            const row = Number(value.slice(prefix.length));
+            return Number.isInteger(row) && row >= 0 && row < count ? row : -1;
         }
     }
 
@@ -122,10 +142,13 @@ Item {
                 suite.viewport.destroy();
             suite.viewport = null;
             suite.tallRows = false;
+            fakeTimelineModel.clear();
+            ++fakeTimelineModel.revision;
             wait(0);
         }
 
         function test_batchHeightSettlementStaysWithinFrameBudget() {
+            fakeTimelineModel.resetRows();
             suite.viewport = createTemporaryObject(resizingViewportComponent, suite);
             verify(suite.viewport !== null);
             tryVerify(() => suite.viewport.activeRowSlotCount > 10, 10000);
@@ -146,6 +169,7 @@ Item {
         }
 
         function test_smallScrollDoesNotMaterializeDistantRowsSynchronously() {
+            fakeTimelineModel.resetRows();
             suite.viewport = createTemporaryObject(viewportComponent, suite);
             verify(suite.viewport !== null);
             tryVerify(() => suite.viewport.activeRowSlotCount > 0, 10000);

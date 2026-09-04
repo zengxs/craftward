@@ -1,3 +1,5 @@
+set_source_files_properties(TimelineRenderMetrics.qml PROPERTIES QT_QML_INTERNAL_TYPE TRUE)
+
 qt_add_qml_module(CraftwardPages
     STATIC
     URI Craftward.Pages
@@ -31,6 +33,7 @@ qt_add_qml_module(CraftwardPages
         SettingsGeneralPage.qml
         TimelineMotionDiagnostics.qml
         TimelineRenderBenchmark.qml
+        TimelineRenderMetrics.qml
 )
 
 target_link_libraries(CraftwardPages

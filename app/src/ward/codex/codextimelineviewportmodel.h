@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "persistentstringroleindex.h"
+
 #include <QAbstractListModel>
 #include <QHash>
 #include <QMetaObject>
@@ -93,6 +95,7 @@ class CodexTimelineViewportModel : public QAbstractListModel
 
     QPointer<QAbstractItemModel> sourceModel_;
     QHash<QByteArray, int> sourceRolesByName_;
+    PersistentStringRoleIndex entryIndex_;
     QVector<QMetaObject::Connection> sourceConnections_;
     QHash<QAbstractItemModel*, BlockModelSubscription> blockSubscriptions_;
     QList<ViewportRow> rows_;

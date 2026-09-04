@@ -18,10 +18,13 @@ QtObject {
     property int readinessTimeoutMilliseconds: 30000
     property int readinessStabilityMilliseconds: 750
     property int phasePreparationMilliseconds: 300
-    property int legDurationMilliseconds: 550
+    property int legDurationMilliseconds: 2100
+    property int legCompletionTimeoutMilliseconds: 500
     property int legPauseMilliseconds: 120
     property int phaseSettlementMilliseconds: 500
-    property real flickContentVelocity: 7000
+    property real flickContentVelocity: 32000
+    property real flickDeceleration: 16000
+    property int stoppedTrajectoryFrameSampleCount: 3
     property real movementEpsilon: 0.1
     property int minimumScrollableViewportCount: 4
     property int minimumFrameSampleCount: 60
@@ -32,18 +35,33 @@ QtObject {
     property real maximumP99FrameBudgetRatio: 1.75
     property real maximumWorstFrameBudgetRatio: 3
     property real maximumAnchorExcursionPixels: 1
+    property real maximumReverseRowMotionPixels: 1
+    property real maximumTrajectoryRowGeometryDriftPixels: 1
+    property real maximumStoppedRowDriftPixels: 1
+    property int minimumTrajectoryRowMotionSampleCount: 6
+    property int minimumStoppedTrajectoryFrameSampleCount: 6
+    property int maximumMissingTrajectoryRowFrameCount: 0
     property int maximumWarmRowGeometryChangeCount: 0
+    property real minimumFlickTravelPixels: 24000
+    property real minimumObservedFlickVelocity: 30000
+    property int minimumFlickRowTravel: 100
     readonly property real displayRefreshRate: frameBudgetMilliseconds > 0 ? 1000 / frameBudgetMilliseconds : 0
     readonly property var phaseNames: ["cold", "warm-1", "warm-2"]
-    readonly property var legDirections: [-1, -1, 1, -1, -1, 1]
+    readonly property var legDirections: [-1, 1]
+    property int requiredLegMeasurementCount: legDirections.length
     property string state: "idle"
     property bool componentCompleted: false
     property bool resultEmitted: false
     property bool phaseActive: false
     property bool legActive: false
+    property bool legEndRequested: false
     property bool settlementSamplingActive: false
     property int phaseIndex: -1
     property int legIndex: 0
+    property int activeLegContentDirection: 0
+    property int legStartRow: -1
+    property real legStartContentY: Number.NaN
+    property real legMaximumObservedVelocity: 0
     property real benchmarkStartedAt: Number.NaN
     property real readinessStableSince: Number.NaN
     property real lastReadinessContentHeight: Number.NaN
@@ -52,22 +70,14 @@ QtObject {
     property real previousFrameTimestamp: Number.NaN
     property real previousContentY: Number.NaN
     property bool previousMoving: false
-    property var frameIntervals: []
-    property var motionSamples: []
-    property int anchorCorrectionCount: 0
-    property real maximumAnchorCorrectionPixels: 0
-    property int rowGeometryChangeCount: 0
-    property real maximumRowGeometryChangePixels: 0
-    property real maximumObservedAnchorExcursionPixels: 0
+    property real previousTrajectoryContentY: Number.NaN
+    property var previousTrajectoryVisibleRowOffsets: ({})
+    property var movementEndBaselineAnchor: null
+    property int stoppedTrajectoryFramesSampled: 0
     property var settlementReferenceAnchor: null
-    property var allFrameIntervals: []
-    property var allMotionSamples: []
-    property int allAnchorCorrectionCount: 0
-    property real allMaximumAnchorCorrectionPixels: 0
-    property int allRowGeometryChangeCount: 0
-    property real allMaximumRowGeometryChangePixels: 0
-    property real allMaximumObservedAnchorExcursionPixels: 0
     property var phaseResults: []
+    property var presentedWindowState: null
+    readonly property TimelineRenderMetrics metricAccumulator: TimelineRenderMetrics {}
 
     signal finished(var benchmarkResult)
 
@@ -77,13 +87,6 @@ QtObject {
             return 0;
         const scale = Math.pow(10, decimalPlaces);
         return Math.round(numericValue * scale) / scale;
-    }
-
-    function percentile(sortedValues, fraction) {
-        if (sortedValues.length === 0)
-            return 0;
-        const index = Math.max(0, Math.min(sortedValues.length - 1, Math.ceil(fraction * sortedValues.length) - 1));
-        return Number(sortedValues[index]);
     }
 
     function thresholdsSnapshot() {
@@ -96,40 +99,82 @@ QtObject {
             maximumP99FrameBudgetRatio: root.maximumP99FrameBudgetRatio,
             maximumWorstFrameBudgetRatio: root.maximumWorstFrameBudgetRatio,
             maximumAnchorExcursionPixels: root.maximumAnchorExcursionPixels,
-            maximumWarmRowGeometryChangeCount: root.maximumWarmRowGeometryChangeCount
+            maximumReverseRowMotionPixels: root.maximumReverseRowMotionPixels,
+            maximumTrajectoryRowGeometryDriftPixels: root.maximumTrajectoryRowGeometryDriftPixels,
+            maximumStoppedRowDriftPixels: root.maximumStoppedRowDriftPixels,
+            minimumTrajectoryRowMotionSampleCount: root.minimumTrajectoryRowMotionSampleCount,
+            minimumStoppedTrajectoryFrameSampleCount: root.minimumStoppedTrajectoryFrameSampleCount,
+            maximumMissingTrajectoryRowFrameCount: root.maximumMissingTrajectoryRowFrameCount,
+            maximumWarmRowGeometryChangeCount: root.maximumWarmRowGeometryChangeCount,
+            minimumFlickTravelPixels: root.minimumFlickTravelPixels,
+            minimumObservedFlickVelocity: root.minimumObservedFlickVelocity,
+            minimumFlickRowTravel: root.minimumFlickRowTravel,
+            requiredLegMeasurementCount: root.requiredLegMeasurementCount
         };
+    }
+
+    function clearTrajectorySampleState() {
+        root.previousTrajectoryContentY = Number.NaN;
+        root.previousTrajectoryVisibleRowOffsets = {};
+        root.movementEndBaselineAnchor = null;
+        root.stoppedTrajectoryFramesSampled = 0;
     }
 
     function clearLegSampleState() {
         root.previousFrameTimestamp = Number.NaN;
         root.previousContentY = Number.NaN;
         root.previousMoving = false;
+        root.activeLegContentDirection = 0;
+        root.legEndRequested = false;
+        root.legStartContentY = Number.NaN;
+        root.legMaximumObservedVelocity = 0;
+        root.clearTrajectorySampleState();
     }
 
     function resetPhaseMetrics() {
-        root.frameIntervals = [];
-        root.motionSamples = [];
-        root.anchorCorrectionCount = 0;
-        root.maximumAnchorCorrectionPixels = 0;
-        root.rowGeometryChangeCount = 0;
-        root.maximumRowGeometryChangePixels = 0;
-        root.maximumObservedAnchorExcursionPixels = 0;
+        root.metricAccumulator.resetPhase();
         root.clearLegSampleState();
     }
 
     function resetAllMetrics() {
-        root.resetPhaseMetrics();
-        root.allFrameIntervals = [];
-        root.allMotionSamples = [];
-        root.allAnchorCorrectionCount = 0;
-        root.allMaximumAnchorCorrectionPixels = 0;
-        root.allRowGeometryChangeCount = 0;
-        root.allMaximumRowGeometryChangePixels = 0;
-        root.allMaximumObservedAnchorExcursionPixels = 0;
+        root.metricAccumulator.resetAll();
+        root.clearLegSampleState();
         root.phaseResults = [];
     }
 
-    function recordPresentedFrameAt(timestampMilliseconds, contentY, moving) {
+    function requestPresentedWindow() {
+        const targetWindow = root.targetWindow;
+        if (root.presentedWindowState && root.presentedWindowState.window !== targetWindow)
+            root.restorePresentedWindow();
+        const windowFlags = targetWindow ? Number(targetWindow.flags) : Number.NaN;
+        if (Number.isFinite(windowFlags)) {
+            if (!root.presentedWindowState)
+                root.presentedWindowState = {
+                    window: targetWindow,
+                    flags: windowFlags
+                };
+            if (!(windowFlags & Qt.WindowStaysOnTopHint))
+                targetWindow.flags = windowFlags | Qt.WindowStaysOnTopHint;
+        }
+        const requestActivation = targetWindow ? targetWindow.requestActivate : null;
+        if (typeof requestActivation === "function")
+            requestActivation.call(targetWindow);
+    }
+
+    function restorePresentedWindow() {
+        const presentedWindowState = root.presentedWindowState;
+        root.presentedWindowState = null;
+        if (presentedWindowState && presentedWindowState.window)
+            presentedWindowState.window.flags = presentedWindowState.flags;
+    }
+
+    function requestPresentedFrame() {
+        const updateWindow = root.targetWindow ? root.targetWindow.update : null;
+        if (typeof updateWindow === "function")
+            updateWindow.call(root.targetWindow);
+    }
+
+    function recordPresentedFrameAt(timestampMilliseconds, contentY, moving, verticalVelocity = Number.NaN) {
         if (!root.legActive)
             return;
         const timestamp = Number(timestampMilliseconds);
@@ -138,18 +183,18 @@ QtObject {
         if (!Number.isFinite(timestamp) || !Number.isFinite(position))
             return;
 
+        root.metricAccumulator.recordPosition(position);
+        const observedVelocity = Math.abs(Number(verticalVelocity));
+        if (Number.isFinite(observedVelocity)) {
+            root.metricAccumulator.recordVelocity(observedVelocity);
+            root.legMaximumObservedVelocity = Math.max(root.legMaximumObservedVelocity, observedVelocity);
+        }
+
         if (Number.isFinite(root.previousFrameTimestamp) && Number.isFinite(root.previousContentY) && root.previousMoving) {
             const interval = timestamp - root.previousFrameTimestamp;
             if (interval > 0) {
                 const updated = Math.abs(position - root.previousContentY) >= root.movementEpsilon;
-                const sample = {
-                    interval: interval,
-                    updated: updated
-                };
-                root.frameIntervals.push(interval);
-                root.motionSamples.push(sample);
-                root.allFrameIntervals.push(interval);
-                root.allMotionSamples.push(sample);
+                root.metricAccumulator.recordFrame(interval, updated);
             }
         }
 
@@ -158,16 +203,32 @@ QtObject {
         root.previousMoving = isMoving;
     }
 
+    function visibleAnchorRow() {
+        const anchor = root.targetViewport ? root.targetViewport.captureVisibleAnchor() : null;
+        const row = anchor ? Number(anchor.row) : -1;
+        return Number.isInteger(row) && row >= 0 ? row : -1;
+    }
+
+    function recordLegMeasurement(endRow) {
+        const resolvedEndRow = Number(endRow);
+        const finalContentY = Number(root.targetViewport ? root.targetViewport.contentY : Number.NaN);
+        const travel = Number.isFinite(root.legStartContentY) && Number.isFinite(finalContentY) ? Math.abs(finalContentY - root.legStartContentY) : 0;
+        const peakVelocity = Number.isFinite(root.legMaximumObservedVelocity) ? root.legMaximumObservedVelocity : 0;
+        const rows = root.legStartRow >= 0 && Number.isInteger(resolvedEndRow) && resolvedEndRow >= 0 ? Math.abs(resolvedEndRow - root.legStartRow) : 0;
+        root.recordLegResult(travel, peakVelocity, rows);
+    }
+
+    function recordLegResult(travelPixels, peakVelocity, rowTravel) {
+        root.metricAccumulator.recordLeg(travelPixels, peakVelocity, rowTravel);
+    }
+
     function recordAnchorCorrection(displacement) {
         if (!root.phaseActive)
             return;
         const absoluteDisplacement = Math.abs(Number(displacement));
         if (!Number.isFinite(absoluteDisplacement) || absoluteDisplacement < root.movementEpsilon)
             return;
-        ++root.anchorCorrectionCount;
-        ++root.allAnchorCorrectionCount;
-        root.maximumAnchorCorrectionPixels = Math.max(root.maximumAnchorCorrectionPixels, absoluteDisplacement);
-        root.allMaximumAnchorCorrectionPixels = Math.max(root.allMaximumAnchorCorrectionPixels, absoluteDisplacement);
+        root.metricAccumulator.recordAnchorCorrection(absoluteDisplacement);
     }
 
     function recordRowGeometryChange(heightDelta) {
@@ -176,10 +237,7 @@ QtObject {
         const absoluteDelta = Math.abs(Number(heightDelta));
         if (!Number.isFinite(absoluteDelta) || absoluteDelta < root.movementEpsilon)
             return;
-        ++root.rowGeometryChangeCount;
-        ++root.allRowGeometryChangeCount;
-        root.maximumRowGeometryChangePixels = Math.max(root.maximumRowGeometryChangePixels, absoluteDelta);
-        root.allMaximumRowGeometryChangePixels = Math.max(root.allMaximumRowGeometryChangePixels, absoluteDelta);
+        root.metricAccumulator.recordRowGeometryChange(absoluteDelta);
     }
 
     function recordAnchorExcursion(excursion) {
@@ -188,8 +246,253 @@ QtObject {
         const absoluteExcursion = Math.abs(Number(excursion));
         if (!Number.isFinite(absoluteExcursion))
             return;
-        root.maximumObservedAnchorExcursionPixels = Math.max(root.maximumObservedAnchorExcursionPixels, absoluteExcursion);
-        root.allMaximumObservedAnchorExcursionPixels = Math.max(root.allMaximumObservedAnchorExcursionPixels, absoluteExcursion);
+        root.metricAccumulator.recordAnchorExcursion(absoluteExcursion);
+    }
+
+    function recordTrajectoryRowMotion(sample) {
+        const entryId = String(sample.entryId);
+        const row = Number(sample.row);
+        const previousOffset = Number(sample.previousOffset);
+        const currentOffset = Number(sample.currentOffset);
+        const previousContentY = Number(sample.previousContentY);
+        const currentContentY = Number(sample.currentContentY);
+        const moving = Boolean(sample.moving);
+        const velocity = Number(sample.velocity);
+        const rowState = sample.rowState ?? null;
+        const offsetDelta = Number(currentOffset) - Number(previousOffset);
+        const direction = Math.sign(Number(root.activeLegContentDirection));
+        const reverseMotion = direction !== 0 && Math.abs(offsetDelta) >= root.movementEpsilon && direction * offsetDelta > 0 ? Math.abs(offsetDelta) : 0;
+        const previousRowContentY = Number(previousOffset) + Number(previousContentY);
+        const currentRowContentY = Number(currentOffset) + Number(currentContentY);
+        const trajectoryGeometryDrift = Boolean(sample.trackContentCoordinate) && Number.isFinite(previousRowContentY) && Number.isFinite(currentRowContentY) ? Math.abs(currentRowContentY - previousRowContentY) : 0;
+        const stoppedDrift = Boolean(sample.trackStoppedOffset) && Number.isFinite(previousOffset) && Number.isFinite(currentOffset) ? Math.abs(offsetDelta) : 0;
+        let trajectoryMotionEvent = null;
+        if (reverseMotion > root.maximumReverseRowMotionPixels || trajectoryGeometryDrift > root.maximumTrajectoryRowGeometryDriftPixels || stoppedDrift > root.maximumStoppedRowDriftPixels) {
+            trajectoryMotionEvent = {
+                phase: root.phaseIndex >= 0 && root.phaseIndex < root.phaseNames.length ? root.phaseNames[root.phaseIndex] : "",
+                kind: String(sample.kind ?? "trajectory-motion"),
+                entryId: String(entryId),
+                row: Number(row),
+                contentY: root.rounded(root.targetViewport.contentY),
+                contentDelta: root.rounded(Number(currentContentY) - Number(previousContentY)),
+                previousOffset: root.rounded(previousOffset),
+                offset: root.rounded(currentOffset),
+                offsetDelta: root.rounded(offsetDelta),
+                trajectoryGeometryDrift: root.rounded(trajectoryGeometryDrift),
+                stoppedDrift: root.rounded(stoppedDrift),
+                moving: Boolean(moving),
+                velocity: root.rounded(velocity),
+                rowHeightRevision: Number(root.targetViewport.rowHeightRevision ?? -1),
+                rowHeight: root.rounded(rowState ? rowState.height : 0),
+                pendingMeasuredHeight: root.rounded(rowState ? rowState.pendingMeasuredHeight : 0)
+            };
+        }
+        root.metricAccumulator.recordTrajectoryMotion(reverseMotion, trajectoryGeometryDrift, stoppedDrift, trajectoryMotionEvent);
+    }
+
+    function recordTrajectoryTrackingGap(reason, moving, velocity, entryId = "", row = -1) {
+        const trackingGapEvent = {
+            phase: root.phaseIndex >= 0 && root.phaseIndex < root.phaseNames.length ? root.phaseNames[root.phaseIndex] : "",
+            kind: "tracking-gap",
+            reason: String(reason),
+            entryId: String(entryId),
+            row: Number(row),
+            contentY: root.rounded(root.targetViewport.contentY),
+            moving: Boolean(moving),
+            velocity: root.rounded(velocity),
+            rowHeightRevision: Number(root.targetViewport.rowHeightRevision ?? -1)
+        };
+        root.metricAccumulator.recordTrackingGap(trackingGapEvent);
+    }
+
+    function sampleTrajectoryRowMotion(presentedFrame = false) {
+        if (!root.legActive || !root.targetViewport)
+            return;
+        const moving = Boolean(root.targetViewport.moving);
+        const velocity = Math.abs(Number(root.targetViewport.verticalVelocity));
+        if (!moving) {
+            if (!presentedFrame || root.stoppedTrajectoryFramesSampled >= root.stoppedTrajectoryFrameSampleCount)
+                return;
+            root.metricAccumulator.recordTrajectoryCoverage({
+                stoppedFrameSamples: 1
+            });
+            if (root.stoppedTrajectoryFramesSampled === 0) {
+                const movementEndedAnchorMethod = root.targetViewport.movementEndedAnchorForBenchmark;
+                const movementEndedAnchor = typeof movementEndedAnchorMethod === "function" ? movementEndedAnchorMethod.call(root.targetViewport) : null;
+                const entryId = movementEndedAnchor ? String(movementEndedAnchor.entryId) : "";
+                const lastPresentedOffset = Number(root.previousTrajectoryVisibleRowOffsets[entryId]);
+                const lastPresentedContentY = Number(root.previousTrajectoryContentY);
+                const movementEndedOffset = movementEndedAnchor ? Number(movementEndedAnchor.offset) : Number.NaN;
+                const movementEndedContentY = movementEndedAnchor ? Number(movementEndedAnchor.contentY) : Number.NaN;
+                if (movementEndedAnchor && Number.isFinite(lastPresentedOffset) && Number.isFinite(lastPresentedContentY) && Number.isFinite(movementEndedOffset) && Number.isFinite(movementEndedContentY)) {
+                    root.metricAccumulator.recordTrajectoryCoverage({
+                        rowMotionSamples: 1
+                    });
+                    root.recordTrajectoryRowMotion({
+                        kind: "movement-boundary",
+                        entryId: entryId,
+                        row: movementEndedAnchor.row,
+                        previousOffset: lastPresentedOffset,
+                        currentOffset: movementEndedOffset,
+                        previousContentY: lastPresentedContentY,
+                        currentContentY: movementEndedContentY,
+                        moving: false,
+                        velocity: velocity,
+                        trackContentCoordinate: true
+                    });
+                } else {
+                    root.metricAccumulator.recordTrajectoryCoverage({
+                        missingRowFrames: 1
+                    });
+                    root.recordTrajectoryTrackingGap("movement-end anchor did not survive from the last moving frame", false, velocity, entryId, movementEndedAnchor ? movementEndedAnchor.row : -1);
+                }
+
+                const comparisonAnchor = movementEndedAnchor;
+                const expectedOffset = comparisonAnchor ? Number(comparisonAnchor.offset) : Number.NaN;
+                const previousContentY = comparisonAnchor ? Number(comparisonAnchor.contentY) : Number.NaN;
+                const currentOffset = comparisonAnchor ? Number(root.targetViewport.anchorOffsetForBenchmark(comparisonAnchor)) : Number.NaN;
+                if (comparisonAnchor && Number.isFinite(expectedOffset) && Number.isFinite(previousContentY) && Number.isFinite(currentOffset)) {
+                    root.metricAccumulator.recordTrajectoryCoverage({
+                        rowMotionSamples: 1
+                    });
+                    root.recordTrajectoryRowMotion({
+                        kind: "stopped-transaction",
+                        entryId: entryId,
+                        row: comparisonAnchor.row,
+                        previousOffset: expectedOffset,
+                        currentOffset: currentOffset,
+                        previousContentY: previousContentY,
+                        currentContentY: root.targetViewport.contentY,
+                        moving: false,
+                        velocity: velocity,
+                        trackStoppedOffset: true
+                    });
+                    root.movementEndBaselineAnchor = {
+                        entryId: entryId,
+                        row: Number(comparisonAnchor.row),
+                        offset: expectedOffset,
+                        contentY: previousContentY
+                    };
+                } else {
+                    root.metricAccumulator.recordTrajectoryCoverage({
+                        missingRowFrames: 1
+                    });
+                    root.recordTrajectoryTrackingGap("movement-end anchor unavailable", false, velocity, entryId, comparisonAnchor ? comparisonAnchor.row : -1);
+                }
+            } else {
+                const transactionAnchor = root.movementEndBaselineAnchor;
+                const entryId = transactionAnchor ? String(transactionAnchor.entryId) : "";
+                const expectedOffset = transactionAnchor ? Number(transactionAnchor.offset) : Number.NaN;
+                const expectedContentY = transactionAnchor ? Number(transactionAnchor.contentY) : Number.NaN;
+                const currentOffset = transactionAnchor ? Number(root.targetViewport.anchorOffsetForBenchmark(transactionAnchor)) : Number.NaN;
+                if (transactionAnchor && Number.isFinite(expectedOffset) && Number.isFinite(expectedContentY) && Number.isFinite(currentOffset)) {
+                    root.metricAccumulator.recordTrajectoryCoverage({
+                        rowMotionSamples: 1
+                    });
+                    root.recordTrajectoryRowMotion({
+                        kind: "stopped-transaction",
+                        entryId: entryId,
+                        row: transactionAnchor.row,
+                        previousOffset: expectedOffset,
+                        currentOffset: currentOffset,
+                        previousContentY: expectedContentY,
+                        currentContentY: root.targetViewport.contentY,
+                        moving: false,
+                        velocity: velocity,
+                        trackStoppedOffset: true
+                    });
+                } else {
+                    root.metricAccumulator.recordTrajectoryCoverage({
+                        missingRowFrames: 1
+                    });
+                    root.recordTrajectoryTrackingGap("stopped transaction anchor unavailable", false, velocity, entryId, transactionAnchor ? transactionAnchor.row : -1);
+                }
+            }
+            ++root.stoppedTrajectoryFramesSampled;
+            if (root.stoppedTrajectoryFramesSampled >= root.stoppedTrajectoryFrameSampleCount) {
+                root.movementEndBaselineAnchor = null;
+            }
+            return;
+        }
+        const trajectoryRowsMethod = root.targetViewport.trajectoryRowOffsetsForBenchmark;
+        const visibleRowsMethod = root.targetViewport.visibleRowOffsetsForBenchmark;
+        let visibleRows = typeof trajectoryRowsMethod === "function" ? trajectoryRowsMethod.call(root.targetViewport) : [];
+        if ((!Array.isArray(visibleRows) || visibleRows.length === 0) && typeof visibleRowsMethod === "function")
+            visibleRows = visibleRowsMethod.call(root.targetViewport);
+        if (!Array.isArray(visibleRows) || visibleRows.length === 0) {
+            const anchor = root.targetViewport.captureVisibleAnchor();
+            const offset = anchor ? Number(root.targetViewport.anchorOffsetForBenchmark(anchor)) : Number.NaN;
+            visibleRows = anchor && Number.isFinite(offset) ? [
+                {
+                    entryId: String(anchor.entryId),
+                    row: Number(anchor.row),
+                    offset: offset
+                }
+            ] : [];
+        }
+        if (visibleRows.length === 0) {
+            root.metricAccumulator.recordTrajectoryCoverage({
+                missingRowFrames: 1
+            });
+            root.recordTrajectoryTrackingGap("no trajectory rows", true, velocity);
+            root.previousTrajectoryVisibleRowOffsets = {};
+            root.previousTrajectoryContentY = Number.NaN;
+            return;
+        }
+        const currentOffsets = {};
+        const currentRows = {};
+        for (const visibleRow of visibleRows) {
+            const entryId = String(visibleRow.entryId ?? "");
+            const offset = Number(visibleRow.offset);
+            if (entryId.length > 0 && Number.isFinite(offset)) {
+                currentOffsets[entryId] = offset;
+                currentRows[entryId] = visibleRow;
+            }
+        }
+        const currentEntryIds = Object.keys(currentOffsets);
+        if (currentEntryIds.length === 0) {
+            root.metricAccumulator.recordTrajectoryCoverage({
+                missingRowFrames: 1
+            });
+            root.recordTrajectoryTrackingGap("no valid trajectory rows", true, velocity);
+            root.previousTrajectoryVisibleRowOffsets = {};
+            root.previousTrajectoryContentY = Number.NaN;
+            return;
+        }
+        const previousOffsets = root.previousTrajectoryVisibleRowOffsets;
+        if (Object.keys(previousOffsets).length > 0 && Number.isFinite(root.previousTrajectoryContentY)) {
+            let commonRowCount = 0;
+            for (const entryId of currentEntryIds) {
+                const previousOffset = Number(previousOffsets[entryId]);
+                if (!Number.isFinite(previousOffset))
+                    continue;
+                ++commonRowCount;
+                root.recordTrajectoryRowMotion({
+                    entryId: entryId,
+                    row: currentRows[entryId].row,
+                    previousOffset: previousOffset,
+                    currentOffset: currentOffsets[entryId],
+                    previousContentY: root.previousTrajectoryContentY,
+                    currentContentY: root.targetViewport.contentY,
+                    moving: true,
+                    velocity: velocity,
+                    rowState: currentRows[entryId],
+                    trackContentCoordinate: true
+                });
+            }
+            if (commonRowCount === 0) {
+                root.metricAccumulator.recordTrajectoryCoverage({
+                    missingRowFrames: 1
+                });
+                root.recordTrajectoryTrackingGap("no row survived between frames", true, velocity);
+            } else {
+                root.metricAccumulator.recordTrajectoryCoverage({
+                    rowMotionSamples: 1
+                });
+            }
+        }
+        root.previousTrajectoryVisibleRowOffsets = currentOffsets;
+        root.previousTrajectoryContentY = Number(root.targetViewport.contentY);
     }
 
     function beginSettlementSampling() {
@@ -222,71 +525,12 @@ QtObject {
         root.settlementReferenceAnchor = null;
     }
 
-    function metricsFor(intervals, samples, correctionCount, maximumCorrection, geometryChangeCount, maximumGeometryChange, maximumAnchorExcursion) {
-        const sortedIntervals = intervals.slice().sort((left, right) => left - right);
-        let totalMilliseconds = 0;
-        let lateFrameCount = 0;
-        let severeFrameCount = 0;
-        let missedVsyncCount = 0;
-        for (const intervalValue of intervals) {
-            const interval = Number(intervalValue);
-            totalMilliseconds += interval;
-            if (interval > root.frameBudgetMilliseconds)
-                ++lateFrameCount;
-            if (interval > root.frameBudgetMilliseconds * 2)
-                ++severeFrameCount;
-            if (root.frameBudgetMilliseconds > 0)
-                missedVsyncCount += Math.max(0, Math.round(interval / root.frameBudgetMilliseconds) - 1);
-        }
-
-        let updateCount = 0;
-        let currentFrozenStreak = 0;
-        let longestFrozenStreak = 0;
-        for (const sample of samples) {
-            if (sample.updated) {
-                ++updateCount;
-                currentFrozenStreak = 0;
-            } else {
-                ++currentFrozenStreak;
-                longestFrozenStreak = Math.max(longestFrozenStreak, currentFrozenStreak);
-            }
-        }
-
-        const p95FrameMilliseconds = root.percentile(sortedIntervals, 0.95);
-        const p99FrameMilliseconds = root.percentile(sortedIntervals, 0.99);
-        const worstFrameMilliseconds = sortedIntervals.length > 0 ? sortedIntervals[sortedIntervals.length - 1] : 0;
-        return {
-            frameSampleCount: intervals.length,
-            motionSampleCount: samples.length,
-            motionUpdateCount: updateCount,
-            frozenMotionFrameCount: samples.length - updateCount,
-            longestFrozenMotionStreak: longestFrozenStreak,
-            motionUpdateRatio: root.rounded(samples.length > 0 ? updateCount / samples.length : 0),
-            presentedFramesPerSecond: root.rounded(totalMilliseconds > 0 ? 1000 * intervals.length / totalMilliseconds : 0),
-            motionFramesPerSecond: root.rounded(totalMilliseconds > 0 ? 1000 * updateCount / totalMilliseconds : 0),
-            p95FrameMilliseconds: root.rounded(p95FrameMilliseconds),
-            p99FrameMilliseconds: root.rounded(p99FrameMilliseconds),
-            worstFrameMilliseconds: root.rounded(worstFrameMilliseconds),
-            p95FrameBudgetRatio: root.rounded(root.frameBudgetMilliseconds > 0 ? p95FrameMilliseconds / root.frameBudgetMilliseconds : 0),
-            p99FrameBudgetRatio: root.rounded(root.frameBudgetMilliseconds > 0 ? p99FrameMilliseconds / root.frameBudgetMilliseconds : 0),
-            worstFrameBudgetRatio: root.rounded(root.frameBudgetMilliseconds > 0 ? worstFrameMilliseconds / root.frameBudgetMilliseconds : 0),
-            lateFrameCount: lateFrameCount,
-            severeFrameCount: severeFrameCount,
-            missedVsyncCount: missedVsyncCount,
-            anchorCorrectionCount: correctionCount,
-            maximumAnchorCorrectionPixels: root.rounded(maximumCorrection),
-            maximumAnchorExcursionPixels: root.rounded(maximumAnchorExcursion),
-            rowGeometryChangeCount: geometryChangeCount,
-            maximumRowGeometryChangePixels: root.rounded(maximumGeometryChange)
-        };
-    }
-
     function currentPhaseMetrics() {
-        return root.metricsFor(root.frameIntervals, root.motionSamples, root.anchorCorrectionCount, root.maximumAnchorCorrectionPixels, root.rowGeometryChangeCount, root.maximumRowGeometryChangePixels, root.maximumObservedAnchorExcursionPixels);
+        return root.metricAccumulator.phaseSnapshot(root.frameBudgetMilliseconds);
     }
 
     function allMetrics() {
-        return root.metricsFor(root.allFrameIntervals, root.allMotionSamples, root.allAnchorCorrectionCount, root.allMaximumAnchorCorrectionPixels, root.allRowGeometryChangeCount, root.allMaximumRowGeometryChangePixels, root.allMaximumObservedAnchorExcursionPixels);
+        return root.metricAccumulator.aggregateSnapshot(root.frameBudgetMilliseconds);
     }
 
     function evaluateMetrics(metrics, phaseName = "") {
@@ -307,8 +551,28 @@ QtObject {
             failures.push("worst frame time above threshold");
         if (metrics.maximumAnchorExcursionPixels > root.maximumAnchorExcursionPixels)
             failures.push("post-scroll anchor excursion above threshold");
+        if (metrics.maximumReverseRowMotionPixels > root.maximumReverseRowMotionPixels)
+            failures.push("reverse row motion during flick trajectory");
+        if (metrics.maximumTrajectoryRowGeometryDriftPixels > root.maximumTrajectoryRowGeometryDriftPixels)
+            failures.push("row geometry drifted during flick trajectory");
+        if (metrics.maximumStoppedRowDriftPixels > root.maximumStoppedRowDriftPixels)
+            failures.push("row drifted after flick stopped");
+        if (metrics.trajectoryRowMotionSampleCount < root.minimumTrajectoryRowMotionSampleCount)
+            failures.push("insufficient flick-trajectory row-motion samples");
+        if (metrics.stoppedTrajectoryFrameSampleCount < root.minimumStoppedTrajectoryFrameSampleCount)
+            failures.push("insufficient stopped-frame row-motion samples");
+        if (metrics.missingTrajectoryRowFrameCount > root.maximumMissingTrajectoryRowFrameCount)
+            failures.push("tracked flick-trajectory row was unavailable");
         if (String(phaseName).startsWith("warm-") && metrics.rowGeometryChangeCount > root.maximumWarmRowGeometryChangeCount)
             failures.push("warm trajectory changed row geometry");
+        if (metrics.minimumLegTravelPixels < root.minimumFlickTravelPixels)
+            failures.push("flick travel below threshold");
+        if (metrics.minimumLegPeakVelocity < root.minimumObservedFlickVelocity)
+            failures.push("flick velocity below threshold");
+        if (metrics.minimumLegRowTravel < root.minimumFlickRowTravel)
+            failures.push("flick row travel below threshold");
+        if (metrics.legMeasurementCount !== root.requiredLegMeasurementCount)
+            failures.push("incomplete flick leg measurements");
         return failures;
     }
 
@@ -327,6 +591,7 @@ QtObject {
         readinessTimer.stop();
         phasePreparationTimer.stop();
         legTimer.stop();
+        legCompletionTimer.stop();
         legPauseTimer.stop();
         phaseSettlementTimer.stop();
     }
@@ -340,6 +605,7 @@ QtObject {
         root.phaseActive = false;
         root.state = "finished";
         root.resultEmitted = true;
+        root.restorePresentedWindow();
         root.finished(benchmarkResult);
     }
 
@@ -361,6 +627,7 @@ QtObject {
 
     function beginBenchmark() {
         root.stopTimers();
+        root.requestPresentedWindow();
         root.resultEmitted = false;
         root.phaseActive = false;
         root.legActive = false;
@@ -437,12 +704,8 @@ QtObject {
         root.endSettlementSampling();
         root.targetViewport.cancelFlickForBenchmark();
         root.targetViewport.followLiveTail = false;
-        if (root.phaseIndex === 0) {
-            root.targetViewport.positionAtContentY(root.targetViewport.maximumContentY);
-            root.phaseStartContentY = root.targetViewport.contentY;
-        } else {
-            root.targetViewport.positionAtContentY(Math.min(root.phaseStartContentY, root.targetViewport.maximumContentY));
-        }
+        root.targetViewport.positionAtContentY(root.targetViewport.maximumContentY);
+        root.phaseStartContentY = root.targetViewport.contentY;
         phasePreparationTimer.restart();
     }
 
@@ -462,16 +725,49 @@ QtObject {
         }
         root.endSettlementSampling();
         root.clearLegSampleState();
+        root.activeLegContentDirection = Math.sign(Number(root.legDirections[root.legIndex]));
         root.legActive = true;
-        root.targetViewport.flickContentForBenchmark(root.legDirections[root.legIndex] * root.flickContentVelocity);
+        root.legStartRow = root.visibleAnchorRow();
+        root.legStartContentY = Number(root.targetViewport.contentY);
+        root.legMaximumObservedVelocity = 0;
+        root.requestPresentedWindow();
+        root.targetViewport.flickContentForBenchmark(root.legDirections[root.legIndex] * root.flickContentVelocity, root.flickDeceleration);
         legTimer.restart();
+    }
+
+    function requestEndCurrentLeg() {
+        if (!root.legActive)
+            return;
+        root.legEndRequested = true;
+        root.targetViewport.cancelFlickForBenchmark();
+        if (root.stoppedTrajectoryFramesSampled >= root.stoppedTrajectoryFrameSampleCount) {
+            root.endCurrentLeg();
+            return;
+        }
+        root.requestPresentedFrame();
+        legCompletionTimer.restart();
+    }
+
+    function recordCurrentPresentedFrame() {
+        if (!root.legActive)
+            return;
+        root.recordPresentedFrameAt(Date.now(), root.targetViewport.contentY, root.targetViewport.moving, root.targetViewport.verticalVelocity);
+        root.sampleTrajectoryRowMotion(true);
+        if (!root.legEndRequested)
+            return;
+        if (root.stoppedTrajectoryFramesSampled >= root.stoppedTrajectoryFrameSampleCount)
+            root.endCurrentLeg();
+        else
+            root.requestPresentedFrame();
     }
 
     function endCurrentLeg() {
         if (!root.legActive)
             return;
-        root.recordPresentedFrameAt(Date.now(), root.targetViewport.contentY, root.targetViewport.moving);
+        legTimer.stop();
+        legCompletionTimer.stop();
         root.targetViewport.cancelFlickForBenchmark();
+        root.recordLegMeasurement(root.visibleAnchorRow());
         root.legActive = false;
         root.clearLegSampleState();
         root.beginSettlementSampling();
@@ -516,7 +812,10 @@ QtObject {
                 phaseNames: root.phaseNames,
                 legDirections: root.legDirections,
                 flickContentVelocity: root.flickContentVelocity,
+                flickDeceleration: root.flickDeceleration,
+                stoppedTrajectoryFrameSampleCount: root.stoppedTrajectoryFrameSampleCount,
                 legDurationMilliseconds: root.legDurationMilliseconds,
+                legCompletionTimeoutMilliseconds: root.legCompletionTimeoutMilliseconds,
                 legPauseMilliseconds: root.legPauseMilliseconds,
                 phaseSettlementMilliseconds: root.phaseSettlementMilliseconds
             },
@@ -541,6 +840,11 @@ QtObject {
 
     property Timer legTimer: Timer {
         interval: root.legDurationMilliseconds
+        onTriggered: root.requestEndCurrentLeg()
+    }
+
+    property Timer legCompletionTimer: Timer {
+        interval: root.legCompletionTimeoutMilliseconds
         onTriggered: root.endCurrentLeg()
     }
 
@@ -561,7 +865,7 @@ QtObject {
 
         function onFrameSwapped() {
             if (root.legActive)
-                root.recordPresentedFrameAt(Date.now(), root.targetViewport.contentY, root.targetViewport.moving);
+                root.recordCurrentPresentedFrame();
             if (root.settlementSamplingActive)
                 root.sampleSettlementAnchor();
         }
@@ -591,6 +895,7 @@ QtObject {
             root.legActive = false;
             root.endSettlementSampling();
             root.phaseActive = false;
+            root.restorePresentedWindow();
             root.state = "idle";
         }
     }
@@ -600,4 +905,5 @@ QtObject {
         if (root.active)
             root.beginBenchmark();
     }
+    Component.onDestruction: root.restorePresentedWindow()
 }

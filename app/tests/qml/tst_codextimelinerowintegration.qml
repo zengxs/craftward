@@ -37,12 +37,23 @@ Item {
         property var renderModel: messageSegments
     }
 
-    QtObject {
+    ListModel {
         id: fakeTimelineModel
 
         property int revision: 0
         property var rows: []
-        readonly property int totalRowCount: rows.length
+        readonly property int totalRowCount: count
+
+        function resetRows(nextRows) {
+            rows = nextRows;
+            clear();
+            for (const row of nextRows) {
+                append({
+                    entryId: String(row.entryId)
+                });
+            }
+            ++revision;
+        }
 
         function entryIdAt(sourceRow) {
             const row = rows[sourceRow];
@@ -52,6 +63,15 @@ Item {
         function valueAt(sourceRow, roleName) {
             const row = rows[sourceRow];
             return row ? row[roleName] : undefined;
+        }
+
+        function indexOfEntryId(entryId) {
+            const target = String(entryId);
+            for (let row = 0; row < count; ++row) {
+                if (entryIdAt(row) === target)
+                    return row;
+            }
+            return -1;
         }
     }
 
@@ -109,8 +129,7 @@ Item {
 
         function createViewport(rows) {
             destroyViewport();
-            fakeTimelineModel.rows = rows;
-            ++fakeTimelineModel.revision;
+            fakeTimelineModel.resetRows(rows);
             suite.viewport = createTemporaryObject(viewportComponent, suite);
             verify(suite.viewport !== null);
             tryVerify(() => suite.viewport.activeRowSlotCount > 0);
@@ -140,8 +159,7 @@ Item {
 
         function cleanup() {
             destroyViewport();
-            fakeTimelineModel.rows = [];
-            ++fakeTimelineModel.revision;
+            fakeTimelineModel.resetRows([]);
         }
 
         function test_hoverRevealsOlderAnswerWithoutChangingRowHeight() {

@@ -68,6 +68,23 @@ viewportEntryId(const QString& sourceEntryId, const QAbstractItemModel* blockMod
 CodexTimelineViewportModel::CodexTimelineViewportModel(QObject* parent)
   : QAbstractListModel(parent)
 {
+    connect(this, &QAbstractItemModel::modelAboutToBeReset, this, [this] { entryIndex_.clear(); });
+    connect(this, &QAbstractItemModel::modelReset, this, [this] { entryIndex_.reset(this, entryIdRole_); });
+    connect(
+      this, &QAbstractItemModel::rowsAboutToBeRemoved, this, [this](const QModelIndex& parent, int first, int last) {
+          if (parent.isValid()) {
+              entryIndex_.rebuild();
+              return;
+          }
+          entryIndex_.forgetRows(first, last);
+      });
+    connect(this, &QAbstractItemModel::rowsInserted, this, [this](const QModelIndex& parent, int first, int last) {
+        if (parent.isValid()) {
+            entryIndex_.rebuild();
+            return;
+        }
+        entryIndex_.rememberRows(first, last);
+    });
 }
 
 QAbstractItemModel*
@@ -208,11 +225,8 @@ CodexTimelineViewportModel::entryIdAt(int row) const
 int
 CodexTimelineViewportModel::indexOfEntryId(const QString& entryId) const
 {
-    for (int row = 0; row < rows_.size(); ++row) {
-        if (rows_.at(row).entryId == entryId)
-            return row;
-    }
-    return -1;
+    const QPersistentModelIndex entry = entryIndex_.find(entryId);
+    return entry.isValid() ? entry.row() : -1;
 }
 
 int

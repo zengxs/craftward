@@ -14,6 +14,7 @@ qt_add_qml_module(CraftwardCodex
         codexinteractionmodel.h
         codexmodelcatalogmodel.cpp
         codexmodelcatalogmodel.h
+        persistentstringroleindex.h
         codexthreadmodel.cpp
         codexthreadmodel.h
         codextimelinemodel.cpp
@@ -87,6 +88,32 @@ if(BUILD_TESTING)
     add_test(
         NAME CraftwardCodexTimelinePresentationModelTest
         COMMAND CraftwardCodexTimelinePresentationModelTest
+    )
+
+    qt_add_executable(CraftwardCodexTimelineViewportIntegrationTest
+        codextimelinepresentationmodel.cpp
+        codextimelinepresentationmodel.h
+        tests/codextimelineviewportintegrationtest.cpp
+    )
+    target_compile_definitions(CraftwardCodexTimelineViewportIntegrationTest
+        PRIVATE
+            CRAFTWARD_TEST_QML_IMPORT_PATH="${PROJECT_SOURCE_DIR}/tests/qml/imports"
+            CRAFTWARD_TIMELINE_VIEWPORT_HARNESS="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/timelineviewportintegration.qml"
+    )
+    target_include_directories(CraftwardCodexTimelineViewportIntegrationTest
+        PRIVATE
+            "${PROJECT_SOURCE_DIR}/src"
+    )
+    target_link_libraries(CraftwardCodexTimelineViewportIntegrationTest
+        PRIVATE
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Quick
+            Qt6::Test
+    )
+    add_test(
+        NAME CraftwardCodexTimelineViewportIntegrationTest
+        COMMAND CraftwardCodexTimelineViewportIntegrationTest
     )
 
     qt_add_executable(CraftwardCodexTimelineViewportModelTest

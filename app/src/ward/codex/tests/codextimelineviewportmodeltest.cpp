@@ -573,6 +573,8 @@ CodexTimelineViewportModelTest::insertsOneCompletedBlockWithoutResettingStableRo
     QCOMPARE(model.entryIdAt(0), stablePrefixId);
     QCOMPARE(model.entryIdAt(1), stableTailId);
     QCOMPARE(model.entryIdAt(2), QStringLiteral("message:turn-1:answer/markup/code:32"));
+    QCOMPARE(model.indexOfEntryId(stableTailId), 1);
+    QCOMPARE(model.indexOfEntryId(QStringLiteral("message:turn-1:answer/markup/code:32")), 2);
     QVERIFY(model.valueAt(2, QStringLiteral("lastBlockInEntry")).toBool());
 }
 
@@ -634,6 +636,8 @@ CodexTimelineViewportModelTest::appendsOneSourceMessageWithoutResettingExistingR
     QCOMPARE(model.entryIdAt(0), stableActivityId);
     QCOMPARE(model.entryIdAt(1), QStringLiteral("message:turn-2:answer"));
     QCOMPARE(model.entryIdAt(2), QStringLiteral("message:turn-2:answer/markup/code:8"));
+    QCOMPARE(model.indexOfEntryId(stableActivityId), 0);
+    QCOMPARE(model.indexOfEntryId(QStringLiteral("message:turn-2:answer/markup/code:8")), 2);
 }
 
 void
@@ -699,6 +703,7 @@ CodexTimelineViewportModelTest::removesOneTrailingBlockWithoutResettingStableRow
     QCOMPARE(model.rowCount(), 2);
     QCOMPARE(model.entryIdAt(0), stablePrefixId);
     QCOMPARE(model.entryIdAt(1), stableCodeId);
+    QCOMPARE(model.indexOfEntryId(stableCodeId), 1);
     QVERIFY(model.valueAt(1, QStringLiteral("lastBlockInEntry")).toBool());
 }
 
@@ -740,6 +745,7 @@ CodexTimelineViewportModelTest::removesOneSourceMessageWithoutResettingOtherRows
     QCOMPARE(model.rowCount(), 2);
     QCOMPARE(model.entryIdAt(0), stableFirstId);
     QCOMPARE(model.entryIdAt(1), stableLastId);
+    QCOMPARE(model.indexOfEntryId(stableLastId), 1);
     QCOMPARE(model.valueAt(1, QStringLiteral("turnId")).toString(), QStringLiteral("turn-3"));
 }
 

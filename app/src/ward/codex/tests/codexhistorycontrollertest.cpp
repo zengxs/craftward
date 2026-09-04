@@ -506,6 +506,7 @@ CodexHistoryControllerTest::adaptsMessageFormatsAndPreservesMarkupModelsAcrossSt
     QVERIFY(userDocument->data(userDocument->index(0), MarkupDocumentModel::MarkdownRole).toBool());
     QTRY_COMPARE(agentDocument->rowCount(), 3);
     QVERIFY(agentDocument->data(agentDocument->index(1), MarkupDocumentModel::CodeBlockRole).toBool());
+    QSignalSpy timelineDataSpy(timeline, &QAbstractItemModel::dataChanged);
 
     const QString updatedMarkdown = markdownPrefix + QStringLiteral("After more");
     controller.applyHistoryEvent(conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED,
@@ -523,6 +524,10 @@ CodexHistoryControllerTest::adaptsMessageFormatsAndPreservesMarkupModelsAcrossSt
                                                    }),
                                  {});
 
+    QVERIFY(!timelineDataSpy.isEmpty());
+    const QList<int> changedRoles = qvariant_cast<QList<int>>(timelineDataSpy.constLast().at(2));
+    QVERIFY(!changedRoles.isEmpty());
+    QVERIFY(!changedRoles.contains(CodexTimelineModel::EntryIdRole));
     auto* updatedAgentDocument = qobject_cast<MarkupDocumentModel*>(
       timeline->data(timeline->index(1), CodexTimelineModel::MarkupDocumentRole).value<QObject*>());
     QCOMPARE(updatedAgentDocument, agentDocument);

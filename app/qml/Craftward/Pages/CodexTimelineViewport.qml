@@ -26,6 +26,7 @@ Control {
     property int activeContentMaterializationCount: 0
     property bool followLiveTail: true
     property var lastVisibleAnchor: null
+    property var lastMovementEndedAnchor: null
     property var pendingAnchor: null
     property int pendingAnchorPasses: 0
     property int pendingAnchorStablePasses: 0
@@ -38,14 +39,14 @@ Control {
     property bool anchorSettlementResumeScheduled: false
     property int anchorSettlementResumeFramesRemaining: 0
     property int anchorSettlementQuietFrameCount: 3
-    property real pendingAnchorContentYAdjustment: 0
-    property bool anchorContentYAdjustmentScheduled: false
+    property var deferredRowMeasurements: ({})
+    property int deferredRowMeasurementCount: 0
     property bool completed: false
     property int activeRowSlotCount: 0
     property var activeRowSlots: []
     property bool viewportUpdateScheduled: false
     property bool liveTailUpdatePending: false
-    readonly property int modelRowCount: timelineModel ? Math.max(0, Number(timelineModel.totalRowCount)) : 0
+    readonly property int modelRowCount: scrollViewport.count
     readonly property int modelRevision: timelineModel ? Number(timelineModel.revision) : 0
     readonly property real contentColumnWidth: Math.max(0, Math.min(availableWidth - contentHorizontalInset * 2, contentMaximumWidth))
     readonly property real frameBudgetMilliseconds: FrameTiming.budgetMilliseconds(root.Window.window)
@@ -55,6 +56,7 @@ Control {
     readonly property real minimumContentY: scrollViewport.originY
     readonly property real maximumContentY: Math.max(scrollViewport.originY, scrollViewport.originY + scrollViewport.contentHeight - scrollViewport.height)
     readonly property bool moving: scrollViewport.moving
+    readonly property real verticalVelocity: scrollViewport.verticalVelocity
 
     signal anchorPositionCorrected(real displacement)
     signal rowGeometryChanged(int sourceRow, real heightDelta)
@@ -77,14 +79,7 @@ Control {
 
     function indexOfEntryId(entryId) {
         const method = root.modelMethod("indexOfEntryId");
-        if (typeof method === "function")
-            return Number(method.call(root.timelineModel, entryId));
-        const target = String(entryId);
-        for (let row = 0; row < root.modelRowCount; ++row) {
-            if (root.entryIdAt(row) === target)
-                return row;
-        }
-        return -1;
+        return typeof method === "function" ? Number(method.call(root.timelineModel, entryId)) : -1;
     }
 
     function rowForAnchor(anchor) {
@@ -119,6 +114,123 @@ Control {
     function clearRowHeights() {
         root.rowHeights = {};
         ++root.rowHeightRevision;
+    }
+
+    function deferRowMeasurement(entryId, heightCacheKey, sourceRow, previousHeight, measuredHeight) {
+        const key = String(entryId);
+        if (!key)
+            return;
+        const existing = root.deferredRowMeasurements[key];
+        if (!existing)
+            ++root.deferredRowMeasurementCount;
+        root.deferredRowMeasurements[key] = {
+            entryId: key,
+            heightCacheKey: String(heightCacheKey),
+            sourceRow: Number(sourceRow),
+            previousHeight: existing ? Number(existing.previousHeight) : Number(previousHeight),
+            measuredHeight: Number(measuredHeight)
+        };
+    }
+
+    function discardDeferredRowMeasurement(entryId) {
+        const key = String(entryId);
+        if (!key || !root.deferredRowMeasurements[key])
+            return;
+        delete root.deferredRowMeasurements[key];
+        root.deferredRowMeasurementCount = Math.max(0, root.deferredRowMeasurementCount - 1);
+    }
+
+    function clearDeferredRowMeasurements() {
+        root.deferredRowMeasurements = {};
+        root.deferredRowMeasurementCount = 0;
+    }
+
+    function restoreInstantiatedAnchor(anchor, forceLayout = false) {
+        if (!anchor)
+            return Number.NaN;
+        root.adjustingAnchor = true;
+        if (forceLayout)
+            scrollViewport.forceLayout();
+        const row = root.rowForAnchor(anchor);
+        const slot = row >= 0 ? scrollViewport.itemAtIndex(row) : null;
+        if (!slot || !Number.isFinite(Number(anchor.offset))) {
+            root.adjustingAnchor = false;
+            return Number.NaN;
+        }
+        const previousContentY = scrollViewport.contentY;
+        const anchorTop = slot.mapToItem(scrollViewport.contentItem, 0, 0).y;
+        const targetContentY = Math.max(root.minimumContentY, Math.min(root.maximumContentY, anchorTop - Number(anchor.offset)));
+        if (Math.abs(targetContentY - previousContentY) >= 0.5)
+            scrollViewport.contentY = targetContentY;
+        const displacement = scrollViewport.contentY - previousContentY;
+        root.adjustingAnchor = false;
+        if (Math.abs(displacement) >= 0.5)
+            root.anchorPositionCorrected(displacement);
+        return displacement;
+    }
+
+    function restoreAnchorAfterLayout(anchor) {
+        let displacement = root.restoreInstantiatedAnchor(anchor, true);
+        if (Number.isFinite(displacement))
+            return displacement;
+        const row = root.rowForAnchor(anchor);
+        if (row < 0)
+            return 0;
+        root.adjustingAnchor = true;
+        scrollViewport.positionViewAtIndex(row, ListView.Beginning);
+        scrollViewport.forceLayout();
+        root.adjustingAnchor = false;
+        displacement = root.restoreInstantiatedAnchor(anchor);
+        return Number.isFinite(displacement) ? displacement : 0;
+    }
+
+    function flushDeferredRowMeasurements(anchorBeforeFlush = null) {
+        const measurements = root.deferredRowMeasurements;
+        root.clearDeferredRowMeasurements();
+        const activeMeasurements = [];
+        const selectedEntryIds = {};
+        for (const slot of root.activeRowSlots) {
+            if (!slot || slot.pooled || slot.loadedEntryId !== slot.entryId)
+                continue;
+            const entryId = String(slot.entryId);
+            const measurement = measurements[entryId];
+            if (!measurement || selectedEntryIds[entryId])
+                continue;
+            selectedEntryIds[entryId] = true;
+            activeMeasurements.push(measurement);
+        }
+        if (activeMeasurements.length === 0)
+            return;
+        const anchor = anchorBeforeFlush ?? root.captureVisibleAnchor();
+        const previousCurrentIndex = scrollViewport.currentIndex;
+        const anchorRow = root.rowForAnchor(anchor);
+        if (anchorRow >= 0)
+            scrollViewport.currentIndex = anchorRow;
+        let rowHeightCacheChanged = false;
+        for (const measurement of activeMeasurements) {
+            const heightCacheKey = String(measurement.heightCacheKey);
+            const measuredHeight = Math.ceil(Number(measurement.measuredHeight));
+            if (heightCacheKey && Number.isFinite(measuredHeight) && measuredHeight > 0 && root.rowHeights[heightCacheKey] !== measuredHeight) {
+                root.rowHeights[heightCacheKey] = measuredHeight;
+                rowHeightCacheChanged = true;
+            }
+            const delta = Number(measurement.measuredHeight) - Number(measurement.previousHeight);
+            if (Number.isFinite(delta) && Math.abs(delta) >= 0.5) {
+                const currentRow = root.indexOfEntryId(measurement.entryId);
+                root.rowGeometryChanged(currentRow >= 0 ? currentRow : Number(measurement.sourceRow), delta);
+            }
+        }
+        if (rowHeightCacheChanged)
+            ++root.rowHeightRevision;
+        for (const slot of root.activeRowSlots) {
+            if (!slot || slot.pooled)
+                continue;
+            const measurement = selectedEntryIds[String(slot.entryId)] ? measurements[String(slot.entryId)] : null;
+            if (measurement && slot.loadedEntryId === slot.entryId)
+                slot.applyDeferredMeasuredHeight(measurement.measuredHeight);
+        }
+        root.restoreAnchorAfterLayout(anchor);
+        scrollViewport.currentIndex = previousCurrentIndex;
     }
 
     function registerRowSlot(slot) {
@@ -201,42 +313,23 @@ Control {
         root.activeContentMaterializationCount = allowedCount;
     }
 
-    function settleAnchorAfterRowHeightChange(sourceRow, previousHeight, currentHeight) {
+    function settleAnchorAfterRowHeightChange(sourceRow, previousHeight, currentHeight, anchorBeforeChange = null) {
         const delta = Number(currentHeight) - Number(previousHeight);
         if (!Number.isFinite(delta) || Math.abs(delta) < 0.5)
             return;
         root.rowGeometryChanged(Number(sourceRow), delta);
-        if (root.adjustingAnchor || root.anchorSettlementSuppressed || root.followLiveTail)
+        if (root.adjustingAnchor || root.followLiveTail)
             return;
-        if (scrollViewport.moving)
-            return;
-        const anchor = root.pendingAnchor ?? root.lastVisibleAnchor ?? root.captureVisibleAnchor();
+        const anchor = anchorBeforeChange ?? root.pendingAnchor ?? root.lastVisibleAnchor ?? root.captureVisibleAnchor();
         if (!anchor)
             return;
         const anchorRow = root.rowForAnchor(anchor);
         if (anchorRow >= 0 && Number(sourceRow) > anchorRow)
             return;
-        if (anchorRow >= 0 && Number(sourceRow) < anchorRow)
-            root.scheduleAnchorContentYAdjustment(delta);
+        if (scrollViewport.moving)
+            return;
+        root.restoreAnchorAfterLayout(anchor);
         root.scheduleAnchorRestore(anchor);
-    }
-
-    function scheduleAnchorContentYAdjustment(delta) {
-        root.pendingAnchorContentYAdjustment += Number(delta);
-        if (root.anchorContentYAdjustmentScheduled)
-            return;
-        root.anchorContentYAdjustmentScheduled = true;
-        Qt.callLater(root.applyPendingAnchorContentYAdjustment);
-    }
-
-    function applyPendingAnchorContentYAdjustment() {
-        root.anchorContentYAdjustmentScheduled = false;
-        const adjustment = root.pendingAnchorContentYAdjustment;
-        root.pendingAnchorContentYAdjustment = 0;
-        if (scrollViewport.moving || root.anchorSettlementSuppressed || !Number.isFinite(adjustment) || Math.abs(adjustment) < 0.5)
-            return;
-        scrollViewport.forceLayout();
-        root.restorePendingAnchor();
     }
 
     function firstInstantiatedIndexAt(contentY) {
@@ -303,22 +396,11 @@ Control {
         const row = root.rowForAnchor(root.pendingAnchor);
         if (row < 0)
             return false;
-        const slot = scrollViewport.itemAtIndex(row);
-        if (!slot) {
-            scrollViewport.positionViewAtIndex(row, ListView.Beginning);
-            return false;
-        }
-        const top = slot.mapToItem(scrollViewport.contentItem, 0, 0).y;
-        const minimumY = scrollViewport.originY;
-        const maximumY = Math.max(minimumY, minimumY + scrollViewport.contentHeight - scrollViewport.height);
-        const previousContentY = scrollViewport.contentY;
-        root.adjustingAnchor = true;
-        scrollViewport.contentY = Math.max(minimumY, Math.min(maximumY, top - Number(root.pendingAnchor.offset)));
-        root.adjustingAnchor = false;
-        const displacement = scrollViewport.contentY - previousContentY;
-        if (Math.abs(displacement) >= 0.5)
-            root.anchorPositionCorrected(displacement);
-        return true;
+        const displacement = root.restoreInstantiatedAnchor(root.pendingAnchor);
+        if (Number.isFinite(displacement))
+            return true;
+        scrollViewport.positionViewAtIndex(row, ListView.Beginning);
+        return false;
     }
 
     function scrollToBottom() {
@@ -339,7 +421,6 @@ Control {
         root.anchorSettlementSuppressed = false;
         root.anchorSettlementResumeScheduled = false;
         root.anchorSettlementResumeFramesRemaining = 0;
-        root.pendingAnchorContentYAdjustment = 0;
         root.pendingAnchor = null;
         const minimumY = scrollViewport.originY;
         const maximumY = Math.max(minimumY, minimumY + scrollViewport.contentHeight - scrollViewport.height);
@@ -352,8 +433,15 @@ Control {
         });
     }
 
-    function flickContentForBenchmark(verticalVelocity) {
-        scrollViewport.flick(0, -Number(verticalVelocity));
+    function flickContentForBenchmark(verticalVelocity, deceleration = Number.NaN) {
+        const requestedVelocity = Number(verticalVelocity);
+        const requestedDeceleration = Number(deceleration);
+        if (!Number.isFinite(requestedVelocity))
+            return;
+        scrollViewport.maximumFlickVelocity = Math.max(scrollViewport.maximumFlickVelocity, Math.abs(requestedVelocity));
+        if (Number.isFinite(requestedDeceleration) && requestedDeceleration > 0)
+            scrollViewport.flickDeceleration = requestedDeceleration;
+        scrollViewport.flick(0, -requestedVelocity);
     }
 
     function cancelFlickForBenchmark() {
@@ -370,6 +458,58 @@ Control {
         return slot.mapToItem(scrollViewport.contentItem, 0, 0).y - scrollViewport.contentY;
     }
 
+    function movementEndedAnchorForBenchmark() {
+        return root.lastMovementEndedAnchor;
+    }
+
+    function visibleRowOffsetsForBenchmark() {
+        const first = root.firstInstantiatedIndexAt(scrollViewport.contentY);
+        if (first < 0)
+            return [];
+        const rows = [];
+        const viewportEnd = scrollViewport.contentY + scrollViewport.height;
+        const last = Math.min(root.modelRowCount - 1, first + 64);
+        for (let row = first; row <= last; ++row) {
+            const slot = scrollViewport.itemAtIndex(row);
+            if (!slot || slot.height <= 0)
+                continue;
+            const top = slot.mapToItem(scrollViewport.contentItem, 0, 0).y;
+            if (top > viewportEnd)
+                break;
+            if (top + slot.height >= scrollViewport.contentY) {
+                rows.push({
+                    entryId: String(slot.entryId),
+                    row: row,
+                    offset: top - scrollViewport.contentY,
+                    height: slot.height,
+                    pendingMeasuredHeight: slot.pendingMeasuredHeight
+                });
+            }
+        }
+        return rows;
+    }
+
+    function trajectoryRowOffsetsForBenchmark() {
+        const rows = [];
+        const samplingMargin = Math.max(scrollViewport.height, Number(scrollViewport.cacheBuffer));
+        for (const slot of root.activeRowSlots) {
+            if (!slot || slot.pooled || slot.loadedEntryId !== slot.entryId || slot.height <= 0)
+                continue;
+            const offset = slot.mapToItem(scrollViewport.contentItem, 0, 0).y - scrollViewport.contentY;
+            if (offset + slot.height < -samplingMargin || offset > scrollViewport.height + samplingMargin)
+                continue;
+            rows.push({
+                entryId: String(slot.entryId),
+                row: Number(slot.sourceRow),
+                offset: offset,
+                height: slot.height,
+                pendingMeasuredHeight: slot.pendingMeasuredHeight
+            });
+        }
+        rows.sort((left, right) => left.row - right.row);
+        return rows;
+    }
+
     function followLatest() {
         root.followLiveTail = true;
         Qt.callLater(root.scrollToBottom);
@@ -380,9 +520,10 @@ Control {
         root.anchorSettlementSuppressed = false;
         root.anchorSettlementResumeScheduled = false;
         root.anchorSettlementResumeFramesRemaining = 0;
-        root.pendingAnchorContentYAdjustment = 0;
         root.pendingAnchor = null;
         root.lastVisibleAnchor = null;
+        root.lastMovementEndedAnchor = null;
+        root.clearDeferredRowMeasurements();
         root.clearRowHeights();
         root.followLiveTail = true;
         Qt.callLater(root.scrollToBottom);
@@ -395,8 +536,9 @@ Control {
 
         objectName: "codexTimelineScrollViewport"
         clip: true
+        currentIndex: -1
         boundsBehavior: Flickable.StopAtBounds
-        model: root.modelRowCount
+        model: root.timelineModel
         spacing: root.rowSpacing
         cacheBuffer: Math.max(height * 3, 1200)
         reuseItems: true
@@ -417,11 +559,11 @@ Control {
             id: rowSlot
 
             required property int index
+            required property string entryId
             property int sourceRow: index
             property int dataRevision: root.modelRevision
             property string loadedEntryId: ""
             property int loaderGeneration: 0
-            property real lastEffectiveHeight: 0
             property bool slotCompleted: false
             property bool pooled: false
             property bool contentMaterializationAllowed: false
@@ -430,10 +572,7 @@ Control {
             property bool contentMeasurementReady: false
             property string heightCacheKey: entryId
             property real measuredHeight: 0
-            readonly property string entryId: {
-                const currentRevision = dataRevision;
-                return currentRevision >= 0 ? root.entryIdAt(sourceRow) : "";
-            }
+            property real pendingMeasuredHeight: 0
             readonly property Item loadedItem: rowLoader.item
 
             function synchronizeLoadedItemState() {
@@ -444,6 +583,7 @@ Control {
                     contentMeasurementReady = false;
                     heightCacheKey = entryId;
                     measuredHeight = 0;
+                    pendingMeasuredHeight = 0;
                     return;
                 }
                 const requested = loadedItem["contentMaterializationRequested"];
@@ -455,14 +595,51 @@ Control {
                 const loadedHeightCacheKey = loadedItem["heightCacheKey"];
                 heightCacheKey = loadedHeightCacheKey === undefined || String(loadedHeightCacheKey).length === 0 ? entryId : String(loadedHeightCacheKey);
                 const implicitHeight = Number(loadedItem.implicitHeight);
-                measuredHeight = contentMeasurementReady && Number.isFinite(implicitHeight) ? Math.ceil(implicitHeight) : 0;
+                const nextMeasuredHeight = contentMeasurementReady && Number.isFinite(implicitHeight) ? Math.ceil(implicitHeight) : 0;
+                if (loadedEntryId === entryId)
+                    commitMeasuredHeight(nextMeasuredHeight);
+            }
+
+            function commitMeasuredHeight(nextMeasuredHeight = measuredHeight) {
+                const nextHeight = Number(nextMeasuredHeight);
+                if (!slotCompleted || loadedEntryId !== entryId || !Number.isFinite(nextHeight) || nextHeight <= 0)
+                    return;
+                const previousHeight = height;
+                const cachedHeight = root.cachedRowHeight(heightCacheKey);
+                if (cachedHeight === nextHeight) {
+                    root.discardDeferredRowMeasurement(entryId);
+                    pendingMeasuredHeight = 0;
+                    measuredHeight = nextHeight;
+                    return;
+                }
+                if (scrollViewport.moving) {
+                    pendingMeasuredHeight = nextHeight;
+                    root.deferRowMeasurement(entryId, heightCacheKey, sourceRow, previousHeight, nextHeight);
+                    return;
+                }
+                const anchorBeforeChange = root.followLiveTail ? null : root.captureVisibleAnchor();
+                root.discardDeferredRowMeasurement(entryId);
+                pendingMeasuredHeight = 0;
+                measuredHeight = nextHeight;
+                root.rememberRowHeight(heightCacheKey, nextHeight);
+                root.settleAnchorAfterRowHeightChange(sourceRow, previousHeight, nextHeight, anchorBeforeChange);
+            }
+
+            function applyDeferredMeasuredHeight(nextMeasuredHeight) {
+                const nextHeight = Number(nextMeasuredHeight);
+                if (loadedEntryId !== entryId || !Number.isFinite(nextHeight) || nextHeight <= 0)
+                    return;
+                pendingMeasuredHeight = 0;
+                measuredHeight = nextHeight;
             }
 
             function synchronizeItem() {
                 if (!rowLoader.item)
                     return;
-                if (loadedEntryId !== root.entryIdAt(sourceRow)) {
-                    reloadItem();
+                if (entryId !== root.entryIdAt(sourceRow))
+                    return;
+                if (loadedEntryId !== entryId) {
+                    replaceReusedItem();
                     return;
                 }
                 rowLoader.item["sourceRow"] = sourceRow;
@@ -472,54 +649,45 @@ Control {
                 synchronizeLoadedItemState();
             }
 
-            function reloadItem() {
+            function replaceReusedItem() {
+                root.discardDeferredRowMeasurement(loadedEntryId);
                 ++loaderGeneration;
-                const requestedGeneration = loaderGeneration;
                 rowLoader.active = false;
-                Qt.callLater(() => {
-                    if (requestedGeneration === loaderGeneration)
-                        rowLoader.active = true;
-                });
+                rowLoader.active = true;
             }
 
             width: scrollViewport.width
             height: measuredHeight > 0 ? measuredHeight : root.rowHeightAt(heightCacheKey)
+            clip: pendingMeasuredHeight > 0
             onDataRevisionChanged: synchronizeItem()
+            onSourceRowChanged: synchronizeItem()
             onEntryIdChanged: {
+                root.discardDeferredRowMeasurement(loadedEntryId);
                 contentMaterializationAllowed = false;
+                pendingMeasuredHeight = 0;
                 synchronizeLoadedItemState();
-                lastEffectiveHeight = height;
                 if (rowLoader.item && loadedEntryId !== entryId)
-                    reloadItem();
+                    replaceReusedItem();
                 root.scheduleViewportUpdate();
             }
             onContentMaterializationAllowedChanged: synchronizeItem()
             onContentMaterializationRequestedChanged: root.scheduleViewportUpdate()
             onContentMaterializationReadyChanged: root.scheduleViewportUpdate()
             onYChanged: root.scheduleViewportUpdate()
-            onHeightChanged: {
-                root.scheduleViewportUpdate();
-                if (!slotCompleted)
-                    return;
-                const previousHeight = lastEffectiveHeight;
-                lastEffectiveHeight = height;
-                root.settleAnchorAfterRowHeightChange(sourceRow, previousHeight, height);
-            }
-            onMeasuredHeightChanged: {
-                if (measuredHeight > 0)
-                    root.rememberRowHeight(heightCacheKey, measuredHeight);
-            }
+            onHeightChanged: root.scheduleViewportUpdate()
             Component.onCompleted: {
-                lastEffectiveHeight = height;
                 slotCompleted = true;
+                commitMeasuredHeight();
                 ++root.activeRowSlotCount;
                 root.registerRowSlot(rowSlot);
             }
             Component.onDestruction: {
+                root.discardDeferredRowMeasurement(loadedEntryId);
                 root.unregisterRowSlot(rowSlot);
                 --root.activeRowSlotCount;
             }
             ListView.onPooled: {
+                root.discardDeferredRowMeasurement(loadedEntryId);
                 pooled = true;
                 contentMaterializationAllowed = false;
                 root.scheduleViewportUpdate();
@@ -527,7 +695,6 @@ Control {
             ListView.onReused: {
                 pooled = false;
                 contentMaterializationAllowed = false;
-                lastEffectiveHeight = height;
                 root.scheduleViewportUpdate();
             }
 
@@ -594,18 +761,33 @@ Control {
         }
         onContentYChanged: root.scheduleViewportUpdate()
         onMovementStarted: {
+            if (root.adjustingAnchor)
+                return;
             root.anchorRestoreRunning = false;
             root.anchorSettlementSuppressed = true;
             root.anchorSettlementResumeScheduled = false;
             root.anchorSettlementResumeFramesRemaining = 0;
-            root.pendingAnchorContentYAdjustment = 0;
             root.pendingAnchor = null;
             root.followLiveTail = false;
             root.lastVisibleAnchor = root.captureVisibleAnchor();
+            root.lastMovementEndedAnchor = null;
             root.updateContentMaterialization();
         }
         onMovementEnded: {
-            root.followLiveTail = atYEnd;
+            if (root.adjustingAnchor)
+                return;
+            const reachedLiveTail = atYEnd;
+            const stoppedAnchor = root.captureVisibleAnchor();
+            root.lastMovementEndedAnchor = stoppedAnchor ? {
+                entryId: String(stoppedAnchor.entryId),
+                offset: Number(stoppedAnchor.offset),
+                row: Number(stoppedAnchor.row),
+                contentY: Number(scrollViewport.contentY)
+            } : null;
+            root.flushDeferredRowMeasurements(stoppedAnchor);
+            root.followLiveTail = reachedLiveTail;
+            if (reachedLiveTail)
+                root.scrollToBottom();
             root.lastVisibleAnchor = root.captureVisibleAnchor();
             root.anchorSettlementResumeFramesRemaining = Math.max(1, root.anchorSettlementQuietFrameCount);
             root.anchorSettlementResumeScheduled = true;
