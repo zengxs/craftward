@@ -53,6 +53,41 @@ Item {
     property int maximumDeferredRowMeasurementCount: 0
     property int maximumActiveRowSlotCount: 0
 
+    function loadedHeightChangeCandidateBeforeAnchor(anchorRow, preferredRowOffset, changedRowCount = 1) {
+        if (!suite.viewport || anchorRow <= 0)
+            return null;
+        const loadedRows = {};
+        for (const candidate of suite.viewport.trajectoryRowOffsetsForBenchmark()) {
+            const row = Number(candidate.row);
+            if (!Number.isInteger(row) || row < 0 || row >= anchorRow)
+                continue;
+            loadedRows[row] = candidate;
+        }
+        const requiredRowCount = Math.max(1, Number(changedRowCount));
+        const preferredRow = anchorRow + Number(preferredRowOffset);
+        let selectedCandidate = null;
+        let selectedDistance = Number.POSITIVE_INFINITY;
+        for (const rowKey in loadedRows) {
+            const candidate = loadedRows[rowKey];
+            const row = Number(candidate.row);
+            let blockLoaded = true;
+            for (let offset = 0; offset < requiredRowCount; ++offset) {
+                if (!loadedRows[row - offset]) {
+                    blockLoaded = false;
+                    break;
+                }
+            }
+            if (!blockLoaded)
+                continue;
+            const distance = Math.abs(row - preferredRow);
+            if (distance < selectedDistance || (distance === selectedDistance && (!selectedCandidate || row > selectedCandidate.row))) {
+                selectedCandidate = candidate;
+                selectedDistance = distance;
+            }
+        }
+        return selectedCandidate;
+    }
+
     function beginPostFlickHeightSettlement() {
         suite.frameReferenceAnchor = suite.viewport.captureVisibleAnchor();
         suite.maximumFrameAnchorExcursion = 0;
@@ -136,14 +171,13 @@ Item {
                     const visibleAnchor = suite.viewport.captureVisibleAnchor();
                     const visibleAnchorRow = visibleAnchor ? suite.viewport.indexOfEntryId(visibleAnchor.entryId) : -1;
                     const trackedRow = visibleAnchorRow;
-                    const changedRow = visibleAnchorRow + suite.finalDecelerationChangedRowOffset;
                     const trackedEntryId = trackedRow >= 0 ? suite.viewport.entryIdAt(trackedRow) : "";
-                    const changedEntryId = changedRow >= 0 ? suite.viewport.entryIdAt(changedRow) : "";
+                    const changedCandidate = suite.loadedHeightChangeCandidateBeforeAnchor(visibleAnchorRow, suite.finalDecelerationChangedRowOffset);
                     const trackedOffset = trackedEntryId.length > 0 ? Number(suite.viewport.anchorOffsetForBenchmark({
                         entryId: trackedEntryId,
                         row: trackedRow
                     })) : Number.NaN;
-                    if (Number.isFinite(trackedOffset) && suite.viewport.delegateForEntry(changedEntryId)) {
+                    if (Number.isFinite(trackedOffset) && changedCandidate && suite.viewport.delegateForEntry(changedCandidate.entryId)) {
                         suite.finalDecelerationAnchor = {
                             entryId: trackedEntryId,
                             row: trackedRow
@@ -151,8 +185,8 @@ Item {
                         suite.finalDecelerationPreviousContentY = suite.viewport.contentY;
                         suite.finalDecelerationPreviousOffset = trackedOffset;
                         suite.finalDecelerationInitialRowHeightRevision = suite.viewport.rowHeightRevision;
+                        suite.postFlickChangedRow = Number(changedCandidate.row);
                         suite.finalDecelerationHeightChangeTriggered = true;
-                        suite.postFlickChangedRow = changedRow;
                     }
                 } else if (suite.finalDecelerationHeightChangeTriggered && suite.finalDecelerationAnchor) {
                     const offset = Number(suite.viewport.anchorOffsetForBenchmark(suite.finalDecelerationAnchor));
@@ -434,6 +468,13 @@ Item {
     TestCase {
         name: "CodexTimelineViewport"
         when: windowShown
+
+        function verifyFinalDecelerationResult(traceLabel) {
+            verify(suite.finalDecelerationTrace.length > 0);
+            compare(suite.finalDecelerationMissingFrameCount, 0);
+            verify(suite.viewport.rowHeightRevision > suite.finalDecelerationInitialRowHeightRevision);
+            verify(suite.maximumOppositeDirectionMovement <= 1, traceLabel + ": " + JSON.stringify(suite.finalDecelerationTrace));
+        }
 
         function createViewport(rowCount, rowIds) {
             fakeTimelineModel.resetRows(rowCount, rowIds);
@@ -831,10 +872,7 @@ Item {
             wait(120);
             suite.finalDecelerationSampling = false;
 
-            verify(suite.finalDecelerationTrace.length > 0);
-            compare(suite.finalDecelerationMissingFrameCount, 0);
-            verify(suite.viewport.rowHeightRevision > suite.finalDecelerationInitialRowHeightRevision);
-            verify(suite.maximumOppositeDirectionMovement <= 1, "Final deceleration trace: " + JSON.stringify(suite.finalDecelerationTrace));
+            verifyFinalDecelerationResult("Final deceleration trace");
         }
 
         function test_geometryCorrectionDoesNotCancelAHighVelocityLongDistanceFlick() {
@@ -854,12 +892,25 @@ Item {
 
             tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
             tryVerify(() => suite.viewport.contentY - initialContentY >= 1000 && Math.abs(suite.viewport.verticalVelocity) >= 25000, 500, "The stress flick did not reach an early high-velocity geometry trigger");
-            const movingAnchor = suite.viewport.captureVisibleAnchor();
-            const movingAnchorRow = movingAnchor ? suite.viewport.indexOfEntryId(movingAnchor.entryId) : -1;
-            const changedRow = movingAnchorRow - 1;
-            const changedEntryId = changedRow >= 0 ? suite.viewport.entryIdAt(changedRow) : "";
-            verify(changedRow >= 0);
-            tryVerify(() => suite.viewport.delegateForEntry(changedEntryId) !== null);
+            let changedCandidate = null;
+            let heightChangeVelocity = Number.NaN;
+            tryVerify(() => {
+                const currentVelocity = Math.abs(Number(suite.viewport.verticalVelocity));
+                if (!suite.scrollViewport.moving || currentVelocity < 25000)
+                    return false;
+                const movingAnchor = suite.viewport.captureVisibleAnchor();
+                const movingAnchorRow = movingAnchor ? suite.viewport.indexOfEntryId(movingAnchor.entryId) : -1;
+                const candidate = suite.loadedHeightChangeCandidateBeforeAnchor(movingAnchorRow, -1, 4);
+                if (!candidate || !suite.viewport.delegateForEntry(candidate.entryId))
+                    return false;
+                changedCandidate = candidate;
+                heightChangeVelocity = currentVelocity;
+                return true;
+            }, 500, "No loaded four-row block was available before the high-velocity moving anchor");
+            verify(changedCandidate !== null);
+            verify(heightChangeVelocity >= 25000, "The height change was injected at only " + heightChangeVelocity + " px/s");
+            const changedRow = Number(changedCandidate.row);
+            verify(suite.viewport.delegateForEntry(changedCandidate.entryId) !== null, "The selected height-change delegate was not loaded");
             const initialRowHeightRevision = suite.viewport.rowHeightRevision;
             const initialRowGeometryChangeCount = suite.rowGeometryChangeCount;
 
@@ -910,8 +961,7 @@ Item {
             wait(120);
             suite.finalDecelerationSampling = false;
 
-            compare(suite.finalDecelerationMissingFrameCount, 0);
-            verify(suite.maximumOppositeDirectionMovement <= 1, "Bottom-boundary final deceleration trace: " + JSON.stringify(suite.finalDecelerationTrace));
+            verifyFinalDecelerationResult("Bottom-boundary final deceleration trace");
         }
 
         function test_doesNotDoubleCorrectAnAnchorPreservedByListView() {
@@ -939,8 +989,7 @@ Item {
             wait(120);
             suite.finalDecelerationSampling = false;
 
-            compare(suite.finalDecelerationMissingFrameCount, 0);
-            verify(suite.maximumOppositeDirectionMovement <= 1, "ListView-preserved final deceleration trace: " + JSON.stringify(suite.finalDecelerationTrace));
+            verifyFinalDecelerationResult("ListView-preserved final deceleration trace");
         }
 
         function test_repeatedGeometryChangesDoNotShortenAHighVelocityLongDistanceFlick() {
