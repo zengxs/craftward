@@ -16,7 +16,7 @@
 	url = https://github.com/Swift-Next/Swift-Next.git
 [submodule "core/ward-highlighting/assets/Zig"]
 	path = core/ward-highlighting/assets/Zig
-	url = https://codeberg.org/ziglang/sublime-zig-language.git
+	url = https://github.com/craftward/sublime-zig-language.git
 [submodule "core/ward-highlighting/assets/Protobuf"]
 	path = core/ward-highlighting/assets/Protobuf
 	url = https://github.com/VcamX/protobuf-syntax-highlighting.git
