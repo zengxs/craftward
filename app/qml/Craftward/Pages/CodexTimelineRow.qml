@@ -15,6 +15,7 @@ Control {
     required property var timelineModel
     property int sourceRow: -1
     property int dataRevision: -1
+    property string rendererName: "current"
     required property bool turnExpanded
     required property bool hasRunningEvidence
     required property bool activityShimmerEnabled
@@ -22,6 +23,10 @@ Control {
     required property bool showForkActions
     required property double wallClockUnixMilliseconds
     readonly property string entryId: String(root.value("entryId") ?? "")
+    readonly property string heightCacheKey: root.rendererName + ":" + root.entryId
+    readonly property bool contentMaterializationRequested: false
+    readonly property bool contentMaterializationReady: true
+    readonly property bool contentMeasurementReady: true
     readonly property string turnId: String(root.value("turnId") ?? "")
     readonly property bool turnForkable: Boolean(root.value("turnForkable"))
     readonly property bool latestTurn: Boolean(root.value("latestTurn"))
@@ -32,10 +37,30 @@ Control {
     readonly property bool firstDetailInTurn: Boolean(root.value("firstDetailInTurn"))
     readonly property int detailCountInTurn: Number(root.value("detailCountInTurn"))
     readonly property bool standaloneActivity: Boolean(root.value("standaloneActivity"))
+    readonly property bool semanticBlock: Boolean(root.value("semanticBlock"))
+    readonly property bool firstBlockInEntry: !root.semanticBlock || Boolean(root.value("firstBlockInEntry"))
+    readonly property bool lastBlockInEntry: !root.semanticBlock || Boolean(root.value("lastBlockInEntry"))
+    readonly property real semanticBlockSpacing: root.semanticBlock && !root.lastBlockInEntry ? 8 : 0
+    readonly property real semanticEntrySpacing: root.rendererName === "semantic" && (!root.semanticBlock || root.lastBlockInEntry) ? 10 : 0
     readonly property bool presentationVisible: !root.detailRow || root.firstDetailInTurn || root.turnExpanded
 
     signal toggleTurnRequested(string turnId)
     signal forkRequested(string turnId)
+
+    function prepareItemForLayout(item) {
+        if (!item)
+            return;
+        if (typeof item.prepareForLayout === "function")
+            item.prepareForLayout();
+        else if (typeof item.forceLayout === "function")
+            item.forceLayout();
+    }
+
+    function prepareForLayout() {
+        for (const loader of [primaryMessageLoader, standaloneActivityLoader, detailHeaderLoader, detailBodyLoader])
+            root.prepareItemForLayout(loader.item);
+        rowColumn.forceLayout();
+    }
 
     function value(roleName) {
         // Keep imperative valueAt() reads reactive without retaining every source row as a delegate.
@@ -85,7 +110,7 @@ Control {
     padding: 0
     background: null
     visible: presentationVisible
-    implicitHeight: visible ? rowColumn.implicitHeight : 0
+    implicitHeight: visible ? rowColumn.implicitHeight + root.semanticEntrySpacing + (root.detailRow ? root.semanticBlockSpacing : 0) : 0
 
     contentItem: Column {
         id: rowColumn
@@ -114,7 +139,7 @@ Control {
             id: detailHeaderLoader
 
             width: parent.width
-            active: root.detailRow && root.firstDetailInTurn
+            active: root.detailRow && root.firstDetailInTurn && root.firstBlockInEntry
             visible: active
             sourceComponent: detailHeaderComponent
         }
@@ -125,7 +150,7 @@ Control {
             width: parent.width
             active: root.detailRow && root.turnExpanded
             visible: active
-            sourceComponent: root.activityGroup ? activityGroupComponent : commentaryComponent
+            sourceComponent: root.activityGroup ? activityGroupComponent : (root.semanticBlock ? semanticBlockComponent : commentaryComponent)
         }
     }
 
@@ -135,10 +160,15 @@ Control {
         Item {
             id: messageRoot
 
+            function prepareForLayout() {
+                root.prepareItemForLayout(messageRenderer.item);
+            }
+
             width: primaryMessageLoader.width
             readonly property real userMaximumWidth: Math.min(width * 0.72, 680)
             readonly property real messageHorizontalPadding: root.fromUser ? 14 : 0
-            readonly property real messageVerticalPadding: root.fromUser ? 10 : 0
+            readonly property real messageTopPadding: root.fromUser && (!root.semanticBlock || root.firstBlockInEntry) ? 10 : 0
+            readonly property real messageBottomPadding: root.semanticBlock && !root.lastBlockInEntry ? root.semanticBlockSpacing : (root.fromUser ? 10 : 0)
             readonly property real messageWidth: root.fromUser ? Math.min(userMaximumWidth, Math.max(120, userTextMetrics.advanceWidth + messageHorizontalPadding * 2)) : width
             implicitHeight: messageContent.height
 
@@ -163,8 +193,8 @@ Control {
                 CodexMessageActionState {
                     id: messageActionState
 
-                    fromUser: root.fromUser
-                    finalAnswer: root.finalAnswer
+                    fromUser: root.fromUser && root.lastBlockInEntry
+                    finalAnswer: root.finalAnswer && root.lastBlockInEntry
                     latestTurn: root.latestTurn
                     hasRunningEvidence: root.hasRunningEvidence
                     hovered: messageHover.hovered
@@ -177,22 +207,48 @@ Control {
                     id: messageBody
 
                     width: parent.width
-                    height: messageRenderer.implicitHeight + messageRoot.messageVerticalPadding * 2
+                    height: messageRenderer.implicitHeight + messageRoot.messageTopPadding + messageRoot.messageBottomPadding
 
                     Rectangle {
+                        id: userMessageSurface
+
+                        objectName: "codexUserMessageSurface"
                         anchors.fill: parent
                         radius: 12
                         color: Theme.userMessageSurface
                         visible: root.fromUser
+
+                        Rectangle {
+                            anchors {
+                                left: parent.left
+                                right: parent.right
+                                top: parent.top
+                            }
+                            height: Math.min(parent.radius, parent.height)
+                            color: parent.color
+                            visible: root.semanticBlock && !root.firstBlockInEntry
+                        }
+
+                        Rectangle {
+                            anchors {
+                                left: parent.left
+                                right: parent.right
+                                bottom: parent.bottom
+                            }
+                            height: Math.min(parent.radius, parent.height)
+                            color: parent.color
+                            visible: root.semanticBlock && !root.lastBlockInEntry
+                        }
                     }
 
                     Loader {
                         id: messageRenderer
 
+                        objectName: "codexMessageRenderer"
                         x: messageRoot.messageHorizontalPadding
-                        y: messageRoot.messageVerticalPadding
+                        y: messageRoot.messageTopPadding
                         width: parent.width - messageRoot.messageHorizontalPadding * 2
-                        sourceComponent: messageComponent
+                        sourceComponent: root.semanticBlock ? semanticBlockComponent : messageComponent
                     }
                 }
 
@@ -221,6 +277,20 @@ Control {
 
         MarkupDocumentView {
             documentModel: root.value("markupDocument") ?? null
+            textColor: root.palette.text
+            font: root.font
+            codeFont: Typography.codeFont
+        }
+    }
+
+    Component {
+        id: semanticBlockComponent
+
+        MarkupSegmentView {
+            codeBlock: Boolean(root.value("codeBlock"))
+            segmentText: root.textValue("blockText")
+            language: root.textValue("language")
+            markdown: Boolean(root.value("markdown"))
             textColor: root.palette.text
             font: root.font
             codeFont: Typography.codeFont

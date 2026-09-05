@@ -4,8 +4,11 @@
 #include "ward/markup/markupdocumentmodel.h"
 #include "ward/markup/markuprendermodel.h"
 
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QStandardItem>
 #include <QStandardItemModel>
+#include <QThreadPool>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
@@ -16,6 +19,9 @@ class MarkupDocumentModelTest : public QObject
   private slots:
     void preservesPlainText();
     void exposesMarkdownCodeAsAnIndependentBlock();
+    void preparesOnlyTheRequestedDocumentBeforeLayout();
+    void ignoresAsyncCompletionAfterLayoutPreparation_data();
+    void ignoresAsyncCompletionAfterLayoutPreparation();
     void updatesOnlyTheGrowingTail();
     void insertsANewlyCompletedBlockWithoutResettingThePrefix();
     void coalescesRapidStreamingSnapshots();
@@ -53,6 +59,91 @@ MarkupDocumentModelTest::exposesMarkdownCodeAsAnIndependentBlock()
     QCOMPARE(model.data(model.index(1), MarkupDocumentModel::BlockTextRole).toString(),
              QStringLiteral("fn main() {}\n"));
     QCOMPARE(model.data(model.index(2), MarkupDocumentModel::PlainTextRole).toString(), QStringLiteral("After"));
+}
+
+void
+MarkupDocumentModelTest::preparesOnlyTheRequestedDocumentBeforeLayout()
+{
+    MarkupDocumentModel visibleDocument;
+    MarkupDocumentModel untouchedDocument;
+    const QString source = QStringLiteral("Before\n\n```cpp\nreturn 0;\n```\n\nAfter");
+    QVERIFY(visibleDocument.reconcileSource(source, MarkupDocumentModel::SourceFormat::Markdown));
+    QVERIFY(untouchedDocument.reconcileSource(source, MarkupDocumentModel::SourceFormat::Markdown));
+    QCOMPARE(visibleDocument.rowCount(), 0);
+    QCOMPARE(untouchedDocument.rowCount(), 0);
+    QSignalSpy reconciledSpy(&visibleDocument, &MarkupDocumentModel::documentReconciled);
+
+    QVERIFY(QMetaObject::invokeMethod(&visibleDocument, "prepareForLayout", Qt::DirectConnection));
+
+    QCOMPARE(visibleDocument.rowCount(), 3);
+    QCOMPARE(untouchedDocument.rowCount(), 0);
+    QCOMPARE(reconciledSpy.count(), 1);
+    QVERIFY(QMetaObject::invokeMethod(&visibleDocument, "prepareForLayout", Qt::DirectConnection));
+    QTRY_COMPARE(untouchedDocument.rowCount(), 3);
+    QCOMPARE(reconciledSpy.count(), 1);
+
+    QVERIFY(visibleDocument.reconcileSource(
+      source + QStringLiteral(" more"), MarkupDocumentModel::SourceFormat::Markdown, false));
+    QVERIFY(QMetaObject::invokeMethod(&visibleDocument, "prepareForLayout", Qt::DirectConnection));
+    QCOMPARE(visibleDocument.data(visibleDocument.index(2), MarkupDocumentModel::PlainTextRole).toString(),
+             QStringLiteral("After more"));
+    QCOMPARE(reconciledSpy.count(), 2);
+}
+
+void
+MarkupDocumentModelTest::ignoresAsyncCompletionAfterLayoutPreparation_data()
+{
+    QTest::addColumn<bool>("newerSnapshot");
+    QTest::newRow("duplicate-generation") << false;
+    QTest::newRow("stale-generation") << true;
+}
+
+void
+MarkupDocumentModelTest::ignoresAsyncCompletionAfterLayoutPreparation()
+{
+    QFETCH(bool, newerSnapshot);
+    QThreadPool* pool = QThreadPool::globalInstance();
+    pool->waitForDone();
+    const int previousThreadCount = pool->maxThreadCount();
+    pool->setMaxThreadCount(1);
+    QSemaphore workerStarted;
+    QSemaphore releaseWorker;
+    bool workerReleased = false;
+    const auto restorePool = qScopeGuard([&] {
+        if (!workerReleased)
+            releaseWorker.release();
+        pool->waitForDone();
+        pool->setMaxThreadCount(previousThreadCount);
+    });
+    pool->start([&] {
+        workerStarted.release();
+        releaseWorker.acquire();
+    });
+    workerStarted.acquire();
+
+    MarkupDocumentModel model;
+    QString source = QStringLiteral("Before\n\n```cpp\nreturn 0;\n```\n\nAfter");
+    QVERIFY(model.reconcileSource(source, MarkupDocumentModel::SourceFormat::Markdown));
+    // Dispatch the parse while its worker is held behind the pool barrier.
+    QTest::qWait(1);
+    QCOMPARE(model.rowCount(), 0);
+    if (newerSnapshot) {
+        source += QStringLiteral(" more");
+        QVERIFY(model.reconcileSource(source, MarkupDocumentModel::SourceFormat::Markdown));
+    }
+    QSignalSpy reconciledSpy(&model, &MarkupDocumentModel::documentReconciled);
+
+    model.prepareForLayout();
+
+    QCOMPARE(model.rowCount(), 3);
+    QCOMPARE(reconciledSpy.count(), 1);
+    releaseWorker.release();
+    workerReleased = true;
+    pool->waitForDone();
+    QTest::qWait(1);
+    QCOMPARE(model.data(model.index(2), MarkupDocumentModel::PlainTextRole).toString(),
+             newerSnapshot ? QStringLiteral("After more") : QStringLiteral("After"));
+    QCOMPARE(reconciledSpy.count(), 1);
 }
 
 void

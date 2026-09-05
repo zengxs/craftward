@@ -1,3 +1,4 @@
 module Craftward.Codex
 CodexConversationController 1.0 CodexConversationController.qml
 CodexTimelinePresentationModel 1.0 CodexTimelinePresentationModel.qml
+CodexTimelineViewportModel 1.0 CodexTimelineViewportModel.qml

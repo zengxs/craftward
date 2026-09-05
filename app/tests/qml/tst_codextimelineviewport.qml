@@ -26,6 +26,7 @@ Item {
     property var anchorCorrectionTrace: []
     property var rowGeometryTrace: []
     property int rowGeometryChangeCount: 0
+    property int movingRowGeometryChangeCount: 0
     property bool finalDecelerationSampling: false
     property int finalDecelerationContentDirection: 1
     property int finalDecelerationChangedRowOffset: -1
@@ -52,6 +53,11 @@ Item {
     property bool deferredMeasurementSampling: false
     property int maximumDeferredRowMeasurementCount: 0
     property int maximumActiveRowSlotCount: 0
+    property bool trajectoryGeometrySampling: false
+    property var previousTrajectoryContentCoordinates: ({})
+    property real maximumTrajectoryGeometryDrift: 0
+    property int trajectoryCommonRowSampleCount: 0
+    property var trajectoryGeometryTrace: []
 
     function loadedHeightChangeCandidateBeforeAnchor(anchorRow, preferredRowOffset, changedRowCount = 1) {
         if (!suite.viewport || anchorRow <= 0)
@@ -164,6 +170,36 @@ Item {
         }
 
         function onFrameSwapped() {
+            if (suite.trajectoryGeometrySampling && suite.viewport && suite.viewport.moving) {
+                const rows = suite.viewport.trajectoryRowOffsetsForBenchmark();
+                const currentContentCoordinates = {};
+                for (const row of rows) {
+                    const entryId = String(row.entryId);
+                    const contentCoordinate = Number(row.offset) + Number(suite.viewport.contentY);
+                    if (!entryId || !Number.isFinite(contentCoordinate))
+                        continue;
+                    currentContentCoordinates[entryId] = contentCoordinate;
+                    const previousContentCoordinate = Number(suite.previousTrajectoryContentCoordinates[entryId]);
+                    if (!Number.isFinite(previousContentCoordinate))
+                        continue;
+                    const drift = Math.abs(contentCoordinate - previousContentCoordinate);
+                    ++suite.trajectoryCommonRowSampleCount;
+                    suite.maximumTrajectoryGeometryDrift = Math.max(suite.maximumTrajectoryGeometryDrift, drift);
+                    if (drift > 1 && suite.trajectoryGeometryTrace.length < 16) {
+                        suite.trajectoryGeometryTrace = suite.trajectoryGeometryTrace.concat([
+                            {
+                                entryId: entryId,
+                                row: Number(row.row),
+                                drift: drift,
+                                height: Number(row.height),
+                                pendingMeasuredHeight: Number(row.pendingMeasuredHeight),
+                                contentY: Number(suite.viewport.contentY)
+                            }
+                        ]);
+                    }
+                }
+                suite.previousTrajectoryContentCoordinates = currentContentCoordinates;
+            }
             if (suite.finalDecelerationSampling && suite.viewport && suite.scrollViewport) {
                 const moving = suite.scrollViewport.moving;
                 const velocity = Math.abs(Number(suite.viewport.verticalVelocity));
@@ -230,6 +266,8 @@ Item {
 
         function onRowGeometryChanged(sourceRow, heightDelta) {
             ++suite.rowGeometryChangeCount;
+            if (suite.viewport && suite.viewport.moving)
+                ++suite.movingRowGeometryChangeCount;
             if (suite.frameSampling && suite.rowGeometryTrace.length < 16)
                 suite.rowGeometryTrace = suite.rowGeometryTrace.concat([sourceRow + ":" + heightDelta]);
         }
@@ -413,6 +451,22 @@ Item {
     }
 
     Component {
+        id: namespacedVariableHeightRowComponent
+
+        Item {
+            property int sourceRow: -1
+            property int dataRevision: -1
+            readonly property string entryId: {
+                const currentRevision = dataRevision;
+                return currentRevision >= 0 ? fakeTimelineModel.entryIdAt(sourceRow) : "";
+            }
+            readonly property string heightCacheKey: "current:" + entryId
+
+            implicitHeight: [72, 144, 240][Math.abs(sourceRow) % 3]
+        }
+    }
+
+    Component {
         id: variableHeightViewportComponent
 
         Pages.CodexTimelineViewport {
@@ -422,6 +476,21 @@ Item {
             rowDelegate: variableHeightRowComponent
             bottomContentInset: 0
             estimatedRowHeight: 72
+            followLiveTail: false
+        }
+    }
+
+    Component {
+        id: namespacedVariableHeightViewportComponent
+
+        Pages.CodexTimelineViewport {
+            width: 600
+            height: 400
+            timelineModel: fakeTimelineModel
+            rowDelegate: namespacedVariableHeightRowComponent
+            bottomContentInset: 0
+            estimatedRowHeight: 72
+            heightCacheNamespace: "current"
             followLiveTail: false
         }
     }
@@ -471,7 +540,7 @@ Item {
 
         function verifyFinalDecelerationResult(traceLabel) {
             verify(suite.finalDecelerationTrace.length > 0);
-            compare(suite.finalDecelerationMissingFrameCount, 0);
+            compare(suite.finalDecelerationMissingFrameCount, 0, traceLabel + ": " + JSON.stringify(suite.finalDecelerationTrace));
             verify(suite.viewport.rowHeightRevision > suite.finalDecelerationInitialRowHeightRevision);
             verify(suite.maximumOppositeDirectionMovement <= 1, traceLabel + ": " + JSON.stringify(suite.finalDecelerationTrace));
         }
@@ -491,6 +560,7 @@ Item {
             suite.anchorCorrectionTrace = [];
             suite.rowGeometryTrace = [];
             suite.rowGeometryChangeCount = 0;
+            suite.movingRowGeometryChangeCount = 0;
             suite.finalDecelerationSampling = false;
             suite.finalDecelerationContentDirection = 1;
             suite.finalDecelerationChangedRowOffset = -1;
@@ -522,6 +592,11 @@ Item {
             suite.deferredMeasurementSampling = false;
             suite.maximumDeferredRowMeasurementCount = 0;
             suite.maximumActiveRowSlotCount = 0;
+            suite.trajectoryGeometrySampling = false;
+            suite.previousTrajectoryContentCoordinates = {};
+            suite.maximumTrajectoryGeometryDrift = 0;
+            suite.trajectoryCommonRowSampleCount = 0;
+            suite.trajectoryGeometryTrace = [];
             fakeTimelineModel.clear();
             ++fakeTimelineModel.revision;
         }
@@ -658,6 +733,7 @@ Item {
             suite.viewport.delegateForEntry("entry:0").interactionState = true;
 
             suite.viewport.positionAtContentY(10000);
+            tryVerify(() => Math.abs(suite.viewport.contentY - 10000) <= 1);
             tryVerify(() => suite.viewport.captureVisibleAnchor() !== null);
             const distantEntryId = suite.viewport.captureVisibleAnchor().entryId;
             verify(distantEntryId !== "entry:0");
@@ -688,12 +764,97 @@ Item {
             compare(suite.rowGeometryTrace.length, 0, "Warm row reuse reported geometry changes: " + JSON.stringify(suite.rowGeometryTrace));
         }
 
+        function test_namespacedWarmHeightCacheDoesNotDriftDuringRapidRowReuse() {
+            fakeTimelineModel.resetRows(1000);
+            suite.viewport = createTemporaryObject(namespacedVariableHeightViewportComponent, suite);
+            verify(suite.viewport !== null);
+            tryVerify(() => suite.viewport.activeRowSlotCount > 0);
+            suite.scrollViewport = findChild(suite.viewport, "codexTimelineScrollViewport");
+            verify(suite.scrollViewport !== null);
+
+            const rowHeights = {};
+            const knownHeights = [72, 144, 240];
+            for (let row = 0; row < 1000; ++row)
+                rowHeights["current:entry:" + row] = knownHeights[row % knownHeights.length];
+            suite.viewport.rowHeights = rowHeights;
+            ++suite.viewport.rowHeightRevision;
+
+            suite.viewport.positionAtContentY(20000);
+            wait(300);
+            suite.viewport.positionAtContentY(100);
+            wait(300);
+
+            const initialContentY = suite.viewport.contentY;
+            const initialAnchor = suite.viewport.captureVisibleAnchor();
+            verify(initialAnchor !== null);
+            suite.previousTrajectoryContentCoordinates = {};
+            suite.maximumTrajectoryGeometryDrift = 0;
+            suite.trajectoryCommonRowSampleCount = 0;
+            suite.trajectoryGeometryTrace = [];
+            suite.trajectoryGeometrySampling = true;
+
+            suite.viewport.flickContentForBenchmark(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+
+            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
+            tryVerify(() => suite.scrollViewport.moving);
+            tryVerify(() => !suite.scrollViewport.moving, 5000);
+            suite.trajectoryGeometrySampling = false;
+
+            const finalAnchor = suite.viewport.captureVisibleAnchor();
+            verify(finalAnchor !== null);
+            verify(suite.viewport.contentY - initialContentY >= suite.minimumStressTravel, "The stress flick travelled only " + (suite.viewport.contentY - initialContentY) + " px");
+            verify(Math.abs(suite.viewport.indexOfEntryId(finalAnchor.entryId) - suite.viewport.indexOfEntryId(initialAnchor.entryId)) >= suite.minimumStressRowTravel, "The stress flick did not cross enough rows");
+            verify(suite.trajectoryCommonRowSampleCount > 0, "The stress flick did not retain a trajectory row between presented frames");
+            verify(suite.maximumTrajectoryGeometryDrift <= 1, "Namespaced warm-cache trajectory drift: " + JSON.stringify(suite.trajectoryGeometryTrace));
+        }
+
+        function test_partiallyWarmedNamespacedCacheDoesNotDriftDuringReverseReuse() {
+            fakeTimelineModel.resetRows(1000);
+            suite.viewport = createTemporaryObject(namespacedVariableHeightViewportComponent, suite);
+            verify(suite.viewport !== null);
+            tryVerify(() => suite.viewport.activeRowSlotCount > 0);
+            suite.scrollViewport = findChild(suite.viewport, "codexTimelineScrollViewport");
+            verify(suite.scrollViewport !== null);
+            suite.viewport.positionAtContentY(suite.viewport.maximumContentY);
+            wait(300);
+
+            suite.viewport.flickContentForBenchmark(-suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The cold reverse flick never reached 30,000 px/s");
+            tryVerify(() => !suite.scrollViewport.moving, 5000);
+            suite.viewport.positionAtContentY(suite.viewport.maximumContentY);
+            wait(300);
+
+            const initialContentY = suite.viewport.contentY;
+            const initialAnchor = suite.viewport.captureVisibleAnchor();
+            verify(initialAnchor !== null);
+            suite.previousTrajectoryContentCoordinates = {};
+            suite.maximumTrajectoryGeometryDrift = 0;
+            suite.trajectoryCommonRowSampleCount = 0;
+            suite.trajectoryGeometryTrace = [];
+            suite.trajectoryGeometrySampling = true;
+
+            suite.viewport.flickContentForBenchmark(-suite.stressFlickVelocity, suite.stressFlickDeceleration);
+
+            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The warm reverse flick never reached 30,000 px/s");
+            tryVerify(() => suite.scrollViewport.moving);
+            tryVerify(() => !suite.scrollViewport.moving, 5000);
+            suite.trajectoryGeometrySampling = false;
+
+            const finalAnchor = suite.viewport.captureVisibleAnchor();
+            verify(finalAnchor !== null);
+            verify(initialContentY - suite.viewport.contentY >= suite.minimumStressTravel, "The warm reverse flick travelled only " + (initialContentY - suite.viewport.contentY) + " px");
+            verify(Math.abs(suite.viewport.indexOfEntryId(finalAnchor.entryId) - suite.viewport.indexOfEntryId(initialAnchor.entryId)) >= suite.minimumStressRowTravel, "The warm reverse flick did not cross enough rows");
+            verify(suite.trajectoryCommonRowSampleCount > 0, "The warm reverse flick did not retain a trajectory row between presented frames");
+            verify(suite.maximumTrajectoryGeometryDrift <= 1, "Partially warmed namespaced-cache trajectory drift: " + JSON.stringify(suite.trajectoryGeometryTrace));
+        }
+
         function test_reportsUncachedEntryMeasurementAsGeometryChange() {
-            fakeTimelineModel.resetRows(3);
+            fakeTimelineModel.resetRows(0);
             suite.rowGeometryTrace = [];
             suite.frameSampling = true;
             suite.viewport = createTemporaryObject(variableHeightViewportComponent, suite);
             verify(suite.viewport !== null);
+            fakeTimelineModel.resetRows(3);
             tryVerify(() => suite.viewport.activeRowSlotCount > 0);
 
             wait(300);
@@ -1004,6 +1165,7 @@ Item {
             const initialAnchor = suite.viewport.captureVisibleAnchor();
             const initialRowHeightRevision = suite.viewport.rowHeightRevision;
             const initialRowGeometryChangeCount = suite.rowGeometryChangeCount;
+            const initialMovingRowGeometryChangeCount = suite.movingRowGeometryChangeCount;
             verify(initialAnchor !== null);
 
             suite.deferredMeasurementSampling = true;
@@ -1020,7 +1182,8 @@ Item {
             verify(Math.abs(suite.viewport.contentY - initialContentY) >= suite.minimumStressTravel, "Repeated geometry changes shortened the stress flick to " + Math.abs(suite.viewport.contentY - initialContentY) + " px");
             verify(Math.abs(suite.viewport.indexOfEntryId(finalAnchor.entryId) - suite.viewport.indexOfEntryId(initialAnchor.entryId)) >= suite.minimumStressRowTravel, "The stress flick did not cross enough rows");
             verify(suite.maximumDeferredRowMeasurementCount <= suite.maximumActiveRowSlotCount, "Deferred measurements grew beyond the active viewport slots");
-            verify(suite.rowGeometryChangeCount - initialRowGeometryChangeCount <= suite.maximumActiveRowSlotCount, "The stopped-frame flush scaled with traversed rows instead of active slots");
+            const stoppedGeometryChanges = suite.rowGeometryChangeCount - initialRowGeometryChangeCount - (suite.movingRowGeometryChangeCount - initialMovingRowGeometryChangeCount);
+            verify(stoppedGeometryChanges <= suite.maximumActiveRowSlotCount, "The stopped-frame flush scaled with traversed rows instead of active slots");
         }
 
         function test_materializesVisibleDeferredContentOneRowAtATime() {
@@ -1046,7 +1209,8 @@ Item {
 
             suite.viewport.followLatest();
 
-            tryVerify(() => suite.viewport.contentY >= suite.viewport.scrollContentHeight - suite.viewport.viewportHeight - 1);
+            tryVerify(() => suite.viewport.delegateForEntry("entry:99") !== null);
+            tryVerify(() => Math.abs(suite.viewport.contentY - suite.viewport.maximumContentY) <= 1);
         }
 
         function test_reservesTheComposerInset() {

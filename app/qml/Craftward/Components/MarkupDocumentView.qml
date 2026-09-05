@@ -14,6 +14,13 @@ Control {
     property font codeFont: font
     readonly property var renderModel: documentModel ? documentModel["renderModel"] : null
 
+    function prepareForLayout() {
+        const prepare = documentModel ? documentModel["prepareForLayout"] : null;
+        if (typeof prepare === "function")
+            prepare.call(documentModel);
+        segmentColumn.forceLayout();
+    }
+
     padding: 0
     implicitWidth: 0
     implicitHeight: segmentColumn.implicitHeight

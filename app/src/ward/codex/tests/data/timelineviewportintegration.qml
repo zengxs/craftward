@@ -11,7 +11,7 @@ Item {
     Pages.CodexTimelineViewport {
         objectName: "integrationViewport"
         anchors.fill: parent
-        timelineModel: presentationModel
+        timelineModel: viewportModel
         rowDelegate: rowComponent
         bottomContentInset: 0
         estimatedRowHeight: 80
@@ -26,7 +26,7 @@ Item {
             property int dataRevision: -1
             readonly property string entryId: {
                 const currentRevision = dataRevision;
-                return currentRevision >= 0 ? String(presentationModel.entryIdAt(sourceRow)) : "";
+                return currentRevision >= 0 ? String(viewportModel.entryIdAt(sourceRow)) : "";
             }
 
             implicitHeight: 80

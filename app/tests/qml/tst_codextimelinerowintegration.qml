@@ -136,7 +136,7 @@ Item {
             tryVerify(() => suite.viewport.delegateForEntry(rows[0].entryId) !== null);
             const row = suite.viewport.delegateForEntry(rows[0].entryId);
             tryVerify(() => row.implicitHeight > 0);
-            wait(0);
+            verify(waitForRendering(suite.viewport));
             return row;
         }
 

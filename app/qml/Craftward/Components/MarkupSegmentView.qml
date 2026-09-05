@@ -45,6 +45,7 @@ Control {
         id: proseSegment
 
         TextEdit {
+            objectName: "markupProseText"
             text: root.segmentText
             color: root.textColor
             font: root.font

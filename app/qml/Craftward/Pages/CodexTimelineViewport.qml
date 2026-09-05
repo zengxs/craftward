@@ -15,18 +15,21 @@ Control {
     // The delegate contract exposes sourceRow, dataRevision, entryId, and implicitHeight.
     // Deferred delegates may also expose contentMaterializationRequested, contentMaterializationReady,
     // contentMeasurementReady, contentMaterializationAllowed, and heightCacheKey.
+    // Delegates with pending local layouts can expose prepareForLayout() to finish their measurement.
     required property Component rowDelegate
     property real bottomContentInset: 64
     property real contentHorizontalInset: 20
     property real contentMaximumWidth: 920
     property real estimatedRowHeight: 72
     property real rowSpacing: 10
+    property string heightCacheNamespace: ""
     property real contentMaterializationMargin: viewportHeight
     property int maximumConcurrentContentMaterializations: 1
     property int activeContentMaterializationCount: 0
     property bool followLiveTail: true
     property var lastVisibleAnchor: null
     property var lastMovementEndedAnchor: null
+    property var lastMovementEndedRows: []
     property var pendingAnchor: null
     property int pendingAnchorPasses: 0
     property int pendingAnchorStablePasses: 0
@@ -95,6 +98,12 @@ Control {
         const currentRevision = root.rowHeightRevision;
         const cached = currentRevision >= 0 ? Number(root.rowHeights[String(heightCacheKey)]) : 0;
         return Number.isFinite(cached) && cached > 0 ? cached : 0;
+    }
+
+    function defaultHeightCacheKey(entryId) {
+        const namespace = String(root.heightCacheNamespace);
+        const identity = String(entryId);
+        return namespace.length > 0 ? namespace + ":" + identity : identity;
     }
 
     function rowHeightAt(heightCacheKey) {
@@ -200,8 +209,24 @@ Control {
             activeMeasurements.push(measurement);
         }
         if (activeMeasurements.length === 0)
-            return;
-        const anchor = anchorBeforeFlush ?? root.captureVisibleAnchor();
+            return false;
+        // A tail settlement preserves the tail edge; other settlements preserve the visual anchor.
+        let anchor = anchorBeforeFlush ?? root.captureVisibleAnchor();
+        if (root.followLiveTail) {
+            anchor = null;
+            const tailRow = root.modelRowCount - 1;
+            const tailSlot = scrollViewport.itemAtIndex(tailRow);
+            if (tailSlot) {
+                const tailEntryId = String(tailSlot.entryId);
+                const tailMeasurement = selectedEntryIds[tailEntryId] ? measurements[tailEntryId] : null;
+                const tailHeight = tailMeasurement ? Number(tailMeasurement.measuredHeight) : tailSlot.height;
+                anchor = {
+                    entryId: String(tailSlot.entryId),
+                    row: tailRow,
+                    offset: scrollViewport.height - root.bottomContentInset - tailHeight
+                };
+            }
+        }
         const previousCurrentIndex = scrollViewport.currentIndex;
         const anchorRow = root.rowForAnchor(anchor);
         if (anchorRow >= 0)
@@ -229,8 +254,14 @@ Control {
             if (measurement && slot.loadedEntryId === slot.entryId)
                 slot.applyDeferredMeasuredHeight(measurement.measuredHeight);
         }
-        root.restoreAnchorAfterLayout(anchor);
+        if (anchor)
+            root.restoreAnchorAfterLayout(anchor);
+        else if (root.followLiveTail)
+            root.scrollToBottom();
+        else
+            scrollViewport.forceLayout();
         scrollViewport.currentIndex = previousCurrentIndex;
+        return true;
     }
 
     function registerRowSlot(slot) {
@@ -406,14 +437,10 @@ Control {
     function scrollToBottom() {
         if (!root.followLiveTail || root.modelRowCount <= 0)
             return;
+        scrollViewport.forceLayout();
         scrollViewport.positionViewAtEnd();
-        Qt.callLater(() => {
-            if (!root.followLiveTail)
-                return;
-            const minimumY = scrollViewport.originY;
-            scrollViewport.contentY = Math.max(minimumY, minimumY + scrollViewport.contentHeight - scrollViewport.height);
-            root.lastVisibleAnchor = root.captureVisibleAnchor();
-        });
+        scrollViewport.forceLayout();
+        root.lastVisibleAnchor = root.captureVisibleAnchor();
     }
 
     function positionAtContentY(contentY) {
@@ -462,6 +489,38 @@ Control {
         return root.lastMovementEndedAnchor;
     }
 
+    function movementEndedRowsForBenchmark() {
+        return root.lastMovementEndedRows;
+    }
+
+    function visibleContentMarkersForBenchmark(slot, minimumOffset, maximumOffset) {
+        const loadedItem = slot ? slot.loadedItem : null;
+        if (!loadedItem)
+            return [];
+        const contentTop = loadedItem.mapToItem(scrollViewport.contentItem, 0, 0).y - scrollViewport.contentY;
+        const contentHeight = Number(loadedItem.implicitHeight);
+        if (!Number.isFinite(contentTop) || !Number.isFinite(contentHeight) || contentHeight <= 0)
+            return [];
+        const contentBottom = contentTop + contentHeight;
+        const slotTop = slot.mapToItem(scrollViewport.contentItem, 0, 0).y - scrollViewport.contentY;
+        const slotBottom = slotTop + slot.height;
+        const clippedContentBottom = slot.clip ? Math.min(contentBottom, slotBottom) : contentBottom;
+        const markers = [];
+        if (contentTop >= minimumOffset && contentTop <= maximumOffset) {
+            markers.push({
+                markerId: "content:start",
+                offset: contentTop
+            });
+        }
+        if (contentBottom <= clippedContentBottom && contentBottom >= minimumOffset && contentBottom <= maximumOffset) {
+            markers.push({
+                markerId: "content:end",
+                offset: contentBottom
+            });
+        }
+        return markers;
+    }
+
     function visibleRowOffsetsForBenchmark() {
         const first = root.firstInstantiatedIndexAt(scrollViewport.contentY);
         if (first < 0)
@@ -482,7 +541,8 @@ Control {
                     row: row,
                     offset: top - scrollViewport.contentY,
                     height: slot.height,
-                    pendingMeasuredHeight: slot.pendingMeasuredHeight
+                    pendingMeasuredHeight: slot.pendingMeasuredHeight,
+                    visualMarkers: root.visibleContentMarkersForBenchmark(slot, 0, scrollViewport.height)
                 });
             }
         }
@@ -503,7 +563,8 @@ Control {
                 row: Number(slot.sourceRow),
                 offset: offset,
                 height: slot.height,
-                pendingMeasuredHeight: slot.pendingMeasuredHeight
+                pendingMeasuredHeight: slot.pendingMeasuredHeight,
+                visualMarkers: root.visibleContentMarkersForBenchmark(slot, -samplingMargin, scrollViewport.height + samplingMargin)
             });
         }
         rows.sort((left, right) => left.row - right.row);
@@ -523,6 +584,7 @@ Control {
         root.pendingAnchor = null;
         root.lastVisibleAnchor = null;
         root.lastMovementEndedAnchor = null;
+        root.lastMovementEndedRows = [];
         root.clearDeferredRowMeasurements();
         root.clearRowHeights();
         root.followLiveTail = true;
@@ -570,19 +632,42 @@ Control {
             property bool contentMaterializationRequested: false
             property bool contentMaterializationReady: true
             property bool contentMeasurementReady: false
-            property string heightCacheKey: entryId
+            property string heightCacheKey: root.defaultHeightCacheKey(entryId)
             property real measuredHeight: 0
             property real pendingMeasuredHeight: 0
             readonly property Item loadedItem: rowLoader.item
 
+            function initializeLayoutHeight() {
+                // Finish the row before ListView reads its size to place this identity.
+                rowLoader.asynchronous = false;
+                synchronizeItem();
+                const prepare = rowLoader.item ? rowLoader.item["prepareForLayout"] : null;
+                if (typeof prepare === "function")
+                    prepare.call(rowLoader.item);
+                const ready = rowLoader.item && loadedEntryId === entryId && contentMeasurementReady;
+                const nextHeight = ready ? Math.ceil(Number(rowLoader.item.implicitHeight)) : 0;
+                const cachedHeight = root.cachedRowHeight(heightCacheKey);
+                root.discardDeferredRowMeasurement(entryId);
+                pendingMeasuredHeight = 0;
+                measuredHeight = Number.isFinite(nextHeight) && nextHeight > 0 ? nextHeight : root.rowHeightAt(heightCacheKey);
+                if (ready && Number.isFinite(nextHeight) && nextHeight > 0) {
+                    root.rememberRowHeight(heightCacheKey, nextHeight);
+                    const delta = nextHeight - (cachedHeight > 0 ? cachedHeight : root.estimatedRowHeight);
+                    if (Math.abs(delta) >= 0.5)
+                        root.rowGeometryChanged(sourceRow, delta);
+                }
+                rowLoader.asynchronous = true;
+            }
+
             function synchronizeLoadedItemState() {
                 const loadedItem = rowLoader.item;
                 if (!loadedItem) {
+                    const retainedHeight = scrollViewport.moving ? Number(height) : 0;
                     contentMaterializationRequested = false;
                     contentMaterializationReady = true;
                     contentMeasurementReady = false;
-                    heightCacheKey = entryId;
-                    measuredHeight = 0;
+                    measuredHeight = Number.isFinite(retainedHeight) && retainedHeight > 0 ? Math.ceil(retainedHeight) : 0;
+                    heightCacheKey = root.defaultHeightCacheKey(entryId);
                     pendingMeasuredHeight = 0;
                     return;
                 }
@@ -593,7 +678,7 @@ Control {
                 const measurementReady = loadedItem["contentMeasurementReady"];
                 contentMeasurementReady = measurementReady === undefined ? true : Boolean(measurementReady);
                 const loadedHeightCacheKey = loadedItem["heightCacheKey"];
-                heightCacheKey = loadedHeightCacheKey === undefined || String(loadedHeightCacheKey).length === 0 ? entryId : String(loadedHeightCacheKey);
+                heightCacheKey = loadedHeightCacheKey === undefined || String(loadedHeightCacheKey).length === 0 ? root.defaultHeightCacheKey(entryId) : String(loadedHeightCacheKey);
                 const implicitHeight = Number(loadedItem.implicitHeight);
                 const nextMeasuredHeight = contentMeasurementReady && Number.isFinite(implicitHeight) ? Math.ceil(implicitHeight) : 0;
                 if (loadedEntryId === entryId)
@@ -602,10 +687,16 @@ Control {
 
             function commitMeasuredHeight(nextMeasuredHeight = measuredHeight) {
                 const nextHeight = Number(nextMeasuredHeight);
-                if (!slotCompleted || loadedEntryId !== entryId || !Number.isFinite(nextHeight) || nextHeight <= 0)
+                if (!slotCompleted || pooled || loadedEntryId !== entryId || !Number.isFinite(nextHeight) || nextHeight <= 0)
                     return;
                 const previousHeight = height;
                 const cachedHeight = root.cachedRowHeight(heightCacheKey);
+                // A cached height still changes presented geometry when a pooled shell changes identity.
+                if (scrollViewport.moving && Math.abs(previousHeight - nextHeight) >= 0.5) {
+                    pendingMeasuredHeight = nextHeight;
+                    root.deferRowMeasurement(entryId, heightCacheKey, sourceRow, previousHeight, nextHeight);
+                    return;
+                }
                 if (cachedHeight === nextHeight) {
                     root.discardDeferredRowMeasurement(entryId);
                     pendingMeasuredHeight = 0;
@@ -634,7 +725,8 @@ Control {
             }
 
             function synchronizeItem() {
-                if (!rowLoader.item)
+                const loadedItem = rowLoader.item;
+                if (!loadedItem)
                     return;
                 if (entryId !== root.entryIdAt(sourceRow))
                     return;
@@ -642,10 +734,14 @@ Control {
                     replaceReusedItem();
                     return;
                 }
-                rowLoader.item["sourceRow"] = sourceRow;
-                rowLoader.item["dataRevision"] = dataRevision;
-                if (rowLoader.item["contentMaterializationAllowed"] !== undefined)
-                    rowLoader.item["contentMaterializationAllowed"] = contentMaterializationAllowed;
+                loadedItem["sourceRow"] = sourceRow;
+                if (rowLoader.item !== loadedItem)
+                    return;
+                loadedItem["dataRevision"] = dataRevision;
+                if (rowLoader.item !== loadedItem)
+                    return;
+                if (loadedItem["contentMaterializationAllowed"] !== undefined)
+                    loadedItem["contentMaterializationAllowed"] = contentMaterializationAllowed;
                 synchronizeLoadedItemState();
             }
 
@@ -676,6 +772,7 @@ Control {
             onYChanged: root.scheduleViewportUpdate()
             onHeightChanged: root.scheduleViewportUpdate()
             Component.onCompleted: {
+                initializeLayoutHeight();
                 slotCompleted = true;
                 commitMeasuredHeight();
                 ++root.activeRowSlotCount;
@@ -693,6 +790,7 @@ Control {
                 root.scheduleViewportUpdate();
             }
             ListView.onReused: {
+                initializeLayoutHeight();
                 pooled = false;
                 contentMaterializationAllowed = false;
                 root.scheduleViewportUpdate();
@@ -708,7 +806,7 @@ Control {
                 radius: 8
                 color: root.palette.alternateBase
                 opacity: 0.42
-                visible: rowSlot.measuredHeight <= 0
+                visible: !rowSlot.loadedItem || rowSlot.measuredHeight <= 0
             }
 
             Loader {
@@ -771,6 +869,7 @@ Control {
             root.followLiveTail = false;
             root.lastVisibleAnchor = root.captureVisibleAnchor();
             root.lastMovementEndedAnchor = null;
+            root.lastMovementEndedRows = [];
             root.updateContentMaterialization();
         }
         onMovementEnded: {
@@ -778,15 +877,16 @@ Control {
                 return;
             const reachedLiveTail = atYEnd;
             const stoppedAnchor = root.captureVisibleAnchor();
+            root.lastMovementEndedRows = root.visibleRowOffsetsForBenchmark();
             root.lastMovementEndedAnchor = stoppedAnchor ? {
                 entryId: String(stoppedAnchor.entryId),
                 offset: Number(stoppedAnchor.offset),
                 row: Number(stoppedAnchor.row),
                 contentY: Number(scrollViewport.contentY)
             } : null;
-            root.flushDeferredRowMeasurements(stoppedAnchor);
             root.followLiveTail = reachedLiveTail;
-            if (reachedLiveTail)
+            const settled = root.flushDeferredRowMeasurements(stoppedAnchor);
+            if (reachedLiveTail && !settled)
                 root.scrollToBottom();
             root.lastVisibleAnchor = root.captureVisibleAnchor();
             root.anchorSettlementResumeFramesRemaining = Math.max(1, root.anchorSettlementQuietFrameCount);

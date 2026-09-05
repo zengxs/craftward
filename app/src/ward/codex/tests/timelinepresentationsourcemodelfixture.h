@@ -18,6 +18,7 @@ enum SourceRole
     CommentaryRole,
     FinalAnswerRole,
     TextRole,
+    MarkupDocumentRole,
     CollisionProbeRole = Qt::UserRole + 0x1fff,
 };
 
@@ -33,6 +34,7 @@ configureRoles(QStandardItemModel& model)
       { CommentaryRole, "commentary" },
       { FinalAnswerRole, "finalAnswer" },
       { TextRole, "text" },
+      { MarkupDocumentRole, "markupDocument" },
       { CollisionProbeRole, "collisionProbe" },
     });
 }

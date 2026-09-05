@@ -10,6 +10,7 @@ Item {
 
     width: 320
     height: 240
+    property var finishedBenchmarkResult: null
 
     QtObject {
         id: fakeWindow
@@ -56,6 +57,7 @@ Item {
         property bool followLiveTail: false
         property var benchmarkAnchor: null
         property var benchmarkMovementEndedAnchor: null
+        property var benchmarkMovementEndedRows: []
         property var benchmarkOffsets: ({})
         property var benchmarkVisibleRows: []
 
@@ -89,6 +91,10 @@ Item {
 
         function movementEndedAnchorForBenchmark() {
             return benchmarkMovementEndedAnchor;
+        }
+
+        function movementEndedRowsForBenchmark() {
+            return benchmarkMovementEndedRows;
         }
 
         function visibleRowOffsetsForBenchmark() {
@@ -126,6 +132,7 @@ Item {
         minimumTrajectoryRowMotionSampleCount: 0
         minimumStoppedTrajectoryFrameSampleCount: 0
         requiredLegMeasurementCount: 0
+        onFinished: benchmarkResult => suite.finishedBenchmarkResult = benchmarkResult
     }
 
     Component {
@@ -149,6 +156,8 @@ Item {
             replacementWindow.activationRequestCount = 0;
             replacementWindow.flags = 0;
             benchmark.active = false;
+            benchmark.rendererName = "current";
+            suite.finishedBenchmarkResult = null;
             benchmark.stopTimers();
             benchmark.resetAllMetrics();
             benchmark.phaseActive = true;
@@ -161,6 +170,7 @@ Item {
             benchmark.requiredLegMeasurementCount = 0;
             fakeViewport.benchmarkAnchor = null;
             fakeViewport.benchmarkMovementEndedAnchor = null;
+            fakeViewport.benchmarkMovementEndedRows = [];
             fakeViewport.benchmarkOffsets = {};
             fakeViewport.benchmarkVisibleRows = [];
             fakeViewport.contentY = 0;
@@ -184,6 +194,28 @@ Item {
             compare(result.metrics.frameSampleCount, 120);
             compare(result.metrics.motionUpdateRatio, 1);
             verify(result.metrics.p99FrameBudgetRatio <= 1.01);
+        }
+
+        function test_acceptsTheSemanticRendererAdapter() {
+            benchmark.rendererName = "semantic";
+
+            benchmark.beginBenchmark();
+
+            verify(!benchmark.resultEmitted);
+            compare(benchmark.state, "waiting-for-content");
+            compare(suite.finishedBenchmarkResult, null);
+            benchmark.stopTimers();
+        }
+
+        function test_rejectsAnUnknownRendererAdapter() {
+            benchmark.rendererName = "unknown";
+
+            benchmark.beginBenchmark();
+
+            verify(benchmark.resultEmitted);
+            compare(benchmark.state, "finished");
+            verify(suite.finishedBenchmarkResult !== null);
+            compare(suite.finishedBenchmarkResult.failures, ["unsupported renderer adapter: unknown"]);
         }
 
         function test_resettingAPhaseRetainsAggregateMetrics() {
@@ -701,6 +733,160 @@ Item {
             compare(metrics.trajectoryMotionTrace.length, 1);
         }
 
+        function test_detectsAStoppedJumpAndReturnInANonAnchorVisibleRow() {
+            fakeViewport.benchmarkAnchor = {
+                entryId: "entry:10",
+                offset: 0,
+                row: 10
+            };
+            fakeViewport.benchmarkVisibleRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: 0
+                },
+                {
+                    entryId: "entry:11",
+                    row: 11,
+                    offset: 100
+                }
+            ];
+            fakeViewport.contentY = 1000;
+            fakeViewport.verticalVelocity = 3500;
+            fakeViewport.moving = true;
+            benchmark.activeLegContentDirection = 1;
+            benchmark.sampleTrajectoryRowMotion();
+
+            fakeViewport.benchmarkMovementEndedAnchor = {
+                entryId: "entry:10",
+                row: 10,
+                offset: -10,
+                contentY: 1010
+            };
+            fakeViewport.benchmarkMovementEndedRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: -10
+                },
+                {
+                    entryId: "entry:11",
+                    row: 11,
+                    offset: 90
+                }
+            ];
+            fakeViewport.benchmarkVisibleRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: -10
+                },
+                {
+                    entryId: "entry:11",
+                    row: 11,
+                    offset: 140
+                }
+            ];
+            fakeViewport.contentY = 1010;
+            fakeViewport.verticalVelocity = 0;
+            fakeViewport.moving = false;
+            benchmark.sampleTrajectoryRowMotion(true);
+            fakeViewport.benchmarkVisibleRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: -10
+                },
+                {
+                    entryId: "entry:11",
+                    row: 11,
+                    offset: 90
+                }
+            ];
+            benchmark.sampleTrajectoryRowMotion(true);
+            benchmark.sampleTrajectoryRowMotion(true);
+
+            const result = benchmark.buildPhaseResult("cold");
+            verify(!result.passed);
+            verify(result.failures.includes("row drifted after flick stopped"));
+            compare(result.metrics.maximumReverseRowMotionPixels, 0);
+            compare(result.metrics.maximumStoppedRowDriftPixels, 50);
+            compare(result.metrics.stoppedTrajectoryFrameSampleCount, 3);
+            compare(result.metrics.trajectoryMotionTrace.length, 1);
+            compare(result.metrics.trajectoryMotionTrace[0].entryId, "entry:11");
+        }
+
+        function test_detectsStoppedContentDriftInsideAStableRowShell() {
+            fakeViewport.benchmarkAnchor = {
+                entryId: "entry:10",
+                offset: 0,
+                row: 10
+            };
+            fakeViewport.benchmarkVisibleRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: 0,
+                    visualMarkers: [
+                        {
+                            markerId: "content:end",
+                            offset: 80
+                        }
+                    ]
+                }
+            ];
+            fakeViewport.contentY = 1000;
+            fakeViewport.verticalVelocity = 3500;
+            fakeViewport.moving = true;
+            benchmark.activeLegContentDirection = 1;
+            benchmark.sampleTrajectoryRowMotion();
+
+            fakeViewport.benchmarkMovementEndedAnchor = {
+                entryId: "entry:10",
+                row: 10,
+                offset: -10,
+                contentY: 1010
+            };
+            fakeViewport.benchmarkMovementEndedRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: -10,
+                    visualMarkers: [
+                        {
+                            markerId: "content:end",
+                            offset: 70
+                        }
+                    ]
+                }
+            ];
+            fakeViewport.benchmarkVisibleRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: -10,
+                    visualMarkers: [
+                        {
+                            markerId: "content:end",
+                            offset: 120
+                        }
+                    ]
+                }
+            ];
+            fakeViewport.contentY = 1010;
+            fakeViewport.verticalVelocity = 0;
+            fakeViewport.moving = false;
+            benchmark.sampleTrajectoryRowMotion(true);
+
+            const result = benchmark.buildPhaseResult("cold");
+            verify(!result.passed);
+            verify(result.failures.includes("row drifted after flick stopped"));
+            compare(result.metrics.maximumStoppedRowDriftPixels, 50);
+            compare(result.metrics.trajectoryMotionTrace.length, 1);
+            compare(result.metrics.trajectoryMotionTrace[0].entryId, "entry:10");
+            compare(result.metrics.trajectoryMotionTrace[0].markerId, "content:end");
+        }
+
         function test_rejectsAStoppedForwardDriftThatPersists() {
             fakeViewport.benchmarkAnchor = {
                 entryId: "entry:10",
@@ -767,6 +953,119 @@ Item {
             verify(result.failures.includes("row geometry drifted during flick trajectory"));
             compare(result.metrics.maximumTrajectoryRowGeometryDriftPixels, 10);
             compare(result.metrics.maximumStoppedRowDriftPixels, 0);
+        }
+
+        function test_detectsMovementBoundaryDriftInANonAnchorVisibleRow() {
+            fakeViewport.benchmarkAnchor = {
+                entryId: "entry:10",
+                offset: 0,
+                row: 10
+            };
+            fakeViewport.benchmarkVisibleRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: 0
+                },
+                {
+                    entryId: "entry:11",
+                    row: 11,
+                    offset: 100
+                }
+            ];
+            fakeViewport.contentY = 1000;
+            fakeViewport.moving = true;
+            benchmark.sampleTrajectoryRowMotion();
+
+            fakeViewport.benchmarkMovementEndedAnchor = {
+                entryId: "entry:10",
+                row: 10,
+                offset: -10,
+                contentY: 1010
+            };
+            fakeViewport.benchmarkMovementEndedRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: -10
+                },
+                {
+                    entryId: "entry:11",
+                    row: 11,
+                    offset: 100
+                }
+            ];
+            fakeViewport.benchmarkVisibleRows = fakeViewport.benchmarkMovementEndedRows;
+            fakeViewport.contentY = 1010;
+            fakeViewport.moving = false;
+            benchmark.sampleTrajectoryRowMotion(true);
+
+            const result = benchmark.buildPhaseResult("cold");
+            verify(!result.passed);
+            verify(result.failures.includes("row geometry drifted during flick trajectory"));
+            compare(result.metrics.maximumTrajectoryRowGeometryDriftPixels, 10);
+            compare(result.metrics.maximumStoppedRowDriftPixels, 0);
+            compare(result.metrics.trajectoryMotionTrace.length, 1);
+            compare(result.metrics.trajectoryMotionTrace[0].entryId, "entry:11");
+            compare(result.metrics.trajectoryMotionTrace[0].kind, "movement-boundary");
+        }
+
+        function test_detectsMovementBoundaryContentDriftInsideAStableRowShell() {
+            fakeViewport.benchmarkAnchor = {
+                entryId: "entry:10",
+                offset: 0,
+                row: 10
+            };
+            fakeViewport.benchmarkVisibleRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: 0,
+                    visualMarkers: [
+                        {
+                            markerId: "content:end",
+                            offset: 80
+                        }
+                    ]
+                }
+            ];
+            fakeViewport.contentY = 1000;
+            fakeViewport.moving = true;
+            benchmark.sampleTrajectoryRowMotion();
+
+            fakeViewport.benchmarkMovementEndedAnchor = {
+                entryId: "entry:10",
+                row: 10,
+                offset: -10,
+                contentY: 1010
+            };
+            fakeViewport.benchmarkMovementEndedRows = [
+                {
+                    entryId: "entry:10",
+                    row: 10,
+                    offset: -10,
+                    visualMarkers: [
+                        {
+                            markerId: "content:end",
+                            offset: 80
+                        }
+                    ]
+                }
+            ];
+            fakeViewport.benchmarkVisibleRows = fakeViewport.benchmarkMovementEndedRows;
+            fakeViewport.contentY = 1010;
+            fakeViewport.moving = false;
+            benchmark.sampleTrajectoryRowMotion(true);
+
+            const result = benchmark.buildPhaseResult("cold");
+            verify(!result.passed);
+            verify(result.failures.includes("row geometry drifted during flick trajectory"));
+            compare(result.metrics.maximumTrajectoryRowGeometryDriftPixels, 10);
+            compare(result.metrics.maximumStoppedRowDriftPixels, 0);
+            compare(result.metrics.trajectoryMotionTrace.length, 1);
+            compare(result.metrics.trajectoryMotionTrace[0].entryId, "entry:10");
+            compare(result.metrics.trajectoryMotionTrace[0].markerId, "content:end");
+            compare(result.metrics.trajectoryMotionTrace[0].kind, "movement-boundary-content");
         }
 
         function test_waitsForActualStoppedFramesBeforeCompletingALeg() {

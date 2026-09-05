@@ -22,6 +22,20 @@ Item {
         id: testDocument
 
         readonly property var renderModel: testRenderModel
+        property string pendingText: ""
+
+        function prepareForLayout() {
+            if (pendingText.length === 0)
+                return;
+            testRenderModel.append({
+                segmentId: "prose:0",
+                codeBlock: false,
+                segmentText: pendingText,
+                language: "",
+                markdown: true
+            });
+            pendingText = "";
+        }
     }
 
     Component {
@@ -38,6 +52,7 @@ Item {
 
         function init() {
             ApplicationClipboard.reset();
+            testDocument.pendingText = "";
             testRenderModel.clear();
             testRenderModel.append({
                 "segmentId": "prose:0",
@@ -74,6 +89,18 @@ Item {
             verify(codeSurface.border.width > 0 && codeSurface.border.width <= 1);
             compare(codeSurface.implicitHeight, codeText.implicitHeight + 16);
             compare(syntaxLabel.text, "JavaScript");
+        }
+
+        function test_preparesColdContentBeforeMeasuringTheColumn() {
+            testRenderModel.clear();
+            testDocument.pendingText = "A cold document ready for its first layout.";
+
+            suite.view.prepareForLayout();
+
+            const proseText = findChild(suite.view, "markupProseText");
+            verify(proseText !== null);
+            verify(suite.view.implicitHeight > 0);
+            compare(suite.view.implicitHeight, proseText.implicitHeight);
         }
 
         function test_titleCasesAnUnknownSyntaxName() {

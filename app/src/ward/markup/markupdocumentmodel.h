@@ -46,6 +46,7 @@ class MarkupDocumentModel : public QAbstractListModel
     [[nodiscard]] QAbstractItemModel* renderModel() const;
 
     bool reconcileSource(const QString& source, SourceFormat format, bool finalized = true);
+    Q_INVOKABLE void prepareForLayout();
 
   signals:
     void documentReconciled();
@@ -105,15 +106,16 @@ class MarkupDocumentModel : public QAbstractListModel
     void scheduleParse();
     void dispatchParse();
     void applyFinishedParse();
+    void applyParseResult(ParseResult result);
     void reconcileRows(QList<BlockRow> rows);
 
     QString requestedSource_;
     SourceFormat requestedFormat_ = SourceFormat::PlainText;
     bool requestedFinalized_ = false;
     quint64 requestedGeneration_ = 0;
+    quint64 appliedGeneration_ = 0;
     QString appliedSource_;
     SourceFormat appliedFormat_ = SourceFormat::PlainText;
-    bool appliedFinalized_ = false;
     bool hasAppliedSource_ = false;
     QList<BlockRow> rows_;
     QTimer parseTimer_;

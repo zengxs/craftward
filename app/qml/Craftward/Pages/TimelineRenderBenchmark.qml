@@ -71,8 +71,10 @@ QtObject {
     property real previousContentY: Number.NaN
     property bool previousMoving: false
     property real previousTrajectoryContentY: Number.NaN
+    property var previousTrajectoryRows: ({})
     property var previousTrajectoryVisibleRowOffsets: ({})
-    property var movementEndBaselineAnchor: null
+    property real movementEndBaselineContentY: Number.NaN
+    property var movementEndBaselineRows: ({})
     property int stoppedTrajectoryFramesSampled: 0
     property var settlementReferenceAnchor: null
     property var phaseResults: []
@@ -115,8 +117,10 @@ QtObject {
 
     function clearTrajectorySampleState() {
         root.previousTrajectoryContentY = Number.NaN;
+        root.previousTrajectoryRows = {};
         root.previousTrajectoryVisibleRowOffsets = {};
-        root.movementEndBaselineAnchor = null;
+        root.movementEndBaselineContentY = Number.NaN;
+        root.movementEndBaselineRows = {};
         root.stoppedTrajectoryFramesSampled = 0;
     }
 
@@ -260,7 +264,8 @@ QtObject {
         const velocity = Number(sample.velocity);
         const rowState = sample.rowState ?? null;
         const offsetDelta = Number(currentOffset) - Number(previousOffset);
-        const direction = Math.sign(Number(root.activeLegContentDirection));
+        const trackDirection = sample.trackDirection === undefined ? moving : Boolean(sample.trackDirection);
+        const direction = trackDirection ? Math.sign(Number(root.activeLegContentDirection)) : 0;
         const reverseMotion = direction !== 0 && Math.abs(offsetDelta) >= root.movementEpsilon && direction * offsetDelta > 0 ? Math.abs(offsetDelta) : 0;
         const previousRowContentY = Number(previousOffset) + Number(previousContentY);
         const currentRowContentY = Number(currentOffset) + Number(currentContentY);
@@ -272,6 +277,7 @@ QtObject {
                 phase: root.phaseIndex >= 0 && root.phaseIndex < root.phaseNames.length ? root.phaseNames[root.phaseIndex] : "",
                 kind: String(sample.kind ?? "trajectory-motion"),
                 entryId: String(entryId),
+                markerId: String(sample.markerId ?? ""),
                 row: Number(row),
                 contentY: root.rounded(root.targetViewport.contentY),
                 contentDelta: root.rounded(Number(currentContentY) - Number(previousContentY)),
@@ -305,6 +311,187 @@ QtObject {
         root.metricAccumulator.recordTrackingGap(trackingGapEvent);
     }
 
+    function rowStateMap(rows) {
+        const states = {};
+        if (!Array.isArray(rows))
+            return states;
+        for (const rowState of rows) {
+            const entryId = String(rowState.entryId ?? "");
+            const offset = Number(rowState.offset);
+            if (entryId.length === 0 || !Number.isFinite(offset))
+                continue;
+            states[entryId] = rowState;
+        }
+        return states;
+    }
+
+    function visualMarkerMap(rowsByEntryId) {
+        const markers = {};
+        for (const entryId of Object.keys(rowsByEntryId)) {
+            const rowState = rowsByEntryId[entryId];
+            const visualMarkers = Array.isArray(rowState.visualMarkers) ? rowState.visualMarkers : [];
+            for (const visualMarker of visualMarkers) {
+                const markerId = String(visualMarker.markerId ?? "");
+                const offset = Number(visualMarker.offset);
+                if (markerId.length === 0 || !Number.isFinite(offset))
+                    continue;
+                markers[entryId + "\u001f" + markerId] = {
+                    entryId: entryId,
+                    markerId: markerId,
+                    row: Number(rowState.row),
+                    offset: offset,
+                    rowState: rowState
+                };
+            }
+        }
+        return markers;
+    }
+
+    function recordVisualMarkerMotion(previousRows, currentRows, sample) {
+        const previousMarkers = root.visualMarkerMap(previousRows);
+        const currentMarkers = root.visualMarkerMap(currentRows);
+        let missingMarkerCount = 0;
+        for (const markerKey of Object.keys(previousMarkers)) {
+            const previousMarker = previousMarkers[markerKey];
+            const currentMarker = currentMarkers[markerKey];
+            if (!currentMarker) {
+                if (sample.requirePreviousMarkers) {
+                    ++missingMarkerCount;
+                    root.recordTrajectoryTrackingGap("movement-end visual marker unavailable in stopped frame", false, sample.velocity, previousMarker.entryId, previousMarker.row);
+                }
+                continue;
+            }
+            root.recordTrajectoryRowMotion({
+                kind: sample.kind,
+                entryId: previousMarker.entryId,
+                markerId: previousMarker.markerId,
+                row: currentMarker.row,
+                previousOffset: previousMarker.offset,
+                currentOffset: currentMarker.offset,
+                previousContentY: sample.previousContentY,
+                currentContentY: sample.currentContentY,
+                moving: sample.moving,
+                velocity: sample.velocity,
+                rowState: currentMarker.rowState,
+                trackDirection: sample.trackDirection,
+                trackContentCoordinate: sample.trackContentCoordinate,
+                trackStoppedOffset: sample.trackStoppedOffset
+            });
+        }
+        return missingMarkerCount;
+    }
+
+    function visibleRowsForStoppedFrame() {
+        const visibleRowsMethod = root.targetViewport.visibleRowOffsetsForBenchmark;
+        const visibleRows = typeof visibleRowsMethod === "function" ? visibleRowsMethod.call(root.targetViewport) : [];
+        if (Array.isArray(visibleRows) && visibleRows.length > 0)
+            return visibleRows;
+        const anchor = root.targetViewport.captureVisibleAnchor();
+        const offset = anchor ? Number(root.targetViewport.anchorOffsetForBenchmark(anchor)) : Number.NaN;
+        return anchor && Number.isFinite(offset) ? [
+            {
+                entryId: String(anchor.entryId),
+                row: Number(anchor.row),
+                offset: offset
+            }
+        ] : [];
+    }
+
+    function movementEndedRowsForStoppedFrame(movementEndedAnchor) {
+        const movementEndedRowsMethod = root.targetViewport.movementEndedRowsForBenchmark;
+        const movementEndedRows = typeof movementEndedRowsMethod === "function" ? movementEndedRowsMethod.call(root.targetViewport) : [];
+        if (Array.isArray(movementEndedRows) && movementEndedRows.length > 0)
+            return movementEndedRows;
+        return movementEndedAnchor ? [movementEndedAnchor] : [];
+    }
+
+    function recordMovementBoundaryRows(movementEndedRows, movementEndedContentY, velocity) {
+        const movementEndedRowsByEntryId = root.rowStateMap(movementEndedRows);
+        let commonRowCount = 0;
+        for (const rowState of movementEndedRows) {
+            const entryId = String(rowState.entryId ?? "");
+            const lastPresentedOffset = Number(root.previousTrajectoryVisibleRowOffsets[entryId]);
+            const movementEndedOffset = Number(rowState.offset);
+            if (entryId.length === 0 || !Number.isFinite(lastPresentedOffset) || !Number.isFinite(movementEndedOffset))
+                continue;
+            ++commonRowCount;
+            root.recordTrajectoryRowMotion({
+                kind: "movement-boundary",
+                entryId: entryId,
+                row: rowState.row,
+                previousOffset: lastPresentedOffset,
+                currentOffset: movementEndedOffset,
+                previousContentY: root.previousTrajectoryContentY,
+                currentContentY: movementEndedContentY,
+                moving: false,
+                velocity: velocity,
+                rowState: rowState,
+                trackDirection: true,
+                trackContentCoordinate: true
+            });
+        }
+        root.recordVisualMarkerMotion(root.previousTrajectoryRows, movementEndedRowsByEntryId, {
+            kind: "movement-boundary-content",
+            previousContentY: root.previousTrajectoryContentY,
+            currentContentY: movementEndedContentY,
+            moving: false,
+            velocity: velocity,
+            trackDirection: true,
+            trackContentCoordinate: true
+        });
+        root.metricAccumulator.recordTrajectoryCoverage({
+            rowMotionSamples: commonRowCount > 0 ? 1 : 0,
+            missingRowFrames: commonRowCount > 0 ? 0 : 1
+        });
+        if (commonRowCount === 0)
+            root.recordTrajectoryTrackingGap("no row survived to the movement-end snapshot", false, velocity);
+    }
+
+    function recordStoppedRows(baselineRows, baselineContentY, currentRows, velocity) {
+        const currentRowsByEntryId = root.rowStateMap(currentRows);
+        const baselineEntryIds = Object.keys(baselineRows);
+        let comparedRowCount = 0;
+        let missingRowCount = 0;
+        for (const entryId of baselineEntryIds) {
+            const baselineRow = baselineRows[entryId];
+            const currentRow = currentRowsByEntryId[entryId];
+            if (!currentRow) {
+                ++missingRowCount;
+                root.recordTrajectoryTrackingGap("movement-end row unavailable in stopped frame", false, velocity, entryId, baselineRow.row);
+                continue;
+            }
+            ++comparedRowCount;
+            root.recordTrajectoryRowMotion({
+                kind: "stopped-transaction",
+                entryId: entryId,
+                row: currentRow.row,
+                previousOffset: baselineRow.offset,
+                currentOffset: currentRow.offset,
+                previousContentY: baselineContentY,
+                currentContentY: root.targetViewport.contentY,
+                moving: false,
+                velocity: velocity,
+                rowState: currentRow,
+                trackStoppedOffset: true
+            });
+        }
+        missingRowCount += root.recordVisualMarkerMotion(baselineRows, currentRowsByEntryId, {
+            kind: "stopped-content",
+            previousContentY: baselineContentY,
+            currentContentY: root.targetViewport.contentY,
+            moving: false,
+            velocity: velocity,
+            trackStoppedOffset: true,
+            requirePreviousMarkers: true
+        });
+        root.metricAccumulator.recordTrajectoryCoverage({
+            rowMotionSamples: comparedRowCount > 0 ? 1 : 0,
+            missingRowFrames: missingRowCount > 0 || comparedRowCount === 0 ? 1 : 0
+        });
+        if (baselineEntryIds.length === 0)
+            root.recordTrajectoryTrackingGap("movement-end row set unavailable", false, velocity);
+    }
+
     function sampleTrajectoryRowMotion(presentedFrame = false) {
         if (!root.legActive || !root.targetViewport)
             return;
@@ -319,98 +506,42 @@ QtObject {
             if (root.stoppedTrajectoryFramesSampled === 0) {
                 const movementEndedAnchorMethod = root.targetViewport.movementEndedAnchorForBenchmark;
                 const movementEndedAnchor = typeof movementEndedAnchorMethod === "function" ? movementEndedAnchorMethod.call(root.targetViewport) : null;
-                const entryId = movementEndedAnchor ? String(movementEndedAnchor.entryId) : "";
-                const lastPresentedOffset = Number(root.previousTrajectoryVisibleRowOffsets[entryId]);
-                const lastPresentedContentY = Number(root.previousTrajectoryContentY);
-                const movementEndedOffset = movementEndedAnchor ? Number(movementEndedAnchor.offset) : Number.NaN;
                 const movementEndedContentY = movementEndedAnchor ? Number(movementEndedAnchor.contentY) : Number.NaN;
-                if (movementEndedAnchor && Number.isFinite(lastPresentedOffset) && Number.isFinite(lastPresentedContentY) && Number.isFinite(movementEndedOffset) && Number.isFinite(movementEndedContentY)) {
-                    root.metricAccumulator.recordTrajectoryCoverage({
-                        rowMotionSamples: 1
-                    });
-                    root.recordTrajectoryRowMotion({
-                        kind: "movement-boundary",
-                        entryId: entryId,
-                        row: movementEndedAnchor.row,
-                        previousOffset: lastPresentedOffset,
-                        currentOffset: movementEndedOffset,
-                        previousContentY: lastPresentedContentY,
-                        currentContentY: movementEndedContentY,
-                        moving: false,
-                        velocity: velocity,
-                        trackContentCoordinate: true
-                    });
+                const movementEndedRows = root.movementEndedRowsForStoppedFrame(movementEndedAnchor);
+                if (movementEndedAnchor && Number.isFinite(root.previousTrajectoryContentY) && Number.isFinite(movementEndedContentY)) {
+                    root.recordMovementBoundaryRows(movementEndedRows, movementEndedContentY, velocity);
                 } else {
                     root.metricAccumulator.recordTrajectoryCoverage({
                         missingRowFrames: 1
                     });
-                    root.recordTrajectoryTrackingGap("movement-end anchor did not survive from the last moving frame", false, velocity, entryId, movementEndedAnchor ? movementEndedAnchor.row : -1);
+                    root.recordTrajectoryTrackingGap("movement-end snapshot unavailable", false, velocity);
                 }
 
-                const comparisonAnchor = movementEndedAnchor;
-                const expectedOffset = comparisonAnchor ? Number(comparisonAnchor.offset) : Number.NaN;
-                const previousContentY = comparisonAnchor ? Number(comparisonAnchor.contentY) : Number.NaN;
-                const currentOffset = comparisonAnchor ? Number(root.targetViewport.anchorOffsetForBenchmark(comparisonAnchor)) : Number.NaN;
-                if (comparisonAnchor && Number.isFinite(expectedOffset) && Number.isFinite(previousContentY) && Number.isFinite(currentOffset)) {
-                    root.metricAccumulator.recordTrajectoryCoverage({
-                        rowMotionSamples: 1
-                    });
-                    root.recordTrajectoryRowMotion({
-                        kind: "stopped-transaction",
-                        entryId: entryId,
-                        row: comparisonAnchor.row,
-                        previousOffset: expectedOffset,
-                        currentOffset: currentOffset,
-                        previousContentY: previousContentY,
-                        currentContentY: root.targetViewport.contentY,
-                        moving: false,
-                        velocity: velocity,
-                        trackStoppedOffset: true
-                    });
-                    root.movementEndBaselineAnchor = {
-                        entryId: entryId,
-                        row: Number(comparisonAnchor.row),
-                        offset: expectedOffset,
-                        contentY: previousContentY
-                    };
+                const movementEndedRowsByEntryId = root.rowStateMap(movementEndedRows);
+                if (movementEndedAnchor && Object.keys(movementEndedRowsByEntryId).length > 0 && Number.isFinite(movementEndedContentY)) {
+                    root.recordStoppedRows(movementEndedRowsByEntryId, movementEndedContentY, root.visibleRowsForStoppedFrame(), velocity);
+                    root.movementEndBaselineRows = movementEndedRowsByEntryId;
+                    root.movementEndBaselineContentY = movementEndedContentY;
                 } else {
                     root.metricAccumulator.recordTrajectoryCoverage({
                         missingRowFrames: 1
                     });
-                    root.recordTrajectoryTrackingGap("movement-end anchor unavailable", false, velocity, entryId, comparisonAnchor ? comparisonAnchor.row : -1);
+                    root.recordTrajectoryTrackingGap("movement-end row baseline unavailable", false, velocity);
                 }
             } else {
-                const transactionAnchor = root.movementEndBaselineAnchor;
-                const entryId = transactionAnchor ? String(transactionAnchor.entryId) : "";
-                const expectedOffset = transactionAnchor ? Number(transactionAnchor.offset) : Number.NaN;
-                const expectedContentY = transactionAnchor ? Number(transactionAnchor.contentY) : Number.NaN;
-                const currentOffset = transactionAnchor ? Number(root.targetViewport.anchorOffsetForBenchmark(transactionAnchor)) : Number.NaN;
-                if (transactionAnchor && Number.isFinite(expectedOffset) && Number.isFinite(expectedContentY) && Number.isFinite(currentOffset)) {
-                    root.metricAccumulator.recordTrajectoryCoverage({
-                        rowMotionSamples: 1
-                    });
-                    root.recordTrajectoryRowMotion({
-                        kind: "stopped-transaction",
-                        entryId: entryId,
-                        row: transactionAnchor.row,
-                        previousOffset: expectedOffset,
-                        currentOffset: currentOffset,
-                        previousContentY: expectedContentY,
-                        currentContentY: root.targetViewport.contentY,
-                        moving: false,
-                        velocity: velocity,
-                        trackStoppedOffset: true
-                    });
+                if (Object.keys(root.movementEndBaselineRows).length > 0 && Number.isFinite(root.movementEndBaselineContentY)) {
+                    root.recordStoppedRows(root.movementEndBaselineRows, root.movementEndBaselineContentY, root.visibleRowsForStoppedFrame(), velocity);
                 } else {
                     root.metricAccumulator.recordTrajectoryCoverage({
                         missingRowFrames: 1
                     });
-                    root.recordTrajectoryTrackingGap("stopped transaction anchor unavailable", false, velocity, entryId, transactionAnchor ? transactionAnchor.row : -1);
+                    root.recordTrajectoryTrackingGap("stopped transaction row baseline unavailable", false, velocity);
                 }
             }
             ++root.stoppedTrajectoryFramesSampled;
             if (root.stoppedTrajectoryFramesSampled >= root.stoppedTrajectoryFrameSampleCount) {
-                root.movementEndBaselineAnchor = null;
+                root.movementEndBaselineContentY = Number.NaN;
+                root.movementEndBaselineRows = {};
             }
             return;
         }
@@ -435,6 +566,7 @@ QtObject {
                 missingRowFrames: 1
             });
             root.recordTrajectoryTrackingGap("no trajectory rows", true, velocity);
+            root.previousTrajectoryRows = {};
             root.previousTrajectoryVisibleRowOffsets = {};
             root.previousTrajectoryContentY = Number.NaN;
             return;
@@ -455,6 +587,7 @@ QtObject {
                 missingRowFrames: 1
             });
             root.recordTrajectoryTrackingGap("no valid trajectory rows", true, velocity);
+            root.previousTrajectoryRows = {};
             root.previousTrajectoryVisibleRowOffsets = {};
             root.previousTrajectoryContentY = Number.NaN;
             return;
@@ -477,9 +610,19 @@ QtObject {
                     moving: true,
                     velocity: velocity,
                     rowState: currentRows[entryId],
+                    trackDirection: true,
                     trackContentCoordinate: true
                 });
             }
+            root.recordVisualMarkerMotion(root.previousTrajectoryRows, currentRows, {
+                kind: "trajectory-content",
+                previousContentY: root.previousTrajectoryContentY,
+                currentContentY: root.targetViewport.contentY,
+                moving: true,
+                velocity: velocity,
+                trackDirection: true,
+                trackContentCoordinate: true
+            });
             if (commonRowCount === 0) {
                 root.metricAccumulator.recordTrajectoryCoverage({
                     missingRowFrames: 1
@@ -491,6 +634,7 @@ QtObject {
                 });
             }
         }
+        root.previousTrajectoryRows = currentRows;
         root.previousTrajectoryVisibleRowOffsets = currentOffsets;
         root.previousTrajectoryContentY = Number(root.targetViewport.contentY);
     }
@@ -640,7 +784,7 @@ QtObject {
         root.lastReadinessContentHeight = Number.NaN;
         root.readinessMilliseconds = 0;
         root.state = "waiting-for-content";
-        if (root.rendererName !== "current") {
+        if (root.rendererName !== "current" && root.rendererName !== "semantic") {
             root.failBeforeMeasurement("unsupported renderer adapter: " + root.rendererName);
             return;
         }

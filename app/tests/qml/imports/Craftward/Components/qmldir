@@ -5,6 +5,7 @@ CopyFeedbackButton 1.0 CopyFeedbackButton.qml
 FrameTimingOverlay 1.0 FrameTimingOverlay.qml
 IconButton 1.0 IconButton.qml
 MarkupDocumentView 1.0 MarkupDocumentView.qml
+MarkupSegmentView 1.0 MarkupSegmentView.qml
 MenuComboBox 1.0 MenuComboBox.qml
 OverlayScrollBar 1.0 OverlayScrollBar.qml
 singleton Typography 1.0 Typography.qml

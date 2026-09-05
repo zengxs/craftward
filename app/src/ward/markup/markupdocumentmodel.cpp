@@ -129,7 +129,7 @@ MarkupDocumentModel::reconcileSource(const QString& source, SourceFormat format,
         parseTimer_.stop();
         appliedSource_ = source;
         appliedFormat_ = format;
-        appliedFinalized_ = finalized;
+        appliedGeneration_ = requestedGeneration_;
         hasAppliedSource_ = true;
         reconcileRows(fallbackRows(source, format));
         emit documentReconciled();
@@ -138,6 +138,16 @@ MarkupDocumentModel::reconcileSource(const QString& source, SourceFormat format,
 
     scheduleParse();
     return true;
+}
+
+void
+MarkupDocumentModel::prepareForLayout()
+{
+    if (appliedGeneration_ == requestedGeneration_)
+        return;
+    // A newly placed viewport row needs this snapshot before its geometry becomes visible.
+    parseTimer_.stop();
+    applyParseResult(parseRequest(makeParseRequest()));
 }
 
 QList<MarkupDocumentModel::BlockRow>
@@ -311,22 +321,24 @@ MarkupDocumentModel::dispatchParse()
 void
 MarkupDocumentModel::applyFinishedParse()
 {
-    ParseResult result = parseWatcher_.result();
-    if (result.generation == requestedGeneration_) {
+    applyParseResult(parseWatcher_.result());
+    if (appliedGeneration_ != requestedGeneration_)
+        scheduleParse();
+}
+
+void
+MarkupDocumentModel::applyParseResult(ParseResult result)
+{
+    if (result.generation == requestedGeneration_ && result.generation > appliedGeneration_) {
         if (!result.parsed)
             qWarning().noquote() << "Failed to parse a markup document:" << result.errorMessage;
         appliedSource_ = result.source;
         appliedFormat_ = result.format;
-        appliedFinalized_ = result.finalized;
+        appliedGeneration_ = result.generation;
         hasAppliedSource_ = true;
         reconcileRows(std::move(result.rows));
         emit documentReconciled();
     }
-
-    const bool requestIsApplied = hasAppliedSource_ && appliedSource_ == requestedSource_ &&
-                                  appliedFormat_ == requestedFormat_ && appliedFinalized_ == requestedFinalized_;
-    if (!requestIsApplied)
-        scheduleParse();
 }
 
 void

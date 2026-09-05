@@ -93,6 +93,8 @@ if(BUILD_TESTING)
     qt_add_executable(CraftwardCodexTimelineViewportIntegrationTest
         codextimelinepresentationmodel.cpp
         codextimelinepresentationmodel.h
+        codextimelineviewportmodel.cpp
+        codextimelineviewportmodel.h
         tests/codextimelineviewportintegrationtest.cpp
     )
     target_compile_definitions(CraftwardCodexTimelineViewportIntegrationTest
@@ -110,6 +112,8 @@ if(BUILD_TESTING)
             Qt6::Qml
             Qt6::Quick
             Qt6::Test
+            CraftwardMarkup
+            "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
     )
     add_test(
         NAME CraftwardCodexTimelineViewportIntegrationTest
