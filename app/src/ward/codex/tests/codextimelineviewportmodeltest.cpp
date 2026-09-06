@@ -11,6 +11,8 @@
 #include <QStandardItemModel>
 #include <QtTest/QTest>
 
+#include <array>
+#include <memory>
 #include <utility>
 
 namespace {
@@ -228,6 +230,10 @@ class CodexTimelineViewportModelTest : public QObject
     void usesDocumentRenderSegmentsAsViewportRows();
     void reconcilesOneRenderResetWithoutResettingViewport();
     void integratesOneRealMarkupDocumentWithoutResettingViewport();
+    void survivesSourceTeardownAfterMarkupDocuments();
+    void ignoresDestroyedDocumentNotificationsAfterReplacement();
+    void reconcilesAReplacedRenderModelAfterDestruction_data();
+    void reconcilesAReplacedRenderModelAfterDestruction();
     void updatesOneMutableBlockWithoutResettingStableRows();
     void insertsOneCompletedBlockWithoutResettingStableRows();
     void forwardsOneSourceUpdateWithoutResettingRows();
@@ -237,6 +243,121 @@ class CodexTimelineViewportModelTest : public QObject
     void removesOneSourceMessageWithoutResettingOtherRows();
     void forwardsOneAllRoleUpdateWithoutReadingUnchangedHistory();
 };
+
+void
+CodexTimelineViewportModelTest::survivesSourceTeardownAfterMarkupDocuments()
+{
+    CodexTimelineViewportModel model;
+    {
+        InspectableSourceModel source;
+        configureSourceRoles(source);
+        std::array<std::unique_ptr<MarkupDocumentModel>, 2> documents;
+        for (auto& document : documents) {
+            document = std::make_unique<MarkupDocumentModel>();
+            QVERIFY(document->reconcileSource(QStringLiteral("Answer"), MarkupDocumentModel::SourceFormat::Markdown));
+            document->prepareForLayout();
+            auto* message = new QStandardItem;
+            message->setData(QStringLiteral("answer:%1").arg(source.rowCount()), EntryIdRole);
+            message->setData(QVariant::fromValue(static_cast<QObject*>(document.get())), MarkupDocumentRole);
+            source.appendRow(message);
+        }
+        model.setSourceModel(&source);
+        QCOMPARE(model.rowCount(), 2);
+        source.resetDataReadCount();
+
+        // Timeline rows release their documents before the source emits destroyed().
+        for (auto& document : documents)
+            document.reset();
+
+        QCOMPARE(source.dataReadCount(), 0);
+    }
+    QVERIFY(!model.sourceModel());
+    QCOMPARE(model.rowCount(), 0);
+    QCoreApplication::processEvents();
+    QCOMPARE(model.rowCount(), 0);
+}
+
+void
+CodexTimelineViewportModelTest::ignoresDestroyedDocumentNotificationsAfterReplacement()
+{
+    InspectableSourceModel source;
+    configureSourceRoles(source);
+    auto document = std::make_unique<MarkupDocumentModel>();
+    QVERIFY(document->reconcileSource(QStringLiteral("Before"), MarkupDocumentModel::SourceFormat::Markdown));
+    document->prepareForLayout();
+    auto* message = new QStandardItem;
+    message->setData(QStringLiteral("answer"), EntryIdRole);
+    message->setData(QVariant::fromValue(static_cast<QObject*>(document.get())), MarkupDocumentRole);
+    source.appendRow(message);
+    MarkupDocumentModel replacement;
+    QVERIFY(replacement.reconcileSource(QStringLiteral("After"), MarkupDocumentModel::SourceFormat::Markdown));
+    replacement.prepareForLayout();
+    CodexTimelineViewportModel model;
+    model.setSourceModel(&source);
+    QCOMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("Before"));
+
+    document.reset();
+    message->setData(QVariant::fromValue(static_cast<QObject*>(&replacement)), MarkupDocumentRole);
+
+    QCOMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("After"));
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy changedSpy(&model, &QAbstractItemModel::dataChanged);
+    source.resetDataReadCount();
+
+    QCoreApplication::sendPostedEvents(&model, QEvent::MetaCall);
+
+    QCOMPARE(source.dataReadCount(), 0);
+    QCOMPARE(resetSpy.count(), 0);
+    QCOMPARE(changedSpy.count(), 0);
+    QCOMPARE(model.entryIdAt(0), QStringLiteral("answer"));
+}
+
+void
+CodexTimelineViewportModelTest::reconcilesAReplacedRenderModelAfterDestruction_data()
+{
+    QTest::addColumn<bool>("initiallyEmpty");
+    QTest::newRow("semantic-rows") << false;
+    QTest::newRow("pending-placeholder") << true;
+}
+
+void
+CodexTimelineViewportModelTest::reconcilesAReplacedRenderModelAfterDestruction()
+{
+    QFETCH(bool, initiallyEmpty);
+    auto renderModel = std::make_unique<QStandardItemModel>();
+    configureRenderRoles(*renderModel);
+    if (!initiallyEmpty)
+        appendSegment(*renderModel, QStringLiteral("before"), QStringLiteral("Before"));
+    QStandardItemModel replacement;
+    configureRenderRoles(replacement);
+    appendSegment(replacement, QStringLiteral("after"), QStringLiteral("After"));
+    appendSegment(replacement, QStringLiteral("code"), QStringLiteral("return 0;"), true);
+    QObject document;
+    document.setProperty("renderModel", QVariant::fromValue(static_cast<QAbstractItemModel*>(renderModel.get())));
+    InspectableSourceModel source;
+    configureSourceRoles(source);
+    auto* message = new QStandardItem;
+    message->setData(QStringLiteral("answer"), EntryIdRole);
+    message->setData(QVariant::fromValue(&document), MarkupDocumentRole);
+    source.appendRow(message);
+    CodexTimelineViewportModel model;
+    model.setSourceModel(&source);
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+    QCOMPARE(model.rowCount(), 1);
+    source.resetDataReadCount();
+
+    renderModel.reset();
+
+    QCOMPARE(source.dataReadCount(), 0);
+    document.setProperty("renderModel", QVariant::fromValue(static_cast<QAbstractItemModel*>(&replacement)));
+    QCoreApplication::sendPostedEvents(&model, QEvent::MetaCall);
+
+    QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(model.entryIdAt(0), QStringLiteral("answer"));
+    QCOMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("After"));
+    QCOMPARE(model.valueAt(1, QStringLiteral("blockText")).toString(), QStringLiteral("return 0;"));
+    QCOMPARE(resetSpy.count(), 0);
+}
 
 void
 CodexTimelineViewportModelTest::expandsOneMessageIntoStableSemanticBlockRows()

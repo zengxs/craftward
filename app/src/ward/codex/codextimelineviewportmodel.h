@@ -64,6 +64,8 @@ class CodexTimelineViewportModel : public QAbstractListModel
     {
         int sourceRow = -1;
         QPointer<QAbstractItemModel> blockModel;
+        // Distinguish a destroyed observed model from a row that never had one.
+        bool hadBlockModel = false;
         int blockRow = -1;
         QString entryId;
         QString sourceEntryId;
@@ -86,6 +88,7 @@ class CodexTimelineViewportModel : public QAbstractListModel
     void removeSourceRows(const QModelIndex& parent, int first, int last);
     [[nodiscard]] QList<ViewportRow> viewportRowsForSourceRow(int sourceRow);
     void connectBlockModel(QAbstractItemModel* blockModel, int sourceRow);
+    void scheduleDestroyedBlockModelReconciliation();
     void disconnectBlockModelSourceRow(QAbstractItemModel* blockModel, int sourceRow);
     void disconnectBlockModels();
     void reconnectBlockModels();
@@ -104,4 +107,5 @@ class CodexTimelineViewportModel : public QAbstractListModel
     int detailRowRole_ = -1;
     int turnExpandedRole_ = -1;
     int revision_ = 0;
+    bool destroyedBlockModelReconciliationScheduled_ = false;
 };

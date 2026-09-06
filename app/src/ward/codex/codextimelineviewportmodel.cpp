@@ -486,6 +486,7 @@ CodexTimelineViewportModel::viewportRowsForSourceRow(int sourceRow)
             ViewportRow{
               .sourceRow = sourceRow,
               .blockModel = blockModel,
+              .hadBlockModel = blockModel != nullptr,
               .entryId = sourceEntryId,
               .sourceEntryId = sourceEntryId,
             },
@@ -500,6 +501,7 @@ CodexTimelineViewportModel::viewportRowsForSourceRow(int sourceRow)
         rows.append(ViewportRow{
           .sourceRow = sourceRow,
           .blockModel = blockModel,
+          .hadBlockModel = true,
           .blockRow = blockRow,
           .entryId = viewportEntryId(sourceEntryId, blockModel, blockRow, blockIdRole),
           .sourceEntryId = sourceEntryId,
@@ -526,8 +528,34 @@ CodexTimelineViewportModel::connectBlockModel(QAbstractItemModel* blockModel, in
     subscription.connections.append(connect(blockModel, &QAbstractItemModel::rowsMoved, this, reconcile));
     subscription.connections.append(connect(blockModel, &QAbstractItemModel::layoutChanged, this, reconcile));
     subscription.connections.append(connect(blockModel, &QAbstractItemModel::dataChanged, this, reconcile));
-    subscription.connections.append(
-      connect(blockModel, &QObject::destroyed, this, &CodexTimelineViewportModel::rebuild));
+    subscription.connections.append(connect(blockModel, &QObject::destroyed, this, [this, blockModel] {
+        blockSubscriptions_.remove(blockModel);
+        scheduleDestroyedBlockModelReconciliation();
+    }));
+}
+
+void
+CodexTimelineViewportModel::scheduleDestroyedBlockModelReconciliation()
+{
+    if (destroyedBlockModelReconciliationScheduled_)
+        return;
+    destroyedBlockModelReconciliationScheduled_ = true;
+    // Documents and source rows may still be inside their destructors here.
+    QMetaObject::invokeMethod(
+      this,
+      [this] {
+          destroyedBlockModelReconciliationScheduled_ = false;
+          if (!sourceModel_)
+              return;
+          QList<int> sourceRows;
+          for (const ViewportRow& row : std::as_const(rows_)) {
+              if (row.hadBlockModel && !row.blockModel)
+                  sourceRows.append(row.sourceRow);
+          }
+          // Source notifications may already have replaced or removed these rows.
+          reconcileSourceRows(std::move(sourceRows));
+      },
+      Qt::QueuedConnection);
 }
 
 void

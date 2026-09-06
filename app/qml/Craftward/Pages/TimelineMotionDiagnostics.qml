@@ -25,9 +25,7 @@ QtObject {
     property int rowGeometryChangeCount: 0
     property real maximumRowGeometryChangePixels: 0
     readonly property string statisticsText: {
-        const motionSummary = root.motionSampleCount > 0
-            ? "Motion " + root.motionFramesPerSecond.toFixed(1) + " FPS  ·  frozen " + root.frozenMotionFrameCount + "/" + root.motionSampleCount
-            : "Motion idle";
+        const motionSummary = root.motionSampleCount > 0 ? "Motion " + root.motionFramesPerSecond.toFixed(1) + " FPS  ·  frozen " + root.frozenMotionFrameCount + "/" + root.motionSampleCount : "Motion idle";
         return motionSummary + "\nAnchor " + root.anchorCorrectionCount + " (max " + root.maximumAnchorCorrectionPixels.toFixed(1) + " px)" + "  ·  reflow " + root.rowGeometryChangeCount + " (max " + root.maximumRowGeometryChangePixels.toFixed(1) + " px)";
     }
 

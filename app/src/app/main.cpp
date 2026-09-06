@@ -162,5 +162,9 @@ main(int argc, char* argv[])
     engine.loadFromModule("Craftward.App", "Main");
     registerNativeApplicationMenus();
 
-    return app.exec();
+    const int exitCode = app.exec();
+    // Release QML views and adapters while their C++ controllers are still alive.
+    const auto rootObjects = engine.rootObjects();
+    qDeleteAll(rootObjects);
+    return exitCode;
 }
