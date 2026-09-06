@@ -12,11 +12,13 @@
 #include <memory>
 
 class MarkupRenderModel;
+class MarkupSemanticModel;
 
 class MarkupDocumentModel : public QAbstractListModel
 {
     Q_OBJECT
     Q_PROPERTY(QAbstractItemModel* renderModel READ renderModel CONSTANT)
+    Q_PROPERTY(QAbstractItemModel* semanticModel READ semanticModel CONSTANT)
 
   public:
     enum class SourceFormat
@@ -44,6 +46,7 @@ class MarkupDocumentModel : public QAbstractListModel
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
     [[nodiscard]] QAbstractItemModel* renderModel() const;
+    [[nodiscard]] QAbstractItemModel* semanticModel() const;
 
     bool reconcileSource(const QString& source, SourceFormat format, bool finalized = true);
     Q_INVOKABLE void prepareForLayout();
@@ -121,4 +124,5 @@ class MarkupDocumentModel : public QAbstractListModel
     QTimer parseTimer_;
     QFutureWatcher<ParseResult> parseWatcher_;
     mutable std::unique_ptr<MarkupRenderModel> renderModel_;
+    mutable std::unique_ptr<MarkupSemanticModel> semanticModel_;
 };

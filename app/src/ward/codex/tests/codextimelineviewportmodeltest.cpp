@@ -230,6 +230,7 @@ class CodexTimelineViewportModelTest : public QObject
     void usesDocumentRenderSegmentsAsViewportRows();
     void reconcilesOneRenderResetWithoutResettingViewport();
     void integratesOneRealMarkupDocumentWithoutResettingViewport();
+    void keepsPendingNativeSnapshotsOutOfTheLegacyRenderer();
     void survivesSourceTeardownAfterMarkupDocuments();
     void ignoresDestroyedDocumentNotificationsAfterReplacement();
     void reconcilesAReplacedRenderModelAfterDestruction_data();
@@ -294,12 +295,12 @@ CodexTimelineViewportModelTest::ignoresDestroyedDocumentNotificationsAfterReplac
     replacement.prepareForLayout();
     CodexTimelineViewportModel model;
     model.setSourceModel(&source);
-    QCOMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("Before"));
+    QTRY_COMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("Before"));
 
     document.reset();
     message->setData(QVariant::fromValue(static_cast<QObject*>(&replacement)), MarkupDocumentRole);
 
-    QCOMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("After"));
+    QTRY_COMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("After"));
     QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
     QSignalSpy changedSpy(&model, &QAbstractItemModel::dataChanged);
     source.resetDataReadCount();
@@ -601,6 +602,30 @@ CodexTimelineViewportModelTest::reconcilesOneRenderResetWithoutResettingViewport
     QCOMPARE(model.entryIdAt(1), stableCodeId);
     QCOMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(),
              QStringLiteral("Growing answer with more content"));
+}
+
+void
+CodexTimelineViewportModelTest::keepsPendingNativeSnapshotsOutOfTheLegacyRenderer()
+{
+    MarkupDocumentModel document;
+    document.reconcileSource(QStringLiteral("```cpp\nreturn 0;\n```\n\n").repeated(200),
+                             MarkupDocumentModel::SourceFormat::Markdown);
+    QStandardItemModel source;
+    configureSourceRoles(source);
+    auto* message = new QStandardItem;
+    message->setData(QStringLiteral("pending-answer"), EntryIdRole);
+    message->setData(QVariant::fromValue(static_cast<QObject*>(&document)), MarkupDocumentRole);
+    source.appendRow(message);
+    CodexTimelineViewportModel model;
+    model.setSourceModel(&source);
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(document.rowCount(), 0);
+    QVERIFY(model.valueAt(0, QStringLiteral("semanticBlock")).toBool());
+    QVERIFY(model.valueAt(0, QStringLiteral("firstBlockInEntry")).toBool());
+    QVERIFY(model.valueAt(0, QStringLiteral("lastBlockInEntry")).toBool());
+    QVERIFY(model.valueAt(0, QStringLiteral("blockText")).toString().isEmpty());
+    QTRY_COMPARE(model.rowCount(), 200);
+    QCOMPARE(model.entryIdAt(0), QStringLiteral("pending-answer"));
 }
 
 void

@@ -33,6 +33,7 @@ target_link_libraries(CraftwardComponents
     PRIVATE
         CraftwardDesign
         CraftwardHighlightingplugin
+        CraftwardMarkupplugin
         "${CRAFTWARD_APPKIT_FRAMEWORK}"
         "${CRAFTWARD_CORE_TEXT_FRAMEWORK}"
         "${CRAFTWARD_FOUNDATION_FRAMEWORK}"

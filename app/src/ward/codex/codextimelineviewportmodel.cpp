@@ -22,6 +22,7 @@ constexpr auto segmentTextRoleName = "segmentText";
 constexpr auto plainTextRoleName = "plainText";
 constexpr auto languageRoleName = "language";
 constexpr auto markdownRoleName = "markdown";
+constexpr auto semanticSegmentRoleName = "semanticSegment";
 constexpr auto sourceEntryIdRoleName = "sourceEntryId";
 constexpr auto semanticBlockRoleName = "semanticBlock";
 constexpr auto blockIndexRoleName = "blockIndex";
@@ -159,7 +160,10 @@ CodexTimelineViewportModel::data(const QModelIndex& index, int role) const
         case SourceEntryIdRole:
             return row.sourceEntryId;
         case SemanticBlockRole:
-            return row.blockRow >= 0;
+            // An empty native snapshot is a pending segment, not a request to
+            // materialize the entire legacy document while its worker runs.
+            return row.blockRow >= 0 || (row.blockModel && row.blockModel->rowCount() == 0 &&
+                                         ::roleForName(row.blockModel, semanticSegmentRoleName) >= 0);
         case BlockIdRole:
             return blockValue(row, blockIdRoleName);
         case BlockIndexRole:
@@ -176,8 +180,10 @@ CodexTimelineViewportModel::data(const QModelIndex& index, int role) const
             return blockValue(row, languageRoleName);
         case MarkdownRole:
             return blockValue(row, markdownRoleName);
+        case SemanticSegmentRole:
+            return blockValue(row, semanticSegmentRoleName);
         case FirstBlockInEntryRole:
-            return row.blockRow == 0;
+            return row.blockRow <= 0;
         case LastBlockInEntryRole:
             return row.blockModel && row.blockRow + 1 == row.blockModel->rowCount();
         default:
@@ -202,6 +208,7 @@ CodexTimelineViewportModel::roleNames() const
     roles.insert(PlainTextRole, plainTextRoleName);
     roles.insert(LanguageRole, languageRoleName);
     roles.insert(MarkdownRole, markdownRoleName);
+    roles.insert(SemanticSegmentRole, semanticSegmentRoleName);
     roles.insert(FirstBlockInEntryRole, firstBlockInEntryRoleName);
     roles.insert(LastBlockInEntryRole, lastBlockInEntryRoleName);
     return roles;
@@ -473,7 +480,10 @@ CodexTimelineViewportModel::viewportRowsForSourceRow(int sourceRow)
       entryIdRole_ < 0 ? QString() : sourceModel_->data(sourceIndex, entryIdRole_).toString();
     QObject* documentObject =
       markupDocumentRole_ < 0 ? nullptr : sourceModel_->data(sourceIndex, markupDocumentRole_).value<QObject*>();
-    auto* blockModel = documentObject ? documentObject->property("renderModel").value<QAbstractItemModel*>() : nullptr;
+    auto* blockModel =
+      documentObject ? documentObject->property("semanticModel").value<QAbstractItemModel*>() : nullptr;
+    if (!blockModel && documentObject)
+        blockModel = documentObject->property("renderModel").value<QAbstractItemModel*>();
     if (!blockModel)
         blockModel = qobject_cast<QAbstractItemModel*>(documentObject);
     const bool collapsedDetail = blockModel && detailRowRole_ >= 0 && turnExpandedRole_ >= 0 &&

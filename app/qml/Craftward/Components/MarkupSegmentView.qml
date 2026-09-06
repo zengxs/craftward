@@ -8,6 +8,7 @@ import QtQuick.Controls
 import QtQuick.Window
 import Craftward.Design
 import Craftward.Highlighting
+import Craftward.Markup
 import Craftward.Components as Components
 
 Control {
@@ -19,6 +20,7 @@ Control {
     required property bool markdown
     property color textColor: palette.text
     property font codeFont: font
+    property var semanticSegment: null
 
     padding: 0
     implicitWidth: 0
@@ -38,7 +40,36 @@ Control {
     contentItem: Loader {
         id: segmentLoader
 
-        sourceComponent: root.codeBlock ? codeSegment : proseSegment
+        sourceComponent: root.codeBlock ? codeSegment : (root.semanticSegment ? semanticProseSegment : proseSegment)
+    }
+
+    Component {
+        id: semanticProseSegment
+
+        TextEdit {
+            id: semanticText
+
+            objectName: "markupProseText"
+            color: root.textColor
+            font: root.font
+            readOnly: true
+            selectByMouse: true
+            selectedTextColor: Theme.textSelectionForeground
+            selectionColor: Theme.textSelectionBackground
+            wrapMode: TextEdit.Wrap
+            textFormat: TextEdit.RichText
+
+            MarkupTextDocument {
+                objectName: "markupNativeAdapter"
+                textDocument: semanticText.textDocument
+                segment: root.semanticSegment
+                font: root.font
+                codeFont: root.codeFont
+                textColor: root.textColor
+                linkColor: root.palette.link
+                codeBackground: Theme.dark ? TailwindColors.zinc800 : TailwindColors.zinc100
+            }
+        }
     }
 
     Component {

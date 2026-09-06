@@ -6,6 +6,7 @@
 #include "document.qpb.h"
 #include "ward/coreffierror.h"
 #include "ward/markup/markuprendermodel.h"
+#include "ward/markup/markupsemanticmodel.h"
 
 #include <ward_core.h>
 
@@ -124,6 +125,8 @@ MarkupDocumentModel::reconcileSource(const QString& source, SourceFormat format,
     requestedFormat_ = format;
     requestedFinalized_ = finalized;
     ++requestedGeneration_;
+    if (semanticModel_)
+        semanticModel_->reconcileSource(source, format, finalized);
 
     if (format == SourceFormat::PlainText) {
         parseTimer_.stop();
@@ -138,6 +141,16 @@ MarkupDocumentModel::reconcileSource(const QString& source, SourceFormat format,
 
     scheduleParse();
     return true;
+}
+
+QAbstractItemModel*
+MarkupDocumentModel::semanticModel() const
+{
+    if (!semanticModel_) {
+        semanticModel_ = std::make_unique<MarkupSemanticModel>();
+        semanticModel_->reconcileSource(requestedSource_, requestedFormat_, requestedFinalized_);
+    }
+    return semanticModel_.get();
 }
 
 void

@@ -289,6 +289,7 @@ Control {
         MarkupSegmentView {
             codeBlock: Boolean(root.value("codeBlock"))
             segmentText: root.textValue("blockText")
+            semanticSegment: root.value("semanticSegment") ?? null
             language: root.textValue("language")
             markdown: Boolean(root.value("markdown"))
             textColor: root.palette.text

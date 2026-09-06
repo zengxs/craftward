@@ -3,8 +3,9 @@
 The inline and message-selection experiments established that explicit semantics
 can drive native text layout, inline interactions, and selection independently
 of materialized text items. This contract introduces the production data needed
-by that renderer. It does not integrate the prototype implementation into the
-timeline or change the current rendering path.
+by that renderer. The optional `semantic` timeline renderer now consumes this
+contract through a production native text adapter. The default `current`
+renderer continues to use the legacy source-preserving path.
 
 ## Entry Points and Ownership
 
@@ -22,8 +23,8 @@ cannot accidentally treat decoded semantics as Markdown source.
 
 Semantic parsing requires the complete message because reference definitions
 can resolve links in earlier blocks. It is a snapshot operation, not an
-incremental parser. The next integration must schedule it away from interaction
-handlers and reconcile affected semantic content. It must not independently
+incremental parser. Consumers must schedule it away from interaction handlers
+and reconcile affected semantic content. They must not independently
 parse arbitrary fragments and claim document-wide reference resolution.
 
 ## Content and Rendering Segments
@@ -78,7 +79,8 @@ IDs. Completed unaffected blocks remain equal. Completing delimiters or adding
 a reference definition may reinterpret earlier content and replace nodes; this
 is a semantic update, not an identity guarantee across arbitrary edits. Snapshot
 indices are never persistent identities. Selection reconciliation for replaced
-nodes and document generations belongs to the next integration step.
+nodes and document generations belongs to the subsequent message-selection
+integration.
 
 Source ranges are half-open UTF-8 byte ranges in the complete source. Container
 ranges are normalized to cover their descendants before IDs are assigned. This
@@ -98,6 +100,58 @@ examples. Source ranges may include syntax or omit non-rendered delimiters;
 they are provenance, not a lossless source-edit script. Keeping logical selection
 on node ID plus decoded text offset avoids requiring a fabricated source cursor.
 
+## Native Timeline Adapter
+
+`MarkupDocumentModel.semanticModel` lazily creates a `MarkupSemanticModel` for
+the optional renderer. It coalesces complete-message snapshots on workers and
+discards obsolete generations. An empty initial snapshot remains an empty native
+segment; it never requests synchronous legacy parsing or materializes an entire
+message through the legacy repeater. The legacy parser and `renderModel` remain
+available to the default renderer.
+
+Semantic data is grouped at content boundaries, with an 8 KiB source target and
+at most eight ordinary top-level blocks or sixteen immediate list items/table
+rows per group. Long top-level lists and tables therefore span several segments.
+An indivisible paragraph, cell, or nested structure can exceed the byte target;
+this is not a strict per-segment memory limit. Arbitrary character slicing and
+whole-history text layouts are not introduced. Grouping avoids creating a native
+document and QML row for every short paragraph or list item.
+
+The `semanticSegment` role carries a `SemanticDocument` containing only that
+group's blocks. Original block IDs, node IDs, and decoded-text mappings are
+retained. Split outer list/table containers describe the selected child range;
+their ordered-list start is adjusted while child identities remain unchanged.
+Unchanged completed groups compare equal. Updates reconcile model rows locally
+and leave equal materialized documents and their native selections untouched.
+An affected group is rebuilt; preserving selection across a changed group or
+across delegate destruction requires the subsequent logical selection layer.
+
+`MarkupTextDocument` writes typed nodes directly into a materialized TextEdit's
+`QTextDocument`. It handles paragraphs, headings, quotes, lists and task markers,
+tables with equal-width aligned columns, rules, nested emphasis, inline code,
+resolved links, literal inline HTML, and annotation labels. Native Qt shaping,
+wrapping, link hit testing, and selection operate on decoded UTF-16 text.
+Top-level code retains its syntax highlighter and copy toolbar. List/table groups
+use native text layout rather than a QML object per cell or inline node.
+
+Document replacements and style refreshes use a single cursor edit transaction
+with layout enabled. TextEdit measures its content when `contentsChanged`
+arrives; suspending layout while emitting that notification can leave a zero
+implicit height even after the document has been laid out. Palette changes on
+window activation must therefore preserve the measured height and adjacent
+segment positions throughout the update.
+
+Images, footnotes, admonitions, opaque unsupported nodes, and ordered starts that
+Qt cannot represent use a literal source fallback for their group. This preserves
+content but does not promise visual parity with the legacy Markdown adapter.
+Annotation labels are styled text; resolving their index, activating references,
+attaching controls, and displaying tooltips/popovers remain separate work.
+
+The adapter owns no timeline coordinates, scrolling correction, global cache,
+or offscreen text document. The shared viewport continues to own materialization,
+measurement, and movement-end geometry transactions. Run the integrated path with
+`CRAFTWARD_TIMELINE_RENDER_BENCHMARK_RENDERER=semantic task app:run BUILD_TYPE=Debug`.
+
 ## Validation and Next Integration
 
 Rust tests exercise the public parser with nested inline content, Unicode
@@ -107,10 +161,15 @@ decode the actual protobuf and verify ownership/error behavior and optional or
 oneof zero/false values. The Qt model test also decodes Rust's semantic payload
 using Qt Protobuf and compares UTF-16 positions with real QString lengths.
 
-The next submission can introduce the native text adapter using this contract,
-followed by message selection and real interactions. It must retain viewport
-materialization limits, stable identities, local model notifications, and the
-established scroll geometry regressions. Streaming selection, overlay pooling,
-keyboard/accessibility behavior, rich clipboard export, and interactive popovers
-are not implemented by this data-only change. Concentrated frame-time optimization
-remains deferred under the user's existing decision.
+Native Qt tests now cover production QML wiring, resolved links, nested code
+formatting, Unicode selection, table alignment and inline content, structural
+grouping, stale snapshots, layout release, cold-snapshot routing, palette refresh
+geometry, and replacements between paragraphs, lists, and tables. Existing
+viewport identity, shutdown, and scroll-settlement regressions remain required.
+
+The next submission can add message-wide logical selection and real interactions.
+It must retain viewport materialization limits, stable identities, local model
+notifications, and the established scroll geometry regressions. Streaming
+selection, overlay pooling, expanded keyboard/accessibility behavior, rich
+clipboard export, and interactive popovers remain open. Concentrated frame-time
+optimization remains deferred under the user's existing decision.
