@@ -5,6 +5,12 @@ use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
+mod semantic;
+pub use semantic::{
+    Alignment, ContainerKind, MappedText, NodeContent, SemanticBlock, SemanticDocument,
+    SemanticNode, TextKind, TextMapping, parse_semantic,
+};
+
 const MAX_PROSE_TOP_LEVEL_BLOCKS: usize = 4;
 const TARGET_PROSE_SOURCE_BYTES: usize = 8 * 1024;
 

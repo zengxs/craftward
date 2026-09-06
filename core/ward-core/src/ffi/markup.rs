@@ -13,6 +13,8 @@ mod wire {
     include!(concat!(env!("OUT_DIR"), "/ward.markup.v1.rs"));
 }
 
+mod semantic;
+
 /// A source syntax accepted by Ward Core's app-only markup interface.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
@@ -47,6 +49,59 @@ pub unsafe extern "C" fn ward_core_markup_parse(
     source_size: usize,
     output_error: *mut *mut WardError,
 ) -> *mut WardOwnedBuffer {
+    // SAFETY: The caller satisfies the shared source/buffer interface.
+    unsafe {
+        parse_source(
+            format,
+            source,
+            source_size,
+            output_error,
+            |source, format| document_to_wire(ward_markup::parse(source, format)).encode_to_vec(),
+        )
+    }
+}
+
+/// Parses a complete message snapshot into explicit inline and block semantics.
+///
+/// The returned buffer is a `ward.markup.v1.SemanticDocument` payload, distinct
+/// from the legacy `Document` payload. Reference resolution requires the complete
+/// source, not an independently parsed tail. This synchronous entry point does
+/// not retain state or perform layout. The caller owns the buffer and must destroy
+/// it with `ward_core_owned_buffer_destroy`.
+///
+/// # Safety
+///
+/// `source` must point to `source_size` readable UTF-8 bytes when the size is
+/// positive. `output_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ward_core_markup_parse_semantic(
+    format: WardMarkupSourceFormat,
+    source: *const u8,
+    source_size: usize,
+    output_error: *mut *mut WardError,
+) -> *mut WardOwnedBuffer {
+    // SAFETY: The caller satisfies the shared source/buffer interface.
+    unsafe {
+        parse_source(
+            format,
+            source,
+            source_size,
+            output_error,
+            |source, format| {
+                semantic::document_to_wire(ward_markup::parse_semantic(source, format))
+                    .encode_to_vec()
+            },
+        )
+    }
+}
+
+unsafe fn parse_source(
+    format: WardMarkupSourceFormat,
+    source: *const u8,
+    source_size: usize,
+    output_error: *mut *mut WardError,
+    encode: fn(&str, SourceFormat) -> Vec<u8>,
+) -> *mut WardOwnedBuffer {
     // SAFETY: The caller supplied the optional error output pointer.
     unsafe { clear_error(output_error) };
     let source_bytes = if source_size == 0 {
@@ -74,8 +129,10 @@ pub unsafe extern "C" fn ward_core_markup_parse(
         }
     };
 
-    let document = document_to_wire(ward_markup::parse(source, format.into()));
-    Box::into_raw(Box::new(WardOwnedBuffer::new(document.encode_to_vec())))
+    Box::into_raw(Box::new(WardOwnedBuffer::new(encode(
+        source,
+        format.into(),
+    ))))
 }
 
 fn document_to_wire(document: ward_markup::Document) -> wire::Document {
@@ -121,7 +178,108 @@ mod tests {
         ward_core_owned_buffer_data, ward_core_owned_buffer_destroy, ward_core_owned_buffer_size,
     };
     use super::super::error::{ward_core_error_destroy, ward_core_error_message};
-    use super::{WardMarkupSourceFormat, ward_core_markup_parse, wire};
+    use super::{
+        WardMarkupSourceFormat, ward_core_markup_parse, ward_core_markup_parse_semantic, wire,
+    };
+
+    #[test]
+    fn serializes_semantic_structure_and_source_mapping_through_the_c_interface() {
+        let source = "你好 👋 **bold** :codex-annotation{index=\"4\"}\n\n0. [ ] task\n\n| A | B |\n|---|---:|\n| `a()` | [Ready][r] |\n\n[r]: /ready";
+        let mut error = std::ptr::null_mut();
+        // SAFETY: Source and error output are valid until the call returns.
+        let buffer = unsafe {
+            ward_core_markup_parse_semantic(
+                WardMarkupSourceFormat::Markdown,
+                source.as_ptr(),
+                source.len(),
+                &raw mut error,
+            )
+        };
+        assert!(!buffer.is_null());
+        assert!(error.is_null());
+        // SAFETY: The owned buffer remains live while it is decoded.
+        let document = unsafe {
+            wire::SemanticDocument::decode(std::slice::from_raw_parts(
+                ward_core_owned_buffer_data(buffer),
+                ward_core_owned_buffer_size(buffer),
+            ))
+        }
+        .unwrap();
+        // SAFETY: Decoding owns its data; release the buffer exactly once.
+        unsafe { ward_core_owned_buffer_destroy(buffer) };
+        assert_eq!(document.blocks.len(), 3);
+        assert!(document.blocks[0].nodes[0].parent_index.is_none());
+        assert_eq!(document.blocks[0].nodes[1].parent_index, Some(0));
+        use wire::semantic_node::Body;
+        let nodes: Vec<_> = document
+            .blocks
+            .iter()
+            .flat_map(|block| &block.nodes)
+            .collect();
+        assert!(nodes.iter().any(|node| matches!(&node.body, Some(Body::Annotation(annotation)) if annotation.index == 4 && annotation.label.as_ref().unwrap().text == "[4]")));
+        assert!(
+            nodes.iter().any(
+                |node| matches!(&node.body, Some(Body::Link(link)) if link.target == "/ready")
+            )
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|node| matches!(node.body, Some(Body::TaskChecked(false))))
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|node| matches!(node.body, Some(Body::TableRowHeader(false))))
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|node| matches!(&node.body, Some(Body::List(list)) if list.start == Some(0)))
+        );
+        let Some(Body::Text(text)) = &document.blocks[0].nodes[1].body else {
+            panic!("expected decoded text");
+        };
+        let value = text.value.as_ref().unwrap();
+        assert_eq!(value.text, "你好 👋 ");
+        assert_eq!(value.mappings[0].utf16_end, 6);
+        assert_eq!(value.mappings[0].source.as_ref().unwrap().end, 12);
+        assert!(value.mappings[0].verbatim);
+    }
+
+    #[test]
+    fn semantic_interface_accepts_empty_input_and_rejects_invalid_input() {
+        let mut error = std::ptr::null_mut();
+        // SAFETY: A zero-length input may have a null source pointer.
+        let buffer = unsafe {
+            ward_core_markup_parse_semantic(
+                WardMarkupSourceFormat::Markdown,
+                std::ptr::null(),
+                0,
+                &raw mut error,
+            )
+        };
+        assert!(!buffer.is_null());
+        assert!(error.is_null());
+        // SAFETY: The returned buffer is owned by this test.
+        unsafe { ward_core_owned_buffer_destroy(buffer) };
+        for (pointer, size) in [(std::ptr::null(), 1), (b"\xff".as_ptr(), 1)] {
+            // SAFETY: The non-null source contains the stated number of bytes.
+            let buffer = unsafe {
+                ward_core_markup_parse_semantic(
+                    WardMarkupSourceFormat::Markdown,
+                    pointer,
+                    size,
+                    &raw mut error,
+                )
+            };
+            assert!(buffer.is_null());
+            assert!(!error.is_null());
+            // SAFETY: Each failed call returns a separately owned error.
+            unsafe { ward_core_error_destroy(error) };
+            error = std::ptr::null_mut();
+        }
+    }
 
     #[test]
     fn parses_markdown_through_the_private_c_interface() {

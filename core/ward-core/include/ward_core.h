@@ -619,6 +619,23 @@ struct WardOwnedBuffer *ward_core_markup_parse(enum WardMarkupSourceFormat forma
                                                size_t source_size,
                                                struct WardError **output_error);
 
+// Parses a complete message snapshot into explicit inline and block semantics.
+//
+// The returned buffer is a `ward.markup.v1.SemanticDocument` payload, distinct
+// from the legacy `Document` payload. Reference resolution requires the complete
+// source, not an independently parsed tail. This synchronous entry point does
+// not retain state or perform layout. The caller owns the buffer and must destroy
+// it with `ward_core_owned_buffer_destroy`.
+//
+// # Safety
+//
+// `source` must point to `source_size` readable UTF-8 bytes when the size is
+// positive. `output_error`, when non-null, must be writable.
+struct WardOwnedBuffer *ward_core_markup_parse_semantic(enum WardMarkupSourceFormat format,
+                                                        const uint8_t *source,
+                                                        size_t source_size,
+                                                        struct WardError **output_error);
+
 // Returns the borrowed bytes in an owned Ward buffer.
 //
 // The returned pointer remains valid until the owned buffer is destroyed.

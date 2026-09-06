@@ -4,13 +4,20 @@
 #include "ward/markup/markupdocumentmodel.h"
 #include "ward/markup/markuprendermodel.h"
 
+#include "document.qpb.h"
+#include <ward_core.h>
+
+#include <QByteArrayView>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QStandardItem>
 #include <QStandardItemModel>
 #include <QThreadPool>
+#include <QtProtobuf/QProtobufSerializer>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
+
+#include <memory>
 
 class MarkupDocumentModelTest : public QObject
 {
@@ -18,6 +25,7 @@ class MarkupDocumentModelTest : public QObject
 
   private slots:
     void preservesPlainText();
+    void decodesSemanticSnapshotFromRust();
     void exposesMarkdownCodeAsAnIndependentBlock();
     void preparesOnlyTheRequestedDocumentBeforeLayout();
     void ignoresAsyncCompletionAfterLayoutPreparation_data();
@@ -29,6 +37,76 @@ class MarkupDocumentModelTest : public QObject
     void groupsAdjacentProseForRendering();
     void removesOneTerminalCodeLineEndingForRendering();
 };
+
+void
+MarkupDocumentModelTest::decodesSemanticSnapshotFromRust()
+{
+    const QByteArray source =
+      QStringLiteral("你好 👩‍💻 &amp; **bold** :codex-annotation{index=\"4\"}\n\n"
+                     "0. [ ] task\n\n| A | B |\n|---|---:|\n| `a()` | [Ready][r] |\n\n[r]: /ready \"Status\"")
+        .toUtf8();
+    WardError* error = nullptr;
+    const auto releaseError = qScopeGuard([&] {
+        if (error)
+            ward_core_error_destroy(error);
+    });
+    using Buffer = std::unique_ptr<WardOwnedBuffer, decltype(&ward_core_owned_buffer_destroy)>;
+    Buffer buffer(
+      ward_core_markup_parse_semantic(
+        WardMarkupSourceFormatMarkdown, reinterpret_cast<const uint8_t*>(source.constData()), source.size(), &error),
+      &ward_core_owned_buffer_destroy);
+    QVERIFY(buffer);
+    QVERIFY(!error);
+    const QByteArrayView bytes(reinterpret_cast<const char*>(ward_core_owned_buffer_data(buffer.get())),
+                               ward_core_owned_buffer_size(buffer.get()));
+    ward::markup::v1::SemanticDocument document;
+    QProtobufSerializer serializer;
+    QVERIFY2(document.deserialize(&serializer, bytes), qPrintable(serializer.lastErrorString()));
+    buffer.reset();
+    QCOMPARE(document.blocks().size(), 3);
+    const auto& intro = document.blocks().first().nodes();
+    QVERIFY(!intro.first().hasParentIndex());
+    QVERIFY(intro.at(1).hasParentIndex());
+    QCOMPARE(intro.at(1).parentIndex(), 0u);
+    const auto text = intro.at(1).text().value();
+    QCOMPARE(text.text(), QStringLiteral("你好 👩‍💻 "));
+    QCOMPARE(text.mappings().first().utf16End(), quint64(text.text().size()));
+    QCOMPARE(text.mappings().first().source().end(), quint64(text.text().toUtf8().size()));
+    QVERIFY(text.mappings().first().verbatim());
+    bool annotation = false;
+    bool link = false;
+    bool uncheckedTask = false;
+    bool bodyRow = false;
+    bool zeroStart = false;
+    bool entity = false;
+    for (const auto& block : document.blocks()) {
+        for (const auto& node : block.nodes()) {
+            if (node.hasAnnotation()) {
+                annotation = true;
+                QCOMPARE(node.annotation().index(), 4u);
+                QCOMPARE(node.annotation().label().text(), QStringLiteral("[4]"));
+                QVERIFY(!node.annotation().label().mappings().first().verbatim());
+            }
+            if (node.hasLink()) {
+                link = true;
+                QCOMPARE(node.link().target(), QStringLiteral("/ready"));
+                QCOMPARE(node.link().title(), QStringLiteral("Status"));
+            }
+            uncheckedTask |= node.hasTaskChecked() && !node.taskChecked();
+            bodyRow |= node.hasTableRowHeader() && !node.tableRowHeader();
+            zeroStart |= node.hasList() && node.list().hasStart() && node.list().start() == 0;
+            if (node.hasText() && node.text().value().text() == QStringLiteral("&")) {
+                entity = true;
+                const auto mapping = node.text().value().mappings().first();
+                QVERIFY(!mapping.verbatim());
+                QCOMPARE(mapping.utf16End(), 1u);
+                QCOMPARE(source.mid(mapping.source().start(), mapping.source().end() - mapping.source().start()),
+                         QByteArray("&amp;"));
+            }
+        }
+    }
+    QVERIFY(annotation && link && uncheckedTask && bodyRow && zeroStart && entity);
+}
 
 void
 MarkupDocumentModelTest::preservesPlainText()

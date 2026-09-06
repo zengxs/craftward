@@ -35,7 +35,9 @@ if(BUILD_TESTING)
         PRIVATE
             CraftwardMarkup
             Qt6::Gui
+            Qt6::Protobuf
             Qt6::Test
+            Ward::Core
             "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
     )
     add_test(

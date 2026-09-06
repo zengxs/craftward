@@ -44,3 +44,123 @@ message Document {
   SourceFormat source_format = 1;
   repeated Block blocks = 2;
 }
+
+// Half-open UTF-8 byte positions in the complete input message snapshot.
+message SourceRange {
+  uint64 start = 1;
+  uint64 end = 2;
+}
+
+// A decoded text piece. UTF-16 positions are local to MappedText.text.
+// Non-verbatim pieces are indivisible replacements, not affine cursor maps.
+message TextMapping {
+  SourceRange source = 1;
+  uint64 utf16_start = 2;
+  uint64 utf16_end = 3;
+  bool verbatim = 4;
+}
+
+message MappedText {
+  string text = 1;
+  repeated TextMapping mappings = 2;
+}
+
+enum ContainerKind {
+  CONTAINER_KIND_UNSPECIFIED = 0;
+  CONTAINER_KIND_PARAGRAPH = 1;
+  CONTAINER_KIND_BLOCK_QUOTE = 2;
+  CONTAINER_KIND_LIST_ITEM = 3;
+  CONTAINER_KIND_TABLE_CELL = 4;
+  CONTAINER_KIND_EMPHASIS = 5;
+  CONTAINER_KIND_STRONG = 6;
+  CONTAINER_KIND_STRIKETHROUGH = 7;
+}
+
+enum TextKind {
+  TEXT_KIND_UNSPECIFIED = 0;
+  TEXT_KIND_PLAIN = 1;
+  TEXT_KIND_INLINE_CODE = 2;
+  TEXT_KIND_SOFT_BREAK = 3;
+  TEXT_KIND_HARD_BREAK = 4;
+  TEXT_KIND_LITERAL = 5;
+  TEXT_KIND_UNSUPPORTED = 6;
+}
+
+message SemanticText {
+  TextKind kind = 1;
+  MappedText value = 2;
+}
+
+message SemanticLink {
+  string target = 1;
+  string title = 2;
+}
+
+message SemanticList {
+  // Absent for unordered lists; zero is a valid ordered-list start.
+  optional uint64 start = 1;
+}
+
+enum ColumnAlignment {
+  COLUMN_ALIGNMENT_UNSPECIFIED = 0;
+  COLUMN_ALIGNMENT_LEFT = 1;
+  COLUMN_ALIGNMENT_CENTER = 2;
+  COLUMN_ALIGNMENT_RIGHT = 3;
+}
+
+message SemanticTable {
+  repeated ColumnAlignment columns = 1;
+}
+
+message SemanticCodeBlock {
+  optional string language = 1;
+}
+
+message SemanticAnnotation {
+  // A one-based index. Resolving it to a review object belongs to the caller.
+  uint32 index = 1;
+  MappedText label = 2;
+}
+
+// Nodes are stored in preorder, with the parent preceding its children.
+// node_id is block-scoped identity; parent_index is only a snapshot-local
+// index.
+message SemanticNode {
+  string node_id = 1;
+  optional uint32 parent_index = 2;
+  SourceRange source = 3;
+
+  oneof body {
+    ContainerKind container = 4;
+    uint32 heading_level = 5;
+    SemanticList list = 6;
+    SemanticTable table = 7;
+    bool table_row_header = 8;
+    SemanticCodeBlock code_block = 9;
+    SemanticLink link = 10;
+    SemanticLink image = 11;
+    SemanticText text = 12;
+    SemanticAnnotation annotation = 13;
+    bool task_checked = 14;
+    bool rule = 15;
+    string footnote_definition = 16;
+    string footnote_reference = 17;
+    string admonition_kind = 18;
+  }
+}
+
+// One top-level Markdown structure; renderers may split it into several
+// segments.
+message SemanticBlock {
+  string block_id = 1;
+  SourceRange source = 2;
+  repeated SemanticNode nodes = 3;
+}
+
+// Produced only by ward_core_markup_parse_semantic, from a complete source
+// snapshot. This payload is distinct from the legacy source-preserving Document
+// payload.
+message SemanticDocument {
+  SourceFormat source_format = 1;
+  repeated SemanticBlock blocks = 2;
+}
