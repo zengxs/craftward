@@ -5,6 +5,25 @@ vars:
   SIGN_IDENTITY: '{{default "-" .SIGN_IDENTITY}}'
 
 tasks:
+  prototype:inline:
+    desc: Build and run the standalone inline renderer prototype
+    requires:
+      vars: [QT6_ROOT]
+    vars:
+      PROTOTYPE_DIR: "../.tmp/inline-renderer-prototype"
+    env:
+      TMPDIR: "{{.TASKFILE_DIR}}/{{.PROTOTYPE_DIR}}/scratch"
+      QML_DISABLE_DISK_CACHE: "1"
+      CRAFTWARD_INLINE_PROTOTYPE_OUTPUT_DIR: "{{.TASKFILE_DIR}}/{{.PROTOTYPE_DIR}}/evidence"
+    cmds:
+      - 'mkdir -p "{{.PROTOTYPE_DIR}}/scratch"'
+      - >-
+        cmake -S src/ward/markup/prototype -B "{{.PROTOTYPE_DIR}}/build"
+        -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQt6_ROOT="$QT6_ROOT"
+        -DCMAKE_CXX_COMPILER_LAUNCHER=
+      - 'cmake --build "{{.PROTOTYPE_DIR}}/build" --parallel'
+      - '"{{.PROTOTYPE_DIR}}/build/CraftwardInlinePrototype.app/Contents/MacOS/CraftwardInlinePrototype"'
+
   clean:
     desc: Remove all application build artifacts
     cmds:
