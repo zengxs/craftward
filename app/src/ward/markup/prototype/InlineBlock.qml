@@ -13,6 +13,8 @@ Item {
     property int pixelSize: 17
     property int layoutRevision: 0
     property int overlayCreations: 0
+    property bool coordinatedSelection: false
+    property var hoveredDescriptor: null
     property alias editor: edit
     property alias bridge: bridge
     readonly property var controlNodes: nodes.filter(node => node.kind === "control")
@@ -22,6 +24,22 @@ Item {
     }
     signal interaction(string description)
     implicitHeight: edit.contentHeight
+
+    function linkDescriptorAt(x, y, surface) {
+        const point = edit.mapFromItem(root, x, y);
+        const target = edit.linkAt(point.x, point.y);
+        const fragment = bridge.linkFragmentAt(target, point.x, point.y);
+        if (!fragment.nodeId)
+            return null;
+        const mapped = edit.mapToItem(surface, fragment.rect.x, fragment.rect.y);
+        return {
+            blockId,
+            nodeId: fragment.nodeId,
+            target,
+            hint: fragment.hint,
+            rect: Qt.rect(mapped.x, mapped.y, fragment.rect.width, fragment.rect.height)
+        };
+    }
 
     function snapshot() {
         const state = bridge.snapshot();
@@ -52,6 +70,20 @@ Item {
         return state;
     }
 
+    Timer {
+        id: layoutRefresh
+        interval: 0
+        onTriggered: {
+            root.hoveredDescriptor = null;
+            root.layoutRevision++;
+        }
+    }
+    Timer {
+        id: metricsRefresh
+        interval: 0
+        onTriggered: bridge.refreshControlMetrics()
+    }
+
     TextEdit {
         id: edit
         width: root.width
@@ -63,30 +95,48 @@ Item {
         horizontalAlignment: TextEdit.AlignLeft
         color: root.dark ? "#e7e9ee" : "#20252e"
         font.pixelSize: root.pixelSize
-        onFontChanged: Qt.callLater(() => bridge.refreshControlMetrics())
+        onFontChanged: metricsRefresh.restart()
         readOnly: true
-        selectByMouse: true
-        selectByKeyboard: true
+        selectByMouse: !root.coordinatedSelection
+        selectByKeyboard: !root.coordinatedSelection
+        activeFocusOnPress: !root.coordinatedSelection
         persistentSelection: true
         selectionColor: "#426da5"
         selectedTextColor: "white"
         Accessible.name: bridge.selectionText(0, length)
-        onWidthChanged: Qt.callLater(() => root.layoutRevision++)
-        onContentHeightChanged: Qt.callLater(() => root.layoutRevision++)
+        onWidthChanged: layoutRefresh.restart()
+        onContentHeightChanged: layoutRefresh.restart()
         onLinkActivated: link => root.interaction("Activated " + link)
         onLinkHovered: link => {
             if (link.length > 0)
                 root.interaction("Hovered " + link);
         }
         Keys.onPressed: event => {
-            if (event.matches(StandardKey.Copy)) {
+            if (!root.coordinatedSelection && event.matches(StandardKey.Copy)) {
                 const copied = bridge.copySelection(selectionStart, selectionEnd);
                 root.interaction("Copied: " + copied);
                 event.accepted = true;
             }
         }
-        ToolTip.visible: hoveredLink.length > 0
-        ToolTip.text: hoveredLink.startsWith("codex-annotation:") ? "Annotation 4: review this statement" : hoveredLink
+        HoverHandler {
+            id: localHover
+            enabled: !root.coordinatedSelection
+            onPointChanged: {
+                if (root.Window.window)
+                    root.hoveredDescriptor = root.linkDescriptorAt(point.position.x, point.position.y, root.Window.window.contentItem);
+            }
+            onHoveredChanged: if (!hovered)
+                root.hoveredDescriptor = null
+        }
+    }
+
+    Loader {
+        active: !root.coordinatedSelection && root.Window.window !== null
+        sourceComponent: InlineHelpTip {
+            surface: root.Window.window.contentItem
+            descriptor: root.hoveredDescriptor
+            requested: localHover.hovered && localHover.point.pressedButtons === Qt.NoButton && descriptor !== null
+        }
     }
 
     InlineDocument {
@@ -94,7 +144,7 @@ Item {
         document: edit.textDocument
         nodes: root.nodes
         dark: root.dark
-        onChanged: Qt.callLater(() => root.layoutRevision++)
+        onChanged: layoutRefresh.restart()
     }
 
     Repeater {

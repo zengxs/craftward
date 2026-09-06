@@ -10,7 +10,8 @@ tasks:
     requires:
       vars: [QT6_ROOT]
     vars:
-      PROTOTYPE_DIR: "../.tmp/inline-renderer-prototype"
+      PROTOTYPE_DIR: '{{default "../.tmp/inline-renderer-prototype" .PROTOTYPE_DIR}}'
+      PROTOTYPE_ARGS: '{{default "" .PROTOTYPE_ARGS}}'
     env:
       TMPDIR: "{{.TASKFILE_DIR}}/{{.PROTOTYPE_DIR}}/scratch"
       QML_DISABLE_DISK_CACHE: "1"
@@ -22,7 +23,15 @@ tasks:
         -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQt6_ROOT="$QT6_ROOT"
         -DCMAKE_CXX_COMPILER_LAUNCHER=
       - 'cmake --build "{{.PROTOTYPE_DIR}}/build" --parallel'
-      - '"{{.PROTOTYPE_DIR}}/build/CraftwardInlinePrototype.app/Contents/MacOS/CraftwardInlinePrototype"'
+      - '"{{.PROTOTYPE_DIR}}/build/CraftwardInlinePrototype.app/Contents/MacOS/CraftwardInlinePrototype" {{.PROTOTYPE_ARGS}}'
+
+  prototype:selection:
+    desc: Build and run the standalone message selection experiment
+    cmds:
+      - task: prototype:inline
+        vars:
+          PROTOTYPE_DIR: "../.tmp/inline-selection-prototype"
+          PROTOTYPE_ARGS: "--selection"
 
   clean:
     desc: Remove all application build artifacts

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // Throwaway experiment: semantic spans -> native TextEdit document -> QML controls.
+#include "MessageSelection.h"
+
 #include <QAbstractTextDocumentLayout>
 #include <QClipboard>
 #include <QDir>
@@ -210,6 +212,64 @@ class InlineDocument : public QObject
         return text;
     }
 
+    Q_INVOKABLE QVariantMap endpointAt(int position) const
+    {
+        for (const Span& span : spans_) {
+            if (position < span.start + span.length || &span == &spans_.last())
+                return { { "nodeId", span.node.value("id") },
+                         { "offset", std::clamp(position - span.start, 0, span.length) } };
+        }
+        return {};
+    }
+
+    Q_INVOKABLE QVariantMap wordAt(int position) const
+    {
+        if (!native())
+            return {};
+        QTextCursor cursor(native());
+        cursor.setPosition(std::clamp(position, 0, native()->characterCount() - 1));
+        cursor.select(QTextCursor::WordUnderCursor);
+        return { { "start", endpointAt(cursor.selectionStart()) }, { "end", endpointAt(cursor.selectionEnd()) } };
+    }
+
+    Q_INVOKABLE QVariantMap linkFragmentAt(const QString& target, qreal x, qreal y) const
+    {
+        if (!native() || target.isEmpty())
+            return {};
+        const int position = native()->documentLayout()->hitTest({ x, y }, Qt::FuzzyHit);
+        for (const Span& span : spans_) {
+            if (span.length == 0 || span.node.value("target") != target || position < span.start ||
+                position > span.start + span.length)
+                continue;
+            const int cursor = std::clamp(position, span.start, span.start + span.length - 1);
+            const QTextBlock block = native()->findBlock(cursor);
+            const QRectF box = native()->documentLayout()->blockBoundingRect(block);
+            const QTextLayout* layout = block.layout();
+            for (int i = 0; i < layout->lineCount(); ++i) {
+                const QTextLine line = layout->lineAt(i);
+                if (y < box.y() + line.y() || y >= box.y() + line.y() + line.height())
+                    continue;
+                const int first = std::max(span.start - block.position(), line.textStart());
+                const int last =
+                  std::min(span.start + span.length - block.position(), line.textStart() + line.textLength());
+                if (first >= last)
+                    continue;
+                const qreal firstX = line.cursorToX(first);
+                const qreal lastX = line.cursorToX(last);
+                const QRectF rect(box.x() + std::min(firstX, lastX),
+                                  box.y() + line.y(),
+                                  std::max(qreal(1), std::abs(lastX - firstX)),
+                                  line.height());
+                const QString hint = span.node.value("hint").toString();
+                return { { "nodeId", span.node.value("id") },
+                         { "target", target },
+                         { "rect", rect },
+                         { "hint", hint.isEmpty() ? target : hint } };
+            }
+        }
+        return {};
+    }
+
     Q_INVOKABLE QVariantMap snapshot() const
     {
         QVariantList spans;
@@ -353,6 +413,17 @@ class PrototypeCapture : public QObject
         });
     }
 
+    Q_INVOKABLE void reportSelection(const QVariantMap& state)
+    {
+        const QVariantList checks = state.value("checks").toList();
+        const bool passed = !checks.isEmpty() && std::all_of(checks.begin(), checks.end(), [](const QVariant& check) {
+            return check.toMap().value("passed").toBool();
+        });
+        qInfo().noquote() << "SELECTION_PROTOTYPE_PROBE"
+                          << QJsonDocument::fromVariant(state).toJson(QJsonDocument::Compact);
+        QCoreApplication::exit(passed ? 0 : 2);
+    }
+
   private:
     int sequence_ = 0;
 };
@@ -364,15 +435,21 @@ main(int argc, char** argv)
     QGuiApplication::setApplicationName("Craftward Inline Prototype");
     QQuickStyle::setStyle("Basic");
     qmlRegisterType<InlineDocument>("Craftward.InlinePrototype", 1, 0, "InlineDocument");
+    qmlRegisterType<MessageSelection>("Craftward.InlinePrototype", 1, 0, "MessageSelection");
     PrototypeCapture capture;
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("prototypeCapture", &capture);
     engine.rootContext()->setContextProperty("probeMode", app.arguments().contains("--probe"));
+    engine.rootContext()->setContextProperty("selectionProbeMode", app.arguments().contains("--selection-probe"));
+    engine.rootContext()->setContextProperty("tooltipProbeMode", app.arguments().contains("--tooltip-probe"));
     engine.rootContext()->setContextProperty("probeFontSize", qEnvironmentVariableIntValue("INLINE_PROBE_FONT"));
     engine.rootContext()->setContextProperty("probeWidth", qEnvironmentVariableIntValue("INLINE_PROBE_WIDTH"));
     engine.rootContext()->setContextProperty("probeExpanded",
                                              qEnvironmentVariableIntValue("INLINE_PROBE_EXPANDED") == 1);
-    engine.load(QUrl("qrc:/Main.qml"));
+    const bool selectionMode = app.arguments().contains("--selection") ||
+                               app.arguments().contains("--selection-probe") ||
+                               app.arguments().contains("--tooltip-probe");
+    engine.load(QUrl(selectionMode ? "qrc:/SelectionMain.qml" : "qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())
         return 1;
     return app.exec();

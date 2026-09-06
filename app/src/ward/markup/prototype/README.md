@@ -102,16 +102,123 @@ inspector output, and copy action agreed in the observed cases. This reported
 behavior is classified as expected RTL selection, not an open defect. The checks
 do not cover all bidi selection cases.
 
-The prototype still has separate selection per block. The user confirmed that
-continuous selection must span paragraphs, code blocks, and tables within one
-message. Global selection across different messages is out of scope. The intended
+The original inline walkthrough has separate selection per block. The user
+confirmed that continuous selection must span paragraphs, code blocks, and tables
+within one message. Global selection across different messages is out of scope. The intended
 design uses a message-level logical selection range, rendered by the materialized
 blocks and copied from semantic data. Selection endpoints should use stable
 semantic identities and text offsets rather than delegate identities. The shared
 range coordinates selection across rendering segments; individual content types
 still need their own hit testing and copy serialization, including table cell
-order and preservation of code whitespace. This selection contract is accepted
-but not yet implemented.
+order and preservation of code whitespace. The separate selection experiment
+below now exercises this accepted scope with immutable fixtures; production
+integration remains open.
+
+## Message Selection Experiment
+
+Run the second experiment with:
+
+```bash
+task app:prototype:selection
+```
+
+It builds the same standalone executable into `.tmp/inline-selection-prototype/`
+and opens its `--selection` view. The original inline walkthrough remains the
+default mode. Both targets remain outside the production application.
+
+The question is whether one logical selection can span paragraphs, code blocks,
+and tables without retaining offscreen text documents. `MessageSelection` owns
+the immutable semantic fixture and selection endpoints. `SelectionText` projects
+the shared range into each materialized TextEdit. The viewport queries only live
+text items for pointer geometry. Destroying a delegate does not destroy the
+selection; a recreated delegate applies the same logical range.
+
+The fixture has two messages and 42 segments. One prose segment contains two
+paragraphs, and one table segment contains nine independently laid-out cells.
+Each cell uses the same inline renderer as prose. The table demonstrates inline
+code, a link, and an annotation. Their text participates in the shared selection;
+clicking the link or annotation records its target locally. No browser opens.
+
+Selection behavior in this experiment:
+
+- Drag in either direction across content; a drag into another message clamps
+  to the message where the selection began. Starting a new selection in another
+  message clears the previous highlights.
+- Double-click selects a word. Shift-click extends the current selection. The
+  platform Copy and Select All shortcuts operate on the originating message;
+  Escape clears the selection. Dragging near a viewport edge scrolls the view.
+- Plain-text copy preserves code indentation and line breaks. Separators between
+  segments are blank lines. Table cells use row order, with tabs between columns
+  and newlines between rows; partial cell selection remains partial. Annotation
+  copy uses its visible label, including `[4]` in the table fixture.
+- Endpoints use globally unique fixture node IDs and rendered UTF-16 offsets,
+  snapped to grapheme boundaries. The selected message is retained by the
+  coordinator. Production identity and source-range mapping still need the real
+  semantic contract.
+- Only nearby text documents are materialized by ListView. The inspector limits
+  its preview to 600 UTF-16 units; full serialization occurs on explicit copy or
+  state capture. The semantic fixture itself stays in memory.
+
+Try Select example, Jump away, then Back to start. The created/destroyed counters
+show actual text-item destruction, and the restored highlight should match the
+original copy. Show message boundary exposes the end of Message A and the start
+of Message B. Try selecting only part of a table cell, then extending through the
+next row. The `a()` code span, Ready link, and `[4]` annotation exercise inline
+content inside cells.
+
+`--selection-probe` runs a bounded walkthrough against actual TextEdits. Its 21
+checks cover copy order and whitespace, partial cell highlights, inline content
+inside cells, reverse selection, joined emoji, message boundaries, and delegate
+destruction/recreation. All checks passed at 14/17/24 px fonts and 960/1180 px
+window widths. The original 12 baseline checks also passed after sharing the
+updated inline item, with maximum absolute baseline error below 0.37 px. Layout
+and selection refresh timers are owned by their items so pending work is removed
+when a virtualized delegate is destroyed.
+
+The user tried the first selection build and reported stable cross-content
+selection with no obvious issues. The follow-up added the table inline examples.
+Native observation showed their rendering and recorded link activation. A later
+automated drag was cancelled because the user was changing the window; it is not
+counted as a completed automated pointer/copy check.
+
+### Inline hover feedback
+
+The first selection view attached its tooltip to the MouseArea covering the
+entire viewport. The Basic style positioned that popup relative to the large
+parent, leaving a measured gap of about 454 px from the Ready link. A dedicated
+`--tooltip-probe` reproduced this geometry failure on the actual popup before
+the correction. Qt documents both the shared attached tooltip and local tooltip
+instances for custom placement in its
+[ToolTip reference](https://doc.qt.io/qt-6/qml-qtquick-controls-tooltip.html).
+
+`InlineDocument::linkFragmentAt` now reports the link or annotation's rectangle
+on the text line under the pointer. `InlineHelpTip` places the hint 8 px from that
+rectangle, flips above it when space below is insufficient, and constrains the
+popup to the available area. Hover waits 400 ms; the hint is noninteractive and
+does not take focus. Scroll, layout changes, and source destruction invalidate
+the descriptor and dismiss the hint. The original inline walkthrough also uses
+this placement adapter; the coordinated view owns one shared hint instance.
+
+All eight tooltip checks passed for fonts 14/17/24 px and window widths 960/1180
+px, with measured gaps of 8 px. They cover table links and annotations, viewport
+containment, placement above the source under a constrained available area, and
+dismissal after scrolling and source destruction. The 21 selection checks in six
+configurations and the 12 original baseline configurations also still pass.
+
+Tooltip and popover are different interaction behaviors. A tooltip supplies a
+short, noninteractive hint. A future popover may contain selectable text, links,
+or buttons and needs its own focus, dismissal, and pointer-transition policy.
+They can share the semantic node identity and text anchor geometry. This change
+implements tooltip placement only; clicking links and annotations still records
+their targets rather than opening a full popover.
+
+This is a selection-state experiment, not production acceptance. Full keyboard
+navigation, accessibility selection, rich/Markdown clipboard export, mutable or
+streaming content, and interactive QML controls inside table cells remain open.
+The small table is materialized as one segment; large-table virtualization is
+not established. Integration with the production parser, FFI, semantic identity,
+viewport geometry, and renderer remains separate work. The transparent image
+reservation is still an experimental adapter, not a final backend decision.
 
 Remaining work before production includes:
 
@@ -121,9 +228,9 @@ Remaining work before production includes:
 - Explicit conversion between UTF-8 source ranges and Qt UTF-16 cursor ranges.
   The prototype's `start` and `length` values are UTF-16 positions in the rendered
   document, not source offsets.
-- Selection across independently virtualized blocks within one message, keyboard
-  traversal through controls, rich clipboard export, and complete screen-reader
-  validation. Accessible text and a named QML control are exposed, but VoiceOver
+- Production selection integration, keyboard traversal through controls,
+  rich clipboard export, and complete screen-reader validation. Accessible text
+  and a named QML control are exposed, but VoiceOver
   behavior has not been certified.
 - Exhaustive geometry validation around mixed text direction, line boundaries,
   tall controls, viewport clipping, DPI changes, and selection over controls.
