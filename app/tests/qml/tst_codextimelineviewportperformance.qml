@@ -12,7 +12,17 @@ Item {
     height: 600
     property var viewport
     property bool tallRows: false
+    property int createdRowCount: 0
+    property int rowGeometryChangeCount: 0
     readonly property var conversationRowGroups: [683, 614, 245, 166, 362, 123]
+
+    Connections {
+        target: suite.viewport ?? null
+
+        function onRowGeometryChanged() {
+            ++suite.rowGeometryChangeCount;
+        }
+    }
 
     ListModel {
         id: fakeTimelineModel
@@ -93,6 +103,7 @@ Item {
             forkEnabled: false
             showForkActions: false
             wallClockUnixMilliseconds: 0
+            Component.onCompleted: ++suite.createdRowCount
         }
     }
 
@@ -116,6 +127,7 @@ Item {
             property int dataRevision: -1
 
             implicitHeight: suite.tallRows ? 160 : 72
+            Component.onCompleted: ++suite.createdRowCount
         }
     }
 
@@ -145,46 +157,56 @@ Item {
             fakeTimelineModel.clear();
             ++fakeTimelineModel.revision;
             wait(0);
+            suite.createdRowCount = 0;
+            suite.rowGeometryChangeCount = 0;
         }
 
-        function test_batchHeightSettlementStaysWithinFrameBudget() {
+        function test_heightReflowKeepsWorkBoundedAndPreservesAnchor() {
             fakeTimelineModel.resetRows();
             suite.viewport = createTemporaryObject(resizingViewportComponent, suite);
             verify(suite.viewport !== null);
             tryVerify(() => suite.viewport.activeRowSlotCount > 10, 10000);
             suite.viewport.positionAtContentY(10000);
             tryVerify(() => suite.viewport.captureVisibleAnchor() !== null, 10000);
-            wait(100);
+            verify(waitForRendering(suite.viewport));
             const anchor = suite.viewport.captureVisibleAnchor();
-            const startedAt = Date.now();
+            const initialActiveRowCount = suite.viewport.activeRowSlotCount;
+            suite.rowGeometryChangeCount = 0;
 
             suite.tallRows = true;
 
-            const elapsedMilliseconds = Date.now() - startedAt;
-            verify(elapsedMilliseconds < Math.ceil(suite.viewport.frameBudgetMilliseconds), "Settling active row heights blocked for " + elapsedMilliseconds + " ms");
+            // Count synchronous work here; TimelineRenderBenchmark measures frame time.
+            verify(suite.rowGeometryChangeCount > 0, "The reflow must update materialized rows");
+            verify(suite.rowGeometryChangeCount <= initialActiveRowCount, "The reflow updated more rows than the active neighborhood");
+            verify(suite.createdRowCount < 100, "The reflow created " + suite.createdRowCount + " row delegates");
             tryVerify(() => {
                 const currentAnchor = suite.viewport.captureVisibleAnchor();
                 return currentAnchor !== null && currentAnchor.entryId === anchor.entryId && Math.abs(currentAnchor.offset - anchor.offset) <= 1;
             });
+            const visibleRows = suite.viewport.visibleRowOffsetsForBenchmark();
+            verify(visibleRows.length > 0);
+            verify(visibleRows.every(row => row.height === 160), "Visible rows must use the new height");
         }
 
-        function test_smallScrollDoesNotMaterializeDistantRowsSynchronously() {
+        function test_smallScrollKeepsDelegateCreationBounded() {
             fakeTimelineModel.resetRows();
             suite.viewport = createTemporaryObject(viewportComponent, suite);
             verify(suite.viewport !== null);
             tryVerify(() => suite.viewport.activeRowSlotCount > 0, 10000);
             verify(suite.viewport.activeRowSlotCount < 100, "The viewport instantiated " + suite.viewport.activeRowSlotCount + " row shells");
             tryVerify(() => suite.viewport.contentY > 20, 10000);
+            verify(waitForRendering(suite.viewport));
 
             suite.viewport.followLiveTail = false;
             const initialY = suite.viewport.contentY;
             const targetY = initialY - 20;
-            const startedAt = Date.now();
+            const initialCreatedRowCount = suite.createdRowCount;
+            const initialActiveRowCount = suite.viewport.activeRowSlotCount;
 
             suite.viewport.positionAtContentY(targetY);
 
-            const elapsedMilliseconds = Date.now() - startedAt;
-            verify(elapsedMilliseconds < Math.ceil(suite.viewport.frameBudgetMilliseconds), "The scroll callback blocked for " + elapsedMilliseconds + " ms");
+            const createdRowCount = suite.createdRowCount - initialCreatedRowCount;
+            verify(createdRowCount <= initialActiveRowCount, "The small scroll created " + createdRowCount + " row delegates");
             verify(Math.abs(suite.viewport.contentY - targetY) <= 1, "The requested 20 px movement ended at " + (suite.viewport.contentY - initialY) + " px");
         }
     }
