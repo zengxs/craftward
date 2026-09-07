@@ -9,7 +9,6 @@ QtObject {
     required property var targetViewport
     required property var targetWindow
     property bool active: false
-    property string rendererName: "current"
     property string requestedThreadId: ""
     property string selectedThreadId: ""
     property bool conversationLoading: false
@@ -757,7 +756,7 @@ QtObject {
         root.finish({
             schemaVersion: 1,
             benchmark: "timeline-render",
-            renderer: root.rendererName,
+            renderer: "semantic",
             requestedThreadId: root.requestedThreadId,
             selectedThreadId: root.selectedThreadId,
             passed: false,
@@ -784,10 +783,6 @@ QtObject {
         root.lastReadinessContentHeight = Number.NaN;
         root.readinessMilliseconds = 0;
         root.state = "waiting-for-content";
-        if (root.rendererName !== "current" && root.rendererName !== "semantic") {
-            root.failBeforeMeasurement("unsupported renderer adapter: " + root.rendererName);
-            return;
-        }
         if (root.requestedThreadId.length === 0) {
             root.failBeforeMeasurement("no benchmark thread was requested");
             return;
@@ -942,7 +937,7 @@ QtObject {
         root.finish({
             schemaVersion: 1,
             benchmark: "timeline-render",
-            renderer: root.rendererName,
+            renderer: "semantic",
             requestedThreadId: root.requestedThreadId,
             selectedThreadId: root.selectedThreadId,
             rowCount: root.rowCount,

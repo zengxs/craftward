@@ -33,7 +33,6 @@ class CodexTimelineViewportModel : public QAbstractListModel
         BlockTextRole,
         PlainTextRole,
         LanguageRole,
-        MarkdownRole,
         SemanticSegmentRole,
         FirstBlockInEntryRole,
         LastBlockInEntryRole,

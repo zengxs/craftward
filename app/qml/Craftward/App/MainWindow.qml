@@ -14,7 +14,6 @@ ApplicationWindow {
     property bool frameTimingOverlayEnabled: false
     property bool timelineRenderBenchmarkEnabled: false
     property string timelineRenderBenchmarkThreadId: ""
-    property string timelineRenderBenchmarkRenderer: "current"
 
     signal bringAllWindowsToFrontRequested
     signal closeWindowRequested
@@ -133,7 +132,6 @@ ApplicationWindow {
         timelineMotionDiagnosticsEnabled: window.frameTimingOverlayEnabled
         timelineRenderBenchmarkEnabled: window.timelineRenderBenchmarkEnabled
         timelineRenderBenchmarkThreadId: window.timelineRenderBenchmarkThreadId
-        timelineRenderBenchmarkRenderer: window.timelineRenderBenchmarkRenderer
     }
 
     FrameTimingOverlay {

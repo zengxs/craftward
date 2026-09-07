@@ -33,14 +33,12 @@ enum BlockRole
     BlockTextRole,
     PlainTextRole,
     LanguageRole,
-    MarkdownRole,
 };
 
 constexpr int SegmentIdRole = Qt::UserRole + 101;
 constexpr int SegmentCodeBlockRole = Qt::UserRole + 102;
 constexpr int SegmentTextRole = Qt::UserRole + 103;
 constexpr int SegmentLanguageRole = Qt::UserRole + 104;
-constexpr int SegmentMarkdownRole = Qt::UserRole + 105;
 
 void
 configureSourceRoles(QStandardItemModel& model)
@@ -59,24 +57,22 @@ void
 configureBlockRoles(QStandardItemModel& model)
 {
     model.setItemRoleNames({
-      { BlockIdRole, "blockId" },
+      { BlockIdRole, "segmentId" },
       { CodeBlockRole, "codeBlock" },
-      { BlockTextRole, "blockText" },
+      { BlockTextRole, "segmentText" },
       { PlainTextRole, "plainText" },
       { LanguageRole, "language" },
-      { MarkdownRole, "markdown" },
     });
 }
 
 void
-configureRenderRoles(QStandardItemModel& model)
+configureSegmentRoles(QStandardItemModel& model)
 {
     model.setItemRoleNames({
       { SegmentIdRole, "segmentId" },
       { SegmentCodeBlockRole, "codeBlock" },
       { SegmentTextRole, "segmentText" },
       { SegmentLanguageRole, "language" },
-      { SegmentMarkdownRole, "markdown" },
     });
 }
 
@@ -93,7 +89,6 @@ appendBlock(QStandardItemModel& model,
     item->setData(text, BlockTextRole);
     item->setData(text, PlainTextRole);
     item->setData(language, LanguageRole);
-    item->setData(!codeBlock, MarkdownRole);
     model.appendRow(item);
 }
 
@@ -109,7 +104,6 @@ appendSegment(QStandardItemModel& model,
     item->setData(codeBlock, SegmentCodeBlockRole);
     item->setData(text, SegmentTextRole);
     item->setData(language, SegmentLanguageRole);
-    item->setData(!codeBlock, SegmentMarkdownRole);
     model.appendRow(item);
 }
 
@@ -160,7 +154,7 @@ class ConnectionCountingBlockModel : public QStandardItemModel
     int disconnectionNotificationCount_ = 0;
 };
 
-class ResettableRenderModel : public QAbstractListModel
+class ResettableSegmentModel : public QAbstractListModel
 {
   public:
     struct Segment
@@ -190,8 +184,6 @@ class ResettableRenderModel : public QAbstractListModel
                 return segment.text;
             case SegmentLanguageRole:
                 return segment.language;
-            case SegmentMarkdownRole:
-                return !segment.codeBlock;
             default:
                 return {};
         }
@@ -200,9 +192,10 @@ class ResettableRenderModel : public QAbstractListModel
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override
     {
         return {
-            { SegmentIdRole, "segmentId" },      { SegmentCodeBlockRole, "codeBlock" },
-            { SegmentTextRole, "segmentText" },  { SegmentLanguageRole, "language" },
-            { SegmentMarkdownRole, "markdown" },
+            { SegmentIdRole, "segmentId" },
+            { SegmentCodeBlockRole, "codeBlock" },
+            { SegmentTextRole, "segmentText" },
+            { SegmentLanguageRole, "language" },
         };
     }
 
@@ -227,14 +220,14 @@ class CodexTimelineViewportModelTest : public QObject
     void expandsAndCollapsesOneDetailWithoutResettingViewport();
     void replacesOneDocumentWithoutReconnectingUnchangedBlockModels();
     void retainsOneSharedBlockModelSubscriptionForRemainingRows();
-    void usesDocumentRenderSegmentsAsViewportRows();
+    void usesDocumentSegmentsAsViewportRows();
     void reconcilesOneRenderResetWithoutResettingViewport();
     void integratesOneRealMarkupDocumentWithoutResettingViewport();
-    void keepsPendingNativeSnapshotsOutOfTheLegacyRenderer();
+    void keepsPendingSnapshotsInTheSegmentPath();
     void survivesSourceTeardownAfterMarkupDocuments();
     void ignoresDestroyedDocumentNotificationsAfterReplacement();
-    void reconcilesAReplacedRenderModelAfterDestruction_data();
-    void reconcilesAReplacedRenderModelAfterDestruction();
+    void reconcilesAReplacedSegmentModelAfterDestruction_data();
+    void reconcilesAReplacedSegmentModelAfterDestruction();
     void updatesOneMutableBlockWithoutResettingStableRows();
     void insertsOneCompletedBlockWithoutResettingStableRows();
     void forwardsOneSourceUpdateWithoutResettingRows();
@@ -256,7 +249,7 @@ CodexTimelineViewportModelTest::survivesSourceTeardownAfterMarkupDocuments()
         for (auto& document : documents) {
             document = std::make_unique<MarkupDocumentModel>();
             QVERIFY(document->reconcileSource(QStringLiteral("Answer"), MarkupDocumentModel::SourceFormat::Markdown));
-            document->prepareForLayout();
+            QTRY_COMPARE(document->rowCount(), 1);
             auto* message = new QStandardItem;
             message->setData(QStringLiteral("answer:%1").arg(source.rowCount()), EntryIdRole);
             message->setData(QVariant::fromValue(static_cast<QObject*>(document.get())), MarkupDocumentRole);
@@ -285,14 +278,14 @@ CodexTimelineViewportModelTest::ignoresDestroyedDocumentNotificationsAfterReplac
     configureSourceRoles(source);
     auto document = std::make_unique<MarkupDocumentModel>();
     QVERIFY(document->reconcileSource(QStringLiteral("Before"), MarkupDocumentModel::SourceFormat::Markdown));
-    document->prepareForLayout();
+    QTRY_COMPARE(document->rowCount(), 1);
     auto* message = new QStandardItem;
     message->setData(QStringLiteral("answer"), EntryIdRole);
     message->setData(QVariant::fromValue(static_cast<QObject*>(document.get())), MarkupDocumentRole);
     source.appendRow(message);
     MarkupDocumentModel replacement;
     QVERIFY(replacement.reconcileSource(QStringLiteral("After"), MarkupDocumentModel::SourceFormat::Markdown));
-    replacement.prepareForLayout();
+    QTRY_COMPARE(replacement.rowCount(), 1);
     CodexTimelineViewportModel model;
     model.setSourceModel(&source);
     QTRY_COMPARE(model.valueAt(0, QStringLiteral("blockText")).toString(), QStringLiteral("Before"));
@@ -314,7 +307,7 @@ CodexTimelineViewportModelTest::ignoresDestroyedDocumentNotificationsAfterReplac
 }
 
 void
-CodexTimelineViewportModelTest::reconcilesAReplacedRenderModelAfterDestruction_data()
+CodexTimelineViewportModelTest::reconcilesAReplacedSegmentModelAfterDestruction_data()
 {
     QTest::addColumn<bool>("initiallyEmpty");
     QTest::newRow("semantic-rows") << false;
@@ -322,24 +315,22 @@ CodexTimelineViewportModelTest::reconcilesAReplacedRenderModelAfterDestruction_d
 }
 
 void
-CodexTimelineViewportModelTest::reconcilesAReplacedRenderModelAfterDestruction()
+CodexTimelineViewportModelTest::reconcilesAReplacedSegmentModelAfterDestruction()
 {
     QFETCH(bool, initiallyEmpty);
-    auto renderModel = std::make_unique<QStandardItemModel>();
-    configureRenderRoles(*renderModel);
+    auto segmentModel = std::make_unique<QStandardItemModel>();
+    configureSegmentRoles(*segmentModel);
     if (!initiallyEmpty)
-        appendSegment(*renderModel, QStringLiteral("before"), QStringLiteral("Before"));
+        appendSegment(*segmentModel, QStringLiteral("before"), QStringLiteral("Before"));
     QStandardItemModel replacement;
-    configureRenderRoles(replacement);
+    configureSegmentRoles(replacement);
     appendSegment(replacement, QStringLiteral("after"), QStringLiteral("After"));
     appendSegment(replacement, QStringLiteral("code"), QStringLiteral("return 0;"), true);
-    QObject document;
-    document.setProperty("renderModel", QVariant::fromValue(static_cast<QAbstractItemModel*>(renderModel.get())));
     InspectableSourceModel source;
     configureSourceRoles(source);
     auto* message = new QStandardItem;
     message->setData(QStringLiteral("answer"), EntryIdRole);
-    message->setData(QVariant::fromValue(&document), MarkupDocumentRole);
+    message->setData(QVariant::fromValue(static_cast<QObject*>(segmentModel.get())), MarkupDocumentRole);
     source.appendRow(message);
     CodexTimelineViewportModel model;
     model.setSourceModel(&source);
@@ -347,10 +338,10 @@ CodexTimelineViewportModelTest::reconcilesAReplacedRenderModelAfterDestruction()
     QCOMPARE(model.rowCount(), 1);
     source.resetDataReadCount();
 
-    renderModel.reset();
+    segmentModel.reset();
 
     QCOMPARE(source.dataReadCount(), 0);
-    document.setProperty("renderModel", QVariant::fromValue(static_cast<QAbstractItemModel*>(&replacement)));
+    message->setData(QVariant::fromValue(static_cast<QObject*>(&replacement)), MarkupDocumentRole);
     QCoreApplication::sendPostedEvents(&model, QEvent::MetaCall);
 
     QCOMPARE(model.rowCount(), 2);
@@ -535,20 +526,18 @@ CodexTimelineViewportModelTest::retainsOneSharedBlockModelSubscriptionForRemaini
 }
 
 void
-CodexTimelineViewportModelTest::usesDocumentRenderSegmentsAsViewportRows()
+CodexTimelineViewportModelTest::usesDocumentSegmentsAsViewportRows()
 {
-    QStandardItemModel renderModel;
-    configureRenderRoles(renderModel);
-    appendSegment(renderModel, QStringLiteral("prose:0"), QStringLiteral("First\n\nSecond"));
-    appendSegment(renderModel, QStringLiteral("code:24"), QStringLiteral("return 0;"), true, QStringLiteral("cpp"));
-    QObject document;
-    document.setProperty("renderModel", QVariant::fromValue(static_cast<QAbstractItemModel*>(&renderModel)));
+    QStandardItemModel segmentModel;
+    configureSegmentRoles(segmentModel);
+    appendSegment(segmentModel, QStringLiteral("prose:0"), QStringLiteral("First\n\nSecond"));
+    appendSegment(segmentModel, QStringLiteral("code:24"), QStringLiteral("return 0;"), true, QStringLiteral("cpp"));
 
     QStandardItemModel source;
     configureSourceRoles(source);
     auto* message = new QStandardItem;
     message->setData(QStringLiteral("message:turn-1:answer"), EntryIdRole);
-    message->setData(QVariant::fromValue(&document), MarkupDocumentRole);
+    message->setData(QVariant::fromValue(static_cast<QObject*>(&segmentModel)), MarkupDocumentRole);
     source.appendRow(message);
 
     CodexTimelineViewportModel model;
@@ -565,19 +554,17 @@ CodexTimelineViewportModelTest::usesDocumentRenderSegmentsAsViewportRows()
 void
 CodexTimelineViewportModelTest::reconcilesOneRenderResetWithoutResettingViewport()
 {
-    ResettableRenderModel renderModel;
-    renderModel.replaceSegments({
+    ResettableSegmentModel segmentModel;
+    segmentModel.replaceSegments({
       { .id = QStringLiteral("prose:0"), .text = QStringLiteral("Growing answer") },
       { .id = QStringLiteral("code:24"), .text = QStringLiteral("return 0;"), .codeBlock = true },
     });
-    QObject document;
-    document.setProperty("renderModel", QVariant::fromValue(static_cast<QAbstractItemModel*>(&renderModel)));
 
     QStandardItemModel source;
     configureSourceRoles(source);
     auto* message = new QStandardItem;
     message->setData(QStringLiteral("message:turn-1:answer"), EntryIdRole);
-    message->setData(QVariant::fromValue(&document), MarkupDocumentRole);
+    message->setData(QVariant::fromValue(static_cast<QObject*>(&segmentModel)), MarkupDocumentRole);
     source.appendRow(message);
 
     CodexTimelineViewportModel model;
@@ -589,7 +576,7 @@ CodexTimelineViewportModelTest::reconcilesOneRenderResetWithoutResettingViewport
     QSignalSpy removedSpy(&model, &QAbstractItemModel::rowsRemoved);
     QSignalSpy changedSpy(&model, &QAbstractItemModel::dataChanged);
 
-    renderModel.replaceSegments({
+    segmentModel.replaceSegments({
       { .id = QStringLiteral("prose:0"), .text = QStringLiteral("Growing answer with more content") },
       { .id = QStringLiteral("code:24"), .text = QStringLiteral("return 0;"), .codeBlock = true },
     });
@@ -605,7 +592,7 @@ CodexTimelineViewportModelTest::reconcilesOneRenderResetWithoutResettingViewport
 }
 
 void
-CodexTimelineViewportModelTest::keepsPendingNativeSnapshotsOutOfTheLegacyRenderer()
+CodexTimelineViewportModelTest::keepsPendingSnapshotsInTheSegmentPath()
 {
     MarkupDocumentModel document;
     document.reconcileSource(QStringLiteral("```cpp\nreturn 0;\n```\n\n").repeated(200),

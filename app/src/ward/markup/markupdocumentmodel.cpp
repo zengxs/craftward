@@ -5,90 +5,134 @@
 
 #include "document.qpb.h"
 #include "ward/coreffierror.h"
-#include "ward/markup/markuprendermodel.h"
-#include "ward/markup/markupsemanticmodel.h"
 
 #include <ward_core.h>
 
-#include <QByteArray>
-#include <QByteArrayView>
 #include <QDebug>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtProtobuf/QProtobufSerializer>
+#include <QtProtobuf/qprotobufregistration.h>
 
 #include <algorithm>
-#include <cstdint>
 #include <limits>
 #include <memory>
-#include <utility>
 
 namespace {
-struct WardOwnedBufferDeleter
-{
-    void operator()(WardOwnedBuffer* buffer) const { ward_core_owned_buffer_destroy(buffer); }
-};
+using namespace ward::markup::v1;
+using TextKind = TextKindGadget::TextKind;
+constexpr qsizetype MAX_GROUP_BLOCKS = 8;
+constexpr qsizetype MAX_GROUP_CHILDREN = 16;
+constexpr quint64 TARGET_GROUP_BYTES = 8 * 1024;
 
-using OwnedWardBuffer = std::unique_ptr<WardOwnedBuffer, WardOwnedBufferDeleter>;
-using WireBlock = ward::markup::v1::Block;
-constexpr int STREAM_PARSE_INTERVAL_MILLISECONDS = 32;
-
-WardMarkupSourceFormat
-toWireFormat(MarkupDocumentModel::SourceFormat format)
+bool
+supported(const SemanticBlock& block)
 {
-    switch (format) {
-        case MarkupDocumentModel::SourceFormat::PlainText:
-            return WardMarkupSourceFormatPlainText;
-        case MarkupDocumentModel::SourceFormat::Markdown:
-            return WardMarkupSourceFormatMarkdown;
+    for (const auto& node : block.nodes()) {
+        if (node.hasImage() || node.hasFootnoteDefinition() || node.hasFootnoteReference() || node.hasAdmonitionKind())
+            return false;
+        if (node.hasText() && node.text().kind() == TextKind::TEXT_KIND_UNSUPPORTED)
+            return false;
+        if (node.hasList() && node.list().hasStart() && node.list().start() > std::numeric_limits<int>::max())
+            return false;
     }
-    Q_UNREACHABLE_RETURN(WardMarkupSourceFormatPlainText);
+    return true;
 }
 
+QString
+decodedText(const SemanticBlock& block)
+{
+    QString text;
+    for (const auto& node : block.nodes()) {
+        if (node.hasText())
+            text += node.text().value().text();
+        else if (node.hasAnnotation())
+            text += node.annotation().label().text();
+    }
+    return text;
+}
+
+// Split at structural boundaries. The copied outer container describes only this
+// segment, so an appended sibling does not invalidate earlier segment payloads.
+QList<SemanticBlock>
+splitBlock(const SemanticBlock& block)
+{
+    const auto& nodes = block.nodes();
+    if (nodes.isEmpty() || (!nodes.first().hasTable() && !nodes.first().hasList()))
+        return { block };
+
+    QList<qsizetype> children;
+    for (qsizetype index = 1; index < nodes.size(); ++index) {
+        if (nodes[index].hasParentIndex() && nodes[index].parentIndex() == 0)
+            children.append(index);
+    }
+    QList<SemanticBlock> segments;
+    for (qsizetype child = 0; child < children.size();) {
+        qsizetype next = child + 1;
+        while (next < children.size() && next - child < MAX_GROUP_CHILDREN &&
+               nodes[children[next]].source().end() - nodes[children[child]].source().start() <= TARGET_GROUP_BYTES)
+            ++next;
+        const qsizetype first = children[child];
+        const qsizetype end = next < children.size() ? children[next] : nodes.size();
+        SemanticBlock segment = block;
+        auto range = nodes[first].source();
+        range.setEnd(nodes[children[next - 1]].source().end());
+        segment.setSource(range);
+        auto outer = nodes.first();
+        outer.setSource(segment.source());
+        if (outer.hasList() && outer.list().hasStart()) {
+            auto list = outer.list();
+            list.setStart(list.start() + child);
+            outer.setList(list);
+        }
+        QList<SemanticNode> selected{ outer };
+        for (qsizetype index = first; index < end; ++index) {
+            auto node = nodes[index];
+            node.setParentIndex(node.parentIndex() == 0 ? 0 : node.parentIndex() - first + 1);
+            selected.append(std::move(node));
+        }
+        segment.setNodes(selected);
+        segments.append(std::move(segment));
+        child = next;
+    }
+    return segments;
+}
 }
 
 MarkupDocumentModel::MarkupDocumentModel(QObject* parent)
   : QAbstractListModel(parent)
 {
-    parseTimer_.setSingleShot(true);
-    parseTimer_.setInterval(STREAM_PARSE_INTERVAL_MILLISECONDS);
-    connect(&parseTimer_, &QTimer::timeout, this, &MarkupDocumentModel::dispatchParse);
-    connect(&parseWatcher_, &QFutureWatcher<ParseResult>::finished, this, &MarkupDocumentModel::applyFinishedParse);
+    // Generated enum registrars may run after the static message registration.
+    // Drain them before workers deserialize repeated enum fields such as columns.
+    qRegisterProtobufTypes();
+    timer_.setSingleShot(true);
+    connect(&timer_, &QTimer::timeout, this, &MarkupDocumentModel::dispatch);
+    connect(&watcher_, &QFutureWatcher<Result>::finished, this, &MarkupDocumentModel::applyFinished);
 }
-
-MarkupDocumentModel::~MarkupDocumentModel() = default;
 
 int
 MarkupDocumentModel::rowCount(const QModelIndex& parent) const
 {
-    return parent.isValid() ? 0 : rows_.size();
+    return parent.isValid() ? 0 : segments_.size();
 }
 
 QVariant
 MarkupDocumentModel::data(const QModelIndex& index, int role) const
 {
-    if (!checkIndex(index,
-                    QAbstractItemModel::CheckIndexOption::IndexIsValid |
-                      QAbstractItemModel::CheckIndexOption::ParentIsInvalid))
+    if (!index.isValid() || index.parent().isValid() || index.row() < 0 || index.row() >= segments_.size())
         return {};
-
-    const BlockRow& row = rows_.at(index.row());
+    const auto& segment = segments_[index.row()];
     switch (role) {
-        case BlockIdRole:
-            return row.blockId;
+        case SegmentIdRole:
+            return segment.id;
         case CodeBlockRole:
-            return row.kind == BlockKind::Code;
-        case SourceStartRole:
-            return row.sourceStart;
-        case SourceEndRole:
-            return row.sourceEnd;
-        case BlockTextRole:
-            return row.text;
+            return segment.codeBlock;
+        case SegmentTextRole:
         case PlainTextRole:
-            return row.plainText;
+            return segment.text;
         case LanguageRole:
-            return row.language;
-        case MarkdownRole:
-            return row.markdown;
+            return segment.language;
+        case SemanticSegmentRole:
+            return segment.semantic;
         default:
             return {};
     }
@@ -98,292 +142,170 @@ QHash<int, QByteArray>
 MarkupDocumentModel::roleNames() const
 {
     return {
-        { BlockIdRole, "blockId" },     { CodeBlockRole, "codeBlock" }, { SourceStartRole, "sourceStart" },
-        { SourceEndRole, "sourceEnd" }, { BlockTextRole, "blockText" }, { PlainTextRole, "plainText" },
-        { LanguageRole, "language" },   { MarkdownRole, "markdown" },
+        { SegmentIdRole, "segmentId" }, { CodeBlockRole, "codeBlock" }, { SegmentTextRole, "segmentText" },
+        { PlainTextRole, "plainText" }, { LanguageRole, "language" },   { SemanticSegmentRole, "semanticSegment" }
     };
 }
 
-QAbstractItemModel*
-MarkupDocumentModel::renderModel() const
-{
-    if (!renderModel_) {
-        auto model = std::make_unique<MarkupRenderModel>();
-        model->setSourceModel(const_cast<MarkupDocumentModel*>(this));
-        renderModel_ = std::move(model);
-    }
-    return renderModel_.get();
-}
-
 bool
-MarkupDocumentModel::reconcileSource(const QString& source, SourceFormat format, bool finalized)
+MarkupDocumentModel::reconcileSource(const QString& source, MarkupDocumentModel::SourceFormat format, bool finalized)
 {
-    if (requestedSource_ == source && requestedFormat_ == format && requestedFinalized_ == finalized)
+    if (source_ == source && format_ == format && finalized_ == finalized)
         return true;
-
-    requestedSource_ = source;
-    requestedFormat_ = format;
-    requestedFinalized_ = finalized;
-    ++requestedGeneration_;
-    if (semanticModel_)
-        semanticModel_->reconcileSource(source, format, finalized);
-
-    if (format == SourceFormat::PlainText) {
-        parseTimer_.stop();
-        appliedSource_ = source;
-        appliedFormat_ = format;
-        appliedGeneration_ = requestedGeneration_;
-        hasAppliedSource_ = true;
-        reconcileRows(fallbackRows(source, format));
-        emit documentReconciled();
-        return true;
-    }
-
-    scheduleParse();
+    source_ = source;
+    format_ = format;
+    finalized_ = finalized;
+    ++generation_;
+    schedule();
     return true;
-}
-
-QAbstractItemModel*
-MarkupDocumentModel::semanticModel() const
-{
-    if (!semanticModel_) {
-        semanticModel_ = std::make_unique<MarkupSemanticModel>();
-        semanticModel_->reconcileSource(requestedSource_, requestedFormat_, requestedFinalized_);
-    }
-    return semanticModel_.get();
 }
 
 void
-MarkupDocumentModel::prepareForLayout()
+MarkupDocumentModel::schedule()
 {
-    if (appliedGeneration_ == requestedGeneration_)
-        return;
-    // A newly placed viewport row needs this snapshot before its geometry becomes visible.
-    parseTimer_.stop();
-    applyParseResult(parseRequest(makeParseRequest()));
+    if (!timer_.isActive() && !watcher_.isRunning() && appliedGeneration_ != generation_)
+        timer_.start(finalized_ ? 0 : 32);
 }
 
-QList<MarkupDocumentModel::BlockRow>
-MarkupDocumentModel::fallbackRows(const QString& source, SourceFormat format, qulonglong sourceOffset)
+void
+MarkupDocumentModel::dispatch()
 {
-    if (source.isEmpty())
-        return {};
-    const QByteArray encoded = source.toUtf8();
-    return {
-        BlockRow{
-          .blockId = QStringLiteral("prose:%1").arg(sourceOffset),
-          .sourceStart = sourceOffset,
-          .sourceEnd = sourceOffset + static_cast<qulonglong>(encoded.size()),
-          .text = source,
-          .plainText = source,
-          .markdown = format == SourceFormat::Markdown,
-        },
-    };
+    // Workers own value snapshots only; document teardown never waits for them.
+    watcher_.setFuture(QtConcurrent::run(
+      [generation = generation_, source = source_, format = format_] { return parse(generation, source, format); }));
 }
 
-bool
-MarkupDocumentModel::parseRows(const QString& source,
-                               SourceFormat format,
-                               qulonglong sourceOffset,
-                               QList<BlockRow>* rows,
-                               QString* errorMessage)
+MarkupDocumentModel::Result
+MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocumentModel::SourceFormat format)
 {
+    Result result{ .generation = generation };
     const QByteArray encoded = source.toUtf8();
-    WardError* rawError = nullptr;
-    OwnedWardBuffer buffer(ward_core_markup_parse(toWireFormat(format),
-                                                  reinterpret_cast<const std::uint8_t*>(encoded.constData()),
-                                                  static_cast<std::size_t>(encoded.size()),
-                                                  &rawError));
-    if (!buffer) {
-        *errorMessage = ward::coreffi::takeErrorMessage(rawError);
-        if (errorMessage->isEmpty())
-            *errorMessage = QStringLiteral("Ward Core returned no markup document.");
-        return false;
-    }
-
-    const std::size_t bufferSize = ward_core_owned_buffer_size(buffer.get());
-    if (bufferSize > static_cast<std::size_t>(std::numeric_limits<qsizetype>::max())) {
-        *errorMessage = QStringLiteral("The serialized markup document is too large.");
-        return false;
-    }
-    const QByteArrayView bytes(reinterpret_cast<const char*>(ward_core_owned_buffer_data(buffer.get())),
-                               static_cast<qsizetype>(bufferSize));
-    ward::markup::v1::Document document;
+    WardError* error = nullptr;
+    const auto wireFormat = format == MarkupDocumentModel::SourceFormat::Markdown ? WardMarkupSourceFormatMarkdown
+                                                                                  : WardMarkupSourceFormatPlainText;
+    const std::unique_ptr<WardOwnedBuffer, decltype(&ward_core_owned_buffer_destroy)> buffer(
+      ward_core_markup_parse_semantic(
+        wireFormat, reinterpret_cast<const uint8_t*>(encoded.constData()), encoded.size(), &error),
+      &ward_core_owned_buffer_destroy);
+    SemanticDocument document;
     QProtobufSerializer serializer;
-    if (!document.deserialize(&serializer, bytes)) {
-        *errorMessage = QStringLiteral("Failed to decode the markup document: %1").arg(serializer.lastErrorString());
-        return false;
+    if (!buffer) {
+        result.error = ward::coreffi::takeErrorMessage(error);
+        if (result.error.isEmpty())
+            result.error = QStringLiteral("Ward Core returned no semantic document.");
+    } else if (ward_core_owned_buffer_size(buffer.get()) > std::numeric_limits<qsizetype>::max()) {
+        result.error = QStringLiteral("The semantic document is too large.");
+    } else if (!document.deserialize(
+                 &serializer,
+                 QByteArrayView(reinterpret_cast<const char*>(ward_core_owned_buffer_data(buffer.get())),
+                                ward_core_owned_buffer_size(buffer.get())))) {
+        result.error = serializer.lastErrorString();
     }
-
-    const bool markdown = format == SourceFormat::Markdown;
-    rows->reserve(document.blocks().size());
-    for (const WireBlock& block : document.blocks()) {
-        const qulonglong sourceStart = sourceOffset + block.sourceStart();
-        const qulonglong sourceEnd = sourceOffset + block.sourceEnd();
-        if (block.hasProse()) {
-            const auto& prose = block.prose();
-            rows->append(BlockRow{
-              .blockId = QStringLiteral("prose:%1").arg(sourceStart),
-              .kind = BlockKind::Prose,
-              .sourceStart = sourceStart,
-              .sourceEnd = sourceEnd,
-              .text = prose.source(),
-              .plainText = prose.plainText(),
-              .markdown = markdown,
-            });
-        } else if (block.hasCodeBlock()) {
-            const auto& code = block.codeBlock();
-            rows->append(BlockRow{
-              .blockId = QStringLiteral("code:%1").arg(sourceStart),
-              .kind = BlockKind::Code,
-              .sourceStart = sourceStart,
-              .sourceEnd = sourceEnd,
-              .text = code.code(),
-              .plainText = code.code(),
-              .language = code.hasLanguage() ? code.language() : QString(),
-              .markdown = false,
-            });
-        }
-    }
-    return true;
-}
-
-MarkupDocumentModel::ParseResult
-MarkupDocumentModel::parseRequest(ParseRequest request)
-{
-    ParseResult result{
-        .generation = request.generation,
-        .source = std::move(request.source),
-        .format = request.format,
-        .finalized = request.finalized,
-        .rows = std::move(request.retainedRows),
-    };
-
-    const QByteArray encoded = result.source.toUtf8();
-    if (request.sourceOffset > static_cast<qulonglong>(encoded.size())) {
-        result.errorMessage = QStringLiteral("The incremental markup source offset is invalid.");
+    if (!result.error.isEmpty()) {
+        if (!source.isEmpty())
+            result.segments.append(Segment{ .id = QStringLiteral("fallback:0"), .text = source });
         return result;
     }
-    const QByteArray suffixBytes = encoded.sliced(static_cast<qsizetype>(request.sourceOffset));
-    const QString suffix = QString::fromUtf8(suffixBytes);
-    QList<BlockRow> suffixRows;
-    result.parsed = parseRows(suffix, result.format, request.sourceOffset, &suffixRows, &result.errorMessage);
-    if (!result.parsed)
-        suffixRows = fallbackRows(suffix, result.format, request.sourceOffset);
-    result.rows.reserve(result.rows.size() + suffixRows.size());
-    for (BlockRow& row : suffixRows)
-        result.rows.append(std::move(row));
+
+    QList<SemanticBlock> group;
+    quint64 groupStart = 0;
+    const auto flushGroup = [&] {
+        if (group.isEmpty())
+            return;
+        SemanticDocument payload;
+        payload.setSourceFormat(document.sourceFormat());
+        payload.setBlocks(group);
+        QString text;
+        for (const auto& part : group) {
+            if (!text.isEmpty())
+                text += QStringLiteral("\n\n");
+            text += decodedText(part);
+        }
+        QString id = group.first().blockId();
+        const auto nodes = group.first().nodes();
+        if (nodes.first().hasList() || nodes.first().hasTable())
+            id += QLatin1Char('/') + nodes.at(1).nodeId();
+        result.segments.append(Segment{ .id = id, .text = text, .semantic = QVariant::fromValue(payload) });
+        group.clear();
+    };
+    for (const auto& block : document.blocks()) {
+        const auto parts = splitBlock(block);
+        for (const auto& part : parts) {
+            if (part.nodes().isEmpty())
+                continue;
+            const auto root = part.nodes().first();
+            Segment segment{ .id = block.blockId(), .codeBlock = root.hasCodeBlock() };
+            if (segment.codeBlock) {
+                flushGroup();
+                segment.text = decodedText(part);
+                if (segment.text.endsWith(QLatin1Char('\n')))
+                    segment.text.chop(1);
+                segment.language = root.codeBlock().hasLanguage() ? root.codeBlock().language() : QString();
+            } else if (supported(part)) {
+                const bool structuredGroup = root.hasTable() || root.hasList();
+                if (structuredGroup || group.size() >= MAX_GROUP_BLOCKS ||
+                    (!group.isEmpty() && part.source().end() - groupStart > TARGET_GROUP_BYTES))
+                    flushGroup();
+                if (group.isEmpty())
+                    groupStart = part.source().start();
+                group.append(part);
+                if (structuredGroup)
+                    flushGroup();
+                continue;
+            } else {
+                flushGroup();
+                if (root.hasTable() || root.hasList())
+                    segment.id += QLatin1Char('/') + part.nodes().at(1).nodeId();
+                segment.text =
+                  QString::fromUtf8(encoded.sliced(part.source().start(), part.source().end() - part.source().start()));
+            }
+            result.segments.append(std::move(segment));
+        }
+    }
+    flushGroup();
     return result;
 }
 
-MarkupDocumentModel::ParseRequest
-MarkupDocumentModel::makeParseRequest() const
-{
-    ParseRequest request{
-        .generation = requestedGeneration_,
-        .source = requestedSource_,
-        .format = requestedFormat_,
-        .finalized = requestedFinalized_,
-    };
-    if (requestedFinalized_ || !hasAppliedSource_ || appliedFormat_ != requestedFormat_ || rows_.isEmpty())
-        return request;
-
-    const QByteArray appliedBytes = appliedSource_.toUtf8();
-    const QByteArray requestedBytes = requestedSource_.toUtf8();
-    const qsizetype sharedSize = std::min(appliedBytes.size(), requestedBytes.size());
-    qsizetype sharedPrefix = 0;
-    while (sharedPrefix < sharedSize && appliedBytes.at(sharedPrefix) == requestedBytes.at(sharedPrefix))
-        ++sharedPrefix;
-
-    qsizetype firstAffectedRow = 0;
-    while (firstAffectedRow < rows_.size() &&
-           rows_.at(firstAffectedRow).sourceEnd <= static_cast<qulonglong>(sharedPrefix)) {
-        ++firstAffectedRow;
-    }
-    const qsizetype restartRow =
-      firstAffectedRow >= rows_.size() ? rows_.size() - 1 : std::max<qsizetype>(0, firstAffectedRow - 1);
-    const qulonglong sourceOffset = rows_.at(restartRow).sourceStart;
-    if (sourceOffset > static_cast<qulonglong>(sharedPrefix) ||
-        sourceOffset > static_cast<qulonglong>(requestedBytes.size())) {
-        return request;
-    }
-
-    request.sourceOffset = sourceOffset;
-    request.retainedRows = rows_.mid(0, restartRow);
-    return request;
-}
-
 void
-MarkupDocumentModel::scheduleParse()
+MarkupDocumentModel::applyFinished()
 {
-    if (requestedFormat_ != SourceFormat::Markdown || parseWatcher_.isRunning() || parseTimer_.isActive())
-        return;
-    parseTimer_.start(requestedFinalized_ ? 0 : STREAM_PARSE_INTERVAL_MILLISECONDS);
-}
-
-void
-MarkupDocumentModel::dispatchParse()
-{
-    if (requestedFormat_ != SourceFormat::Markdown || parseWatcher_.isRunning())
-        return;
-    ParseRequest request = makeParseRequest();
-    parseWatcher_.setFuture(
-      QtConcurrent::run([request = std::move(request)]() mutable { return parseRequest(std::move(request)); }));
-}
-
-void
-MarkupDocumentModel::applyFinishedParse()
-{
-    applyParseResult(parseWatcher_.result());
-    if (appliedGeneration_ != requestedGeneration_)
-        scheduleParse();
-}
-
-void
-MarkupDocumentModel::applyParseResult(ParseResult result)
-{
-    if (result.generation == requestedGeneration_ && result.generation > appliedGeneration_) {
-        if (!result.parsed)
-            qWarning().noquote() << "Failed to parse a markup document:" << result.errorMessage;
-        appliedSource_ = result.source;
-        appliedFormat_ = result.format;
+    auto result = watcher_.result();
+    if (result.generation == generation_ && result.generation > appliedGeneration_) {
+        if (!result.error.isEmpty())
+            qWarning().noquote() << "Failed to parse a semantic markup document:" << result.error;
         appliedGeneration_ = result.generation;
-        hasAppliedSource_ = true;
-        reconcileRows(std::move(result.rows));
+        reconcileSegments(std::move(result.segments));
         emit documentReconciled();
     }
+    schedule();
 }
 
 void
-MarkupDocumentModel::reconcileRows(QList<BlockRow> rows)
+MarkupDocumentModel::reconcileSegments(QList<Segment> segments)
 {
-    const qsizetype sharedSize = std::min(rows_.size(), rows.size());
-    qsizetype commonPrefix = 0;
-    while (commonPrefix < sharedSize && rows_.at(commonPrefix).blockId == rows.at(commonPrefix).blockId)
-        ++commonPrefix;
-
-    qsizetype firstChanged = -1;
-    qsizetype lastChanged = -1;
-    for (qsizetype index = 0; index < commonPrefix; ++index) {
-        if (rows_.at(index) == rows.at(index))
-            continue;
-        rows_[index] = std::move(rows[index]);
-        if (firstChanged < 0)
-            firstChanged = index;
-        lastChanged = index;
+    qsizetype prefix = 0;
+    while (prefix < std::min(segments_.size(), segments.size()) && segments_[prefix].id == segments[prefix].id) {
+        if (segments_[prefix] != segments[prefix]) {
+            segments_[prefix] = std::move(segments[prefix]);
+            emit dataChanged(index(prefix), index(prefix));
+        }
+        ++prefix;
     }
-    if (firstChanged >= 0)
-        emit dataChanged(this->index(firstChanged), this->index(lastChanged));
-
-    if (commonPrefix < rows_.size()) {
-        beginRemoveRows({}, commonPrefix, rows_.size() - 1);
-        rows_.remove(commonPrefix, rows_.size() - commonPrefix);
+    qsizetype suffix = 0;
+    while (suffix < std::min(segments_.size(), segments.size()) - prefix &&
+           segments_[segments_.size() - suffix - 1] == segments[segments.size() - suffix - 1])
+        ++suffix;
+    const qsizetype removed = segments_.size() - prefix - suffix;
+    if (removed > 0) {
+        beginRemoveRows({}, prefix, prefix + removed - 1);
+        segments_.remove(prefix, removed);
         endRemoveRows();
     }
-    if (commonPrefix < rows.size()) {
-        beginInsertRows({}, commonPrefix, rows.size() - 1);
-        for (qsizetype index = commonPrefix; index < rows.size(); ++index)
-            rows_.append(std::move(rows[index]));
+    const qsizetype inserted = segments.size() - prefix - suffix;
+    if (inserted > 0) {
+        beginInsertRows({}, prefix, prefix + inserted - 1);
+        for (qsizetype offset = 0; offset < inserted; ++offset)
+            segments_.insert(prefix + offset, std::move(segments[prefix + offset]));
         endInsertRows();
     }
 }

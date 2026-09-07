@@ -20,24 +20,6 @@ Item {
     property string lastForkedTurnId
 
     ListModel {
-        id: messageSegments
-
-        ListElement {
-            segmentId: "message-segment"
-            codeBlock: false
-            segmentText: "Rendered message"
-            language: ""
-            markdown: true
-        }
-    }
-
-    QtObject {
-        id: messageDocument
-
-        property var renderModel: messageSegments
-    }
-
-    ListModel {
         id: fakeTimelineModel
 
         property int revision: 0
@@ -123,7 +105,12 @@ Item {
                 detailCountInTurn: 0,
                 standaloneActivity: false,
                 text: "Copy this message",
-                markupDocument: messageDocument
+                semanticBlock: true,
+                firstBlockInEntry: true,
+                lastBlockInEntry: true,
+                blockText: "Rendered message",
+                codeBlock: false,
+                language: ""
             }, overrides ?? {});
         }
 

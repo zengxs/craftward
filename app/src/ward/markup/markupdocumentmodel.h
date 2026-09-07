@@ -5,20 +5,12 @@
 
 #include <QAbstractListModel>
 #include <QFutureWatcher>
-#include <QList>
-#include <QString>
 #include <QTimer>
 
-#include <memory>
-
-class MarkupRenderModel;
-class MarkupSemanticModel;
-
+/// Retains semantic data, never text layouts, for one complete message.
 class MarkupDocumentModel : public QAbstractListModel
 {
     Q_OBJECT
-    Q_PROPERTY(QAbstractItemModel* renderModel READ renderModel CONSTANT)
-    Q_PROPERTY(QAbstractItemModel* semanticModel READ semanticModel CONSTANT)
 
   public:
     enum class SourceFormat
@@ -29,100 +21,54 @@ class MarkupDocumentModel : public QAbstractListModel
 
     enum Role
     {
-        BlockIdRole = Qt::UserRole + 1,
+        SegmentIdRole = Qt::UserRole + 1,
         CodeBlockRole,
-        SourceStartRole,
-        SourceEndRole,
-        BlockTextRole,
+        SegmentTextRole,
         PlainTextRole,
         LanguageRole,
-        MarkdownRole,
+        SemanticSegmentRole,
     };
 
     explicit MarkupDocumentModel(QObject* parent = nullptr);
-    ~MarkupDocumentModel() override;
+    bool reconcileSource(const QString& source, SourceFormat format, bool finalized = true);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
-    [[nodiscard]] QAbstractItemModel* renderModel() const;
-    [[nodiscard]] QAbstractItemModel* semanticModel() const;
-
-    bool reconcileSource(const QString& source, SourceFormat format, bool finalized = true);
-    Q_INVOKABLE void prepareForLayout();
 
   signals:
     void documentReconciled();
 
   private:
-    enum class BlockKind
+    struct Segment
     {
-        Prose,
-        Code,
-    };
-
-    struct BlockRow
-    {
-        QString blockId;
-        BlockKind kind = BlockKind::Prose;
-        qulonglong sourceStart = 0;
-        qulonglong sourceEnd = 0;
+        QString id;
+        bool codeBlock = false;
         QString text;
-        QString plainText;
         QString language;
-        bool markdown = false;
+        QVariant semantic;
 
-        bool operator==(const BlockRow&) const = default;
+        bool operator==(const Segment&) const = default;
     };
-
-    struct ParseRequest
+    struct Result
     {
         quint64 generation = 0;
-        QString source;
-        SourceFormat format = SourceFormat::PlainText;
-        bool finalized = false;
-        qulonglong sourceOffset = 0;
-        QList<BlockRow> retainedRows;
+        QList<Segment> segments;
+        QString error;
     };
 
-    struct ParseResult
-    {
-        quint64 generation = 0;
-        QString source;
-        SourceFormat format = SourceFormat::PlainText;
-        bool finalized = false;
-        bool parsed = false;
-        QString errorMessage;
-        QList<BlockRow> rows;
-    };
+    static Result parse(quint64 generation, const QString& source, SourceFormat format);
+    void schedule();
+    void dispatch();
+    void applyFinished();
+    void reconcileSegments(QList<Segment> segments);
 
-    [[nodiscard]] static QList<BlockRow> fallbackRows(const QString& source,
-                                                      SourceFormat format,
-                                                      qulonglong sourceOffset = 0);
-    [[nodiscard]] static bool parseRows(const QString& source,
-                                        SourceFormat format,
-                                        qulonglong sourceOffset,
-                                        QList<BlockRow>* rows,
-                                        QString* errorMessage);
-    [[nodiscard]] static ParseResult parseRequest(ParseRequest request);
-    [[nodiscard]] ParseRequest makeParseRequest() const;
-    void scheduleParse();
-    void dispatchParse();
-    void applyFinishedParse();
-    void applyParseResult(ParseResult result);
-    void reconcileRows(QList<BlockRow> rows);
-
-    QString requestedSource_;
-    SourceFormat requestedFormat_ = SourceFormat::PlainText;
-    bool requestedFinalized_ = false;
-    quint64 requestedGeneration_ = 0;
+    QString source_;
+    SourceFormat format_ = SourceFormat::PlainText;
+    bool finalized_ = false;
+    quint64 generation_ = 0;
     quint64 appliedGeneration_ = 0;
-    QString appliedSource_;
-    SourceFormat appliedFormat_ = SourceFormat::PlainText;
-    bool hasAppliedSource_ = false;
-    QList<BlockRow> rows_;
-    QTimer parseTimer_;
-    QFutureWatcher<ParseResult> parseWatcher_;
-    mutable std::unique_ptr<MarkupRenderModel> renderModel_;
-    mutable std::unique_ptr<MarkupSemanticModel> semanticModel_;
+    QTimer timer_;
+    QFutureWatcher<Result> watcher_;
+    QList<Segment> segments_;
 };

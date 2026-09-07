@@ -15,7 +15,6 @@ Control {
     required property var timelineModel
     property int sourceRow: -1
     property int dataRevision: -1
-    property string rendererName: "current"
     required property bool turnExpanded
     required property bool hasRunningEvidence
     required property bool activityShimmerEnabled
@@ -23,7 +22,7 @@ Control {
     required property bool showForkActions
     required property double wallClockUnixMilliseconds
     readonly property string entryId: String(root.value("entryId") ?? "")
-    readonly property string heightCacheKey: root.rendererName + ":" + root.entryId
+    readonly property string heightCacheKey: "semantic:" + root.entryId
     readonly property bool contentMaterializationRequested: false
     readonly property bool contentMaterializationReady: true
     readonly property bool contentMeasurementReady: true
@@ -41,7 +40,7 @@ Control {
     readonly property bool firstBlockInEntry: !root.semanticBlock || Boolean(root.value("firstBlockInEntry"))
     readonly property bool lastBlockInEntry: !root.semanticBlock || Boolean(root.value("lastBlockInEntry"))
     readonly property real semanticBlockSpacing: root.semanticBlock && !root.lastBlockInEntry ? 8 : 0
-    readonly property real semanticEntrySpacing: root.rendererName === "semantic" && (!root.semanticBlock || root.lastBlockInEntry) ? 10 : 0
+    readonly property real semanticEntrySpacing: (!root.semanticBlock || root.lastBlockInEntry) ? 10 : 0
     readonly property bool presentationVisible: !root.detailRow || root.firstDetailInTurn || root.turnExpanded
 
     signal toggleTurnRequested(string turnId)
@@ -150,7 +149,7 @@ Control {
             width: parent.width
             active: root.detailRow && root.turnExpanded
             visible: active
-            sourceComponent: root.activityGroup ? activityGroupComponent : (root.semanticBlock ? semanticBlockComponent : commentaryComponent)
+            sourceComponent: root.activityGroup ? activityGroupComponent : semanticBlockComponent
         }
     }
 
@@ -248,7 +247,7 @@ Control {
                         x: messageRoot.messageHorizontalPadding
                         y: messageRoot.messageTopPadding
                         width: parent.width - messageRoot.messageHorizontalPadding * 2
-                        sourceComponent: root.semanticBlock ? semanticBlockComponent : messageComponent
+                        sourceComponent: semanticBlockComponent
                     }
                 }
 
@@ -273,17 +272,6 @@ Control {
     }
 
     Component {
-        id: messageComponent
-
-        MarkupDocumentView {
-            documentModel: root.value("markupDocument") ?? null
-            textColor: root.palette.text
-            font: root.font
-            codeFont: Typography.codeFont
-        }
-    }
-
-    Component {
         id: semanticBlockComponent
 
         MarkupSegmentView {
@@ -291,7 +279,6 @@ Control {
             segmentText: root.textValue("blockText")
             semanticSegment: root.value("semanticSegment") ?? null
             language: root.textValue("language")
-            markdown: Boolean(root.value("markdown"))
             textColor: root.palette.text
             font: root.font
             codeFont: Typography.codeFont
@@ -308,18 +295,6 @@ Control {
             expanded: root.turnExpanded
             font: root.font
             onToggleRequested: root.toggleTurnRequested(root.turnId)
-        }
-    }
-
-    Component {
-        id: commentaryComponent
-
-        MarkupDocumentView {
-            width: detailBodyLoader.width
-            documentModel: root.value("markupDocument") ?? null
-            textColor: root.palette.text
-            font: root.font
-            codeFont: Typography.codeFont
         }
     }
 

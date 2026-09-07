@@ -18,7 +18,6 @@ Page {
     property bool timelineMotionDiagnosticsEnabled: false
     property bool timelineRenderBenchmarkEnabled: false
     property string timelineRenderBenchmarkThreadId: ""
-    property string timelineRenderBenchmarkRenderer: "current"
     readonly property CodexConversationController conversation: root.controller.conversation
     readonly property string timelineMotionDiagnosticsText: timelineView.motionDiagnosticsText
     property alias sidebarExpanded: layoutState.sidebarExpanded
@@ -449,7 +448,6 @@ Page {
                         motionDiagnosticsEnabled: root.timelineMotionDiagnosticsEnabled
                         timelineRenderBenchmarkEnabled: root.timelineRenderBenchmarkEnabled
                         timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
-                        timelineRenderBenchmarkRenderer: root.timelineRenderBenchmarkRenderer
                         onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
                     }
 

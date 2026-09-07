@@ -461,7 +461,7 @@ CodexHistoryControllerTest::trimsBoundaryLineBreaksFromDisplayedUserMessages()
       model.data(model.index(0), CodexTimelineModel::MarkupDocumentRole).value<QObject*>());
     QVERIFY(userDocument != nullptr);
     QTRY_COMPARE(userDocument->rowCount(), 1);
-    QVERIFY(userDocument->data(userDocument->index(0), MarkupDocumentModel::MarkdownRole).toBool());
+    QVERIFY(userDocument->data(userDocument->index(0), MarkupDocumentModel::SemanticSegmentRole).isValid());
     QCOMPARE(userDocument->data(userDocument->index(0), MarkupDocumentModel::PlainTextRole).toString(),
              QStringLiteral("Prompt"));
 }
@@ -503,7 +503,7 @@ CodexHistoryControllerTest::adaptsMessageFormatsAndPreservesMarkupModelsAcrossSt
     QVERIFY(userDocument != nullptr);
     QVERIFY(agentDocument != nullptr);
     QTRY_COMPARE(userDocument->rowCount(), 1);
-    QVERIFY(userDocument->data(userDocument->index(0), MarkupDocumentModel::MarkdownRole).toBool());
+    QVERIFY(userDocument->data(userDocument->index(0), MarkupDocumentModel::SemanticSegmentRole).isValid());
     QTRY_COMPARE(agentDocument->rowCount(), 3);
     QVERIFY(agentDocument->data(agentDocument->index(1), MarkupDocumentModel::CodeBlockRole).toBool());
     QSignalSpy timelineDataSpy(timeline, &QAbstractItemModel::dataChanged);

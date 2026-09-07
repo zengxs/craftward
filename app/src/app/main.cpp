@@ -64,13 +64,6 @@ timelineRenderBenchmarkThreadId()
     return QString::fromUtf8(qgetenv("CRAFTWARD_TIMELINE_RENDER_BENCHMARK_THREAD")).trimmed();
 }
 
-QString
-timelineRenderBenchmarkRenderer()
-{
-    const QString configured = QString::fromUtf8(qgetenv("CRAFTWARD_TIMELINE_RENDER_BENCHMARK_RENDERER")).trimmed();
-    return configured.isEmpty() ? QStringLiteral("current") : configured;
-}
-
 }
 
 int
@@ -141,7 +134,6 @@ main(int argc, char* argv[])
     const QString benchmarkThreadId = timelineRenderBenchmarkThreadId();
     initialProperties.insert(QStringLiteral("timelineRenderBenchmarkEnabled"), !benchmarkThreadId.isEmpty());
     initialProperties.insert(QStringLiteral("timelineRenderBenchmarkThreadId"), benchmarkThreadId);
-    initialProperties.insert(QStringLiteral("timelineRenderBenchmarkRenderer"), timelineRenderBenchmarkRenderer());
     initialProperties.insert(QStringLiteral("localizationController"),
                              QVariant::fromValue(static_cast<QObject*>(&localizationController)));
     initialProperties.insert(QStringLiteral("applicationController"),

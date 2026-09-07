@@ -21,9 +21,8 @@ Item {
         ListElement {
             segmentId: "answer"
             codeBlock: false
-            segmentText: "[Documentation](https://example.com)"
+            segmentText: "Documentation"
             language: ""
-            markdown: true
         }
 
         ListElement {
@@ -31,14 +30,7 @@ Item {
             codeBlock: true
             segmentText: "example()"
             language: "cpp"
-            markdown: false
         }
-    }
-
-    QtObject {
-        id: messageDocument
-
-        property var renderModel: messageSegments
     }
 
     QtObject {
@@ -91,7 +83,7 @@ Item {
                 detailCountInTurn: 0,
                 standaloneActivity: false,
                 text: "Answer",
-                markupDocument: messageDocument
+                markupDocument: messageSegments
             };
         }
 
@@ -109,8 +101,14 @@ Item {
                 detailCountInTurn: 1,
                 standaloneActivity: false,
                 text: "Detail",
-                markupDocument: messageDocument
+                markupDocument: messageSegments
             };
+        }
+
+        function messageActions() {
+            const viewport = findChild(suite.timelineView, "codexTimelineScrollViewport").parent;
+            const lastSegment = viewport.delegateForEntry("message:turn-1:answer-1/markup/example");
+            return lastSegment ? findChild(lastSegment, "codexMessageActions") : null;
         }
 
         function init() {
@@ -122,7 +120,7 @@ Item {
             ++timelineData.revision;
             suite.timelineView = createTemporaryObject(timelineViewComponent, suite);
             verify(suite.timelineView !== null);
-            tryVerify(() => findChild(suite.timelineView, "codexMessageActions") !== null);
+            tryVerify(() => messageActions() !== null);
         }
 
         function cleanup() {
@@ -132,7 +130,7 @@ Item {
         }
 
         function test_mapsControllerRunningEvidenceIntoTheLatestTimelineRow() {
-            const actions = findChild(suite.timelineView, "codexMessageActions");
+            const actions = messageActions();
             verify(actions !== null);
             verify(actions.available);
 
@@ -147,28 +145,15 @@ Item {
             verify(actions.visible);
         }
 
-        function test_semanticRendererMaterializesBlockRowsOnlyWhileSelected() {
+        function test_materializesSemanticSegmentsByDefault() {
             const scrollViewport = findChild(suite.timelineView, "codexTimelineScrollViewport");
             verify(scrollViewport !== null);
-            compare(scrollViewport.count, 1);
-
-            suite.timelineView.timelineRenderBenchmarkRenderer = "semantic";
-
             tryCompare(scrollViewport, "count", 2);
-            const semanticModel = suite.timelineView.activeTimelineModel;
-
-            suite.timelineView.timelineRenderBenchmarkRenderer = "current";
-
-            tryCompare(scrollViewport, "count", 1);
-            compare(semanticModel.totalRowCount, 0);
-
-            suite.timelineView.timelineRenderBenchmarkRenderer = "semantic";
-
-            tryCompare(scrollViewport, "count", 2);
+            compare(suite.timelineView.activeTimelineModel.totalRowCount, 2);
+            compare(scrollViewport.spacing, 0);
         }
 
         function test_semanticRendererRendersOnlyTheSelectedBlock() {
-            suite.timelineView.timelineRenderBenchmarkRenderer = "semantic";
             const scrollViewport = findChild(suite.timelineView, "codexTimelineScrollViewport");
             verify(scrollViewport !== null);
             tryCompare(scrollViewport, "count", 2);
@@ -185,8 +170,7 @@ Item {
             compare(codeText.text, "example()");
         }
 
-        function test_semanticRendererPreservesBlockSelectionLinksAndCopy() {
-            suite.timelineView.timelineRenderBenchmarkRenderer = "semantic";
+        function test_preservesBlockSelectionAndCopy() {
             const scrollViewport = findChild(suite.timelineView, "codexTimelineScrollViewport");
             verify(scrollViewport !== null);
             tryCompare(scrollViewport, "count", 2);
@@ -198,8 +182,6 @@ Item {
 
             const proseText = findChild(viewport.delegateForEntry(firstEntryId), "markupProseText");
             verify(proseText !== null);
-            const linkRectangle = proseText.positionToRectangle(1);
-            compare(proseText.linkAt(linkRectangle.x + 1, linkRectangle.y + linkRectangle.height / 2), "https://example.com");
             proseText.selectAll();
             verify(proseText.selectedText.includes("Documentation"));
 
@@ -224,9 +206,7 @@ Item {
             timelineData.rows[0].fromUser = true;
             timelineData.rows[0].finalAnswer = false;
             ++timelineData.revision;
-            suite.timelineView = createTemporaryObject(timelineViewComponent, suite, {
-                timelineRenderBenchmarkRenderer: "semantic"
-            });
+            suite.timelineView = createTemporaryObject(timelineViewComponent, suite, {});
             verify(suite.timelineView !== null);
             const scrollViewport = findChild(suite.timelineView, "codexTimelineScrollViewport");
             verify(scrollViewport !== null);
@@ -254,47 +234,7 @@ Item {
             compare(lastRenderer.y, 0);
         }
 
-        function test_rendererAdaptersKeepIndependentHeightCaches() {
-            const entryId = "message:turn-1:answer-1";
-            const scrollViewport = findChild(suite.timelineView, "codexTimelineScrollViewport");
-            verify(scrollViewport !== null);
-            const viewport = scrollViewport.parent;
-            compare(viewport.heightCacheNamespace, "current");
-            tryVerify(() => viewport.delegateForEntry(entryId) !== null);
-            compare(viewport.delegateForEntry(entryId).heightCacheKey, "current:" + entryId);
-
-            suite.timelineView.timelineRenderBenchmarkRenderer = "semantic";
-
-            tryCompare(scrollViewport, "count", 2);
-            compare(viewport.heightCacheNamespace, "semantic");
-            tryVerify(() => viewport.delegateForEntry(entryId) !== null);
-            compare(viewport.delegateForEntry(entryId).heightCacheKey, "semantic:" + entryId);
-        }
-
-        function test_rendererAdaptersExposeTheirMaterializationContract() {
-            const entryId = "message:turn-1:answer-1";
-            const scrollViewport = findChild(suite.timelineView, "codexTimelineScrollViewport");
-            verify(scrollViewport !== null);
-            const viewport = scrollViewport.parent;
-            tryVerify(() => viewport.delegateForEntry(entryId) !== null);
-
-            const currentRow = viewport.delegateForEntry(entryId);
-            compare(currentRow.contentMaterializationRequested, false);
-            compare(currentRow.contentMaterializationReady, true);
-            compare(currentRow.contentMeasurementReady, true);
-
-            suite.timelineView.timelineRenderBenchmarkRenderer = "semantic";
-
-            tryCompare(scrollViewport, "count", 2);
-            tryVerify(() => viewport.delegateForEntry(entryId) !== null);
-            const semanticRow = viewport.delegateForEntry(entryId);
-            compare(semanticRow.contentMaterializationRequested, false);
-            compare(semanticRow.contentMaterializationReady, true);
-            compare(semanticRow.contentMeasurementReady, true);
-        }
-
         function test_semanticRendererKeepsMessageActionsOnTheLastBlock() {
-            suite.timelineView.timelineRenderBenchmarkRenderer = "semantic";
             const scrollViewport = findChild(suite.timelineView, "codexTimelineScrollViewport");
             verify(scrollViewport !== null);
             tryCompare(scrollViewport, "count", 2);
@@ -315,9 +255,7 @@ Item {
             suite.timelineView.destroy();
             timelineData.rows = [detailRow()];
             ++timelineData.revision;
-            suite.timelineView = createTemporaryObject(timelineViewComponent, suite, {
-                timelineRenderBenchmarkRenderer: "semantic"
-            });
+            suite.timelineView = createTemporaryObject(timelineViewComponent, suite, {});
             verify(suite.timelineView !== null);
             const scrollViewport = findChild(suite.timelineView, "codexTimelineScrollViewport");
             verify(scrollViewport !== null);

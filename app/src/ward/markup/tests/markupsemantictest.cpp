@@ -2,22 +2,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "ward/markup/markupdocumentmodel.h"
-#include "ward/markup/markupsemanticmodel.h"
 #include "ward/markup/markuptextdocument.h"
+
+#include "document.qpb.h"
+
+#include <ward_core.h>
 
 #include <QAbstractItemModelTester>
 #include <QAbstractTextDocumentLayout>
+#include <QByteArrayView>
 #include <QFontMetricsF>
 #include <QPersistentModelIndex>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickItem>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextList>
 #include <QTextTable>
+#include <QtProtobuf/QProtobufSerializer>
 #include <QtTest/QTest>
 
 namespace {
@@ -27,7 +33,7 @@ using Format = MarkupDocumentModel::SourceFormat;
 QVariant
 payload(QAbstractItemModel* model, int row)
 {
-    return model->data(model->index(row, 0), MarkupSemanticModel::SemanticSegmentRole);
+    return model->data(model->index(row, 0), MarkupDocumentModel::SemanticSegmentRole);
 }
 
 QTextCharFormat
@@ -95,6 +101,7 @@ class MarkupSemanticTest : public QObject
     Q_OBJECT
 
   private slots:
+    void decodesSemanticSnapshotFromRust();
     void reconcilesOnlyChangedSegments();
     void resolvesReferencesAcrossTheCompleteSnapshot();
     void rendersInlineFormatsAndNativeLinkHits();
@@ -111,12 +118,82 @@ class MarkupSemanticTest : public QObject
 };
 
 void
+MarkupSemanticTest::decodesSemanticSnapshotFromRust()
+{
+    const QByteArray source =
+      QStringLiteral("你好 👩‍💻 &amp; **bold** :codex-annotation{index=\"4\"}\n\n"
+                     "0. [ ] task\n\n| A | B |\n|---|---:|\n| `a()` | [Ready][r] |\n\n[r]: /ready \"Status\"")
+        .toUtf8();
+    WardError* error = nullptr;
+    const auto releaseError = qScopeGuard([&] {
+        if (error)
+            ward_core_error_destroy(error);
+    });
+    using Buffer = std::unique_ptr<WardOwnedBuffer, decltype(&ward_core_owned_buffer_destroy)>;
+    Buffer buffer(
+      ward_core_markup_parse_semantic(
+        WardMarkupSourceFormatMarkdown, reinterpret_cast<const uint8_t*>(source.constData()), source.size(), &error),
+      &ward_core_owned_buffer_destroy);
+    QVERIFY(buffer);
+    QVERIFY(!error);
+    const QByteArrayView bytes(reinterpret_cast<const char*>(ward_core_owned_buffer_data(buffer.get())),
+                               ward_core_owned_buffer_size(buffer.get()));
+    ward::markup::v1::SemanticDocument document;
+    QProtobufSerializer serializer;
+    QVERIFY2(document.deserialize(&serializer, bytes), qPrintable(serializer.lastErrorString()));
+    buffer.reset();
+    QCOMPARE(document.blocks().size(), 3);
+    const auto& intro = document.blocks().first().nodes();
+    QVERIFY(!intro.first().hasParentIndex());
+    QVERIFY(intro.at(1).hasParentIndex());
+    QCOMPARE(intro.at(1).parentIndex(), 0u);
+    const auto text = intro.at(1).text().value();
+    QCOMPARE(text.text(), QStringLiteral("你好 👩‍💻 "));
+    QCOMPARE(text.mappings().first().utf16End(), quint64(text.text().size()));
+    QCOMPARE(text.mappings().first().source().end(), quint64(text.text().toUtf8().size()));
+    QVERIFY(text.mappings().first().verbatim());
+    bool annotation = false;
+    bool link = false;
+    bool uncheckedTask = false;
+    bool bodyRow = false;
+    bool zeroStart = false;
+    bool entity = false;
+    for (const auto& block : document.blocks()) {
+        for (const auto& node : block.nodes()) {
+            if (node.hasAnnotation()) {
+                annotation = true;
+                QCOMPARE(node.annotation().index(), 4u);
+                QCOMPARE(node.annotation().label().text(), QStringLiteral("[4]"));
+                QVERIFY(!node.annotation().label().mappings().first().verbatim());
+            }
+            if (node.hasLink()) {
+                link = true;
+                QCOMPARE(node.link().target(), QStringLiteral("/ready"));
+                QCOMPARE(node.link().title(), QStringLiteral("Status"));
+            }
+            uncheckedTask |= node.hasTaskChecked() && !node.taskChecked();
+            bodyRow |= node.hasTableRowHeader() && !node.tableRowHeader();
+            zeroStart |= node.hasList() && node.list().hasStart() && node.list().start() == 0;
+            if (node.hasText() && node.text().value().text() == QStringLiteral("&")) {
+                entity = true;
+                const auto mapping = node.text().value().mappings().first();
+                QVERIFY(!mapping.verbatim());
+                QCOMPARE(mapping.utf16End(), 1u);
+                QCOMPARE(source.mid(mapping.source().start(), mapping.source().end() - mapping.source().start()),
+                         QByteArray("&amp;"));
+            }
+        }
+    }
+    QVERIFY(annotation && link && uncheckedTask && bodyRow && zeroStart && entity);
+}
+
+void
 MarkupSemanticTest::reconcilesOnlyChangedSegments()
 {
     MarkupDocumentModel document;
     const QString initial = QStringLiteral("First **stable**.\n\n").repeated(8) + QStringLiteral("Tail");
     document.reconcileSource(initial, Format::Markdown, false);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QAbstractItemModelTester tester(model, QAbstractItemModelTester::FailureReportingMode::QtTest);
     QTRY_COMPARE(model->rowCount(), 2);
     const QPersistentModelIndex first(model->index(0, 0));
@@ -124,7 +201,7 @@ MarkupSemanticTest::reconcilesOnlyChangedSegments()
     QSignalSpy changed(model, &QAbstractItemModel::dataChanged);
     QSignalSpy reset(model, &QAbstractItemModel::modelReset);
     document.reconcileSource(initial + QStringLiteral(" grows"), Format::Markdown, false);
-    QTRY_COMPARE(model->data(model->index(1, 0), MarkupSemanticModel::SegmentTextRole).toString(),
+    QTRY_COMPARE(model->data(model->index(1, 0), MarkupDocumentModel::SegmentTextRole).toString(),
                  QStringLiteral("Tail grows"));
     QCOMPARE(changed.size(), 1);
     QCOMPARE(changed.first().at(0).value<QModelIndex>().row(), 1);
@@ -140,7 +217,7 @@ MarkupSemanticTest::resolvesReferencesAcrossTheCompleteSnapshot()
     document.reconcileSource(
       QStringLiteral("[Reference][ref]\n\nA later paragraph.\n\n[ref]: https://example.com/target \"Hint\""),
       Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     NativeText text(payload(model, 0));
     QVERIFY2(text.object, qPrintable(text.component.errorString()));
@@ -164,7 +241,7 @@ MarkupSemanticTest::rendersInlineFormatsAndNativeLinkHits()
       QString::fromUtf8("**Bold** *em* ~~gone~~ `print \"hello world\"` [link](https://example.com \"Hint\") "
                         ":codex-annotation{index=\"4\"} عربي 😀 é &amp;  \nnext"),
       Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     NativeText text(payload(model, 0));
     QVERIFY2(text.object, qPrintable(text.component.errorString()));
@@ -190,7 +267,7 @@ MarkupSemanticTest::preservesEmphasisAroundInlineCode()
 {
     MarkupDocumentModel document;
     document.reconcileSource(QStringLiteral("**`bold code`** *`italic code`* ~~`deleted code`~~"), Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     NativeText text(payload(model, 0));
     QVERIFY(text.object);
@@ -205,7 +282,7 @@ MarkupSemanticTest::productionSegmentConsumesSemanticPayload()
 {
     MarkupDocumentModel document;
     document.reconcileSource(QStringLiteral("Native **text** :codex-annotation{index=\"4\"}"), Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     QQmlEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("semanticPayload"), payload(model, 0));
@@ -218,7 +295,7 @@ MarkupSemanticTest::productionSegmentConsumesSemanticPayload()
             codeBlock: false
             segmentText: "Unparsed **source**"
             language: ""
-            markdown: true
+
             semanticSegment: semanticPayload
         }
     )",
@@ -239,7 +316,7 @@ MarkupSemanticTest::splitsListsAndTablesAtStableBoundaries()
       QStringLiteral("7. First **item**\n8. Second item\n\n| A | B |\n| :-- | --: |\n") +
       QStringLiteral("| `code` | [link](https://example.com) :codex-annotation{index=\"2\"} |\n").repeated(15);
     document.reconcileSource(source, Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 2);
     NativeText list(payload(model, 0));
     QVERIFY2(list.object, qPrintable(list.component.errorString()));
@@ -272,7 +349,7 @@ MarkupSemanticTest::placesNestedTablesBelowThePrecedingParagraph()
     MarkupDocumentModel document;
     document.reconcileSource(QStringLiteral("> Introduction\n>\n> | A | B |\n> | --- | --- |\n> | one | two |\n"),
                              Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     NativeText text(payload(model, 0));
     QVERIFY(text.object);
@@ -294,16 +371,16 @@ MarkupSemanticTest::preservesCodeAndUnsupportedSource()
     document.reconcileSource(
       QStringLiteral("```python\n  print(\"hello\")\n\n```\n\n![alt](image.png)\n\n<div>literal &amp;</div>\n"),
       Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 3);
-    QCOMPARE(model->data(model->index(0, 0), MarkupSemanticModel::CodeBlockRole).toBool(), true);
-    QCOMPARE(model->data(model->index(0, 0), MarkupSemanticModel::SegmentTextRole).toString(),
+    QCOMPARE(model->data(model->index(0, 0), MarkupDocumentModel::CodeBlockRole).toBool(), true);
+    QCOMPARE(model->data(model->index(0, 0), MarkupDocumentModel::SegmentTextRole).toString(),
              QStringLiteral("  print(\"hello\")\n"));
     QVERIFY(!payload(model, 1).isValid());
-    QCOMPARE(model->data(model->index(1, 0), MarkupSemanticModel::SegmentTextRole).toString().trimmed(),
+    QCOMPARE(model->data(model->index(1, 0), MarkupDocumentModel::SegmentTextRole).toString().trimmed(),
              QStringLiteral("![alt](image.png)"));
-    QVERIFY(!model->data(model->index(2, 0), MarkupSemanticModel::MarkdownRole).toBool());
-    QVERIFY(model->data(model->index(2, 0), MarkupSemanticModel::SegmentTextRole)
+    QVERIFY(!payload(model, 2).isValid());
+    QVERIFY(model->data(model->index(2, 0), MarkupDocumentModel::SegmentTextRole)
               .toString()
               .contains(QStringLiteral("<div>literal &amp;</div>")));
 
@@ -314,10 +391,10 @@ MarkupSemanticTest::preservesCodeAndUnsupportedSource()
     QCOMPARE(plain.document()->toPlainText(), QStringLiteral("**plain** :codex-annotation{index=\"4\"}"));
 
     document.reconcileSource(QStringLiteral("```\nunlabelled code\n```"), Format::Markdown);
-    QTRY_VERIFY(model->data(model->index(0, 0), MarkupSemanticModel::CodeBlockRole).toBool());
-    QCOMPARE(model->data(model->index(0, 0), MarkupSemanticModel::SegmentTextRole).toString(),
+    QTRY_VERIFY(model->data(model->index(0, 0), MarkupDocumentModel::CodeBlockRole).toBool());
+    QCOMPARE(model->data(model->index(0, 0), MarkupDocumentModel::SegmentTextRole).toString(),
              QStringLiteral("unlabelled code"));
-    QVERIFY(model->data(model->index(0, 0), MarkupSemanticModel::LanguageRole).toString().isEmpty());
+    QVERIFY(model->data(model->index(0, 0), MarkupDocumentModel::LanguageRole).toString().isEmpty());
 }
 
 void
@@ -325,7 +402,7 @@ MarkupSemanticTest::keepsUnchangedTextSelectionAndReleasesDocuments()
 {
     MarkupDocumentModel document;
     document.reconcileSource(QStringLiteral("Select **this** text."), Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     NativeText text(payload(model, 0));
     QVERIFY(text.object);
@@ -350,7 +427,7 @@ MarkupSemanticTest::preservesGeometryAcrossPaletteChanges()
 {
     MarkupDocumentModel document;
     document.reconcileSource(QStringLiteral("One paragraph."), Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     NativeText text(payload(model, 0));
     QVERIFY(text.object);
@@ -377,7 +454,7 @@ MarkupSemanticTest::productionSegmentsDoNotOverlapAfterPaletteChanges()
         QString::fromUtf8("中文段落也应保持正确的行高和位置。\n\n") +
         QStringLiteral("| A | B |\n| --- | --- |\n| text | **bold** |"),
       Format::Markdown);
-    auto* model = document.semanticModel();
+    auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 2);
     QQmlEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("semanticPayloads"),
@@ -402,7 +479,7 @@ MarkupSemanticTest::productionSegmentsDoNotOverlapAfterPaletteChanges()
                     codeBlock: false
                     segmentText: ""
                     language: ""
-                    markdown: true
+
                     semanticSegment: semanticPayloads[index]
                 }
             }
@@ -460,7 +537,7 @@ void
 MarkupSemanticTest::updatesGeometryWhenReplacingSegments()
 {
     MarkupDocumentModel document;
-    auto* model = document.semanticModel();
+    auto* model = &document;
     const QStringList sources = {
         QStringLiteral("Initial paragraph."),
         QStringLiteral("A growing paragraph that wraps across several lines. ").repeated(12),
@@ -491,12 +568,12 @@ void
 MarkupSemanticTest::discardsObsoleteSnapshots()
 {
     MarkupDocumentModel document;
-    auto* model = document.semanticModel();
+    auto* model = &document;
     document.reconcileSource(QStringLiteral("A paragraph.\n\n").repeated(3000), Format::Markdown);
     QCoreApplication::processEvents();
     document.reconcileSource(QStringLiteral("Newest snapshot"), Format::PlainText);
     QTRY_COMPARE(model->rowCount(), 1);
-    QCOMPARE(model->data(model->index(0, 0), MarkupSemanticModel::SegmentTextRole).toString(),
+    QCOMPARE(model->data(model->index(0, 0), MarkupDocumentModel::SegmentTextRole).toString(),
              QStringLiteral("Newest snapshot"));
     document.reconcileSource({}, Format::Markdown);
     QTRY_COMPARE(model->rowCount(), 0);

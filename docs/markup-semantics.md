@@ -3,9 +3,8 @@
 The inline and message-selection experiments established that explicit semantics
 can drive native text layout, inline interactions, and selection independently
 of materialized text items. This contract introduces the production data needed
-by that renderer. The optional `semantic` timeline renderer now consumes this
-contract through a production native text adapter. The default `current`
-renderer continues to use the legacy source-preserving path.
+by that renderer. The timeline consumes this contract through its sole production
+renderer, a native semantic text adapter.
 
 ## Entry Points and Ownership
 
@@ -16,10 +15,8 @@ Destroy its buffer with `ward_core_owned_buffer_destroy`. Input is UTF-8; empty
 input is valid. Invalid UTF-8 or a missing nonempty source returns an error.
 Parsing is synchronous, retains no state, and performs no text layout.
 
-The legacy `parse` / `ward_core_markup_parse` interface continues to return the
-source-preserving `Document` used by existing renderers. Its bounded tail parsing
-is unchanged. The new payload has a separate type and entry point so consumers
-cannot accidentally treat decoded semantics as Markdown source.
+The source-preserving parser, its `Document` wire payload, and the legacy
+renderer have been removed. Semantic snapshots are the only markup parse path.
 
 Semantic parsing requires the complete message because reference definitions
 can resolve links in earlier blocks. It is a snapshot operation, not an
@@ -102,12 +99,14 @@ on node ID plus decoded text offset avoids requiring a fabricated source cursor.
 
 ## Native Timeline Adapter
 
-`MarkupDocumentModel.semanticModel` lazily creates a `MarkupSemanticModel` for
-the optional renderer. It coalesces complete-message snapshots on workers and
-discards obsolete generations. An empty initial snapshot remains an empty native
-segment; it never requests synchronous legacy parsing or materializes an entire
-message through the legacy repeater. The legacy parser and `renderModel` remain
-available to the default renderer.
+`MarkupDocumentModel` owns the semantic segments for one message. It coalesces
+complete-message snapshots on workers and discards obsolete generations. A
+timeline message creates its document model when first requested. The viewport
+model currently requests all loaded message models while building its segment
+index; parsing is not yet scheduled by viewport proximity. There is one parse
+pipeline per document, with no parallel legacy parse. An empty initial snapshot
+remains an empty segment until the worker completes. It never requests
+synchronous parsing or materializes an entire message through a repeater.
 
 Semantic data is grouped at content boundaries, with an 8 KiB source target and
 at most eight ordinary top-level blocks or sixteen immediate list items/table
@@ -143,14 +142,15 @@ segment positions throughout the update.
 
 Images, footnotes, admonitions, opaque unsupported nodes, and ordered starts that
 Qt cannot represent use a literal source fallback for their group. This preserves
-content but does not promise visual parity with the legacy Markdown adapter.
+content without claiming complete visual support for those structures.
 Annotation labels are styled text; resolving their index, activating references,
 attaching controls, and displaying tooltips/popovers remain separate work.
 
 The adapter owns no timeline coordinates, scrolling correction, global cache,
 or offscreen text document. The shared viewport continues to own materialization,
-measurement, and movement-end geometry transactions. Run the integrated path with
-`CRAFTWARD_TIMELINE_RENDER_BENCHMARK_RENDERER=semantic task app:run BUILD_TYPE=Debug`.
+measurement, and movement-end geometry transactions. Run the application with
+`task app:run BUILD_TYPE=Debug`. The renderer selection environment variable has
+been removed; benchmark results identify the renderer as `semantic`.
 
 ## Validation and Next Integration
 

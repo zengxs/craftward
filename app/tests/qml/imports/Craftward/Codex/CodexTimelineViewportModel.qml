@@ -19,11 +19,11 @@ ListModel {
         for (let sourceRow = 0; sourceRow < sourceRowCount; ++sourceRow) {
             const sourceEntryId = String(sourceModel.entryIdAt(sourceRow));
             const document = sourceModel.valueAt(sourceRow, "markupDocument");
-            const renderModel = document ? document["renderModel"] : null;
+            const segmentModel = document;
             const detailRow = Boolean(sourceModel.valueAt(sourceRow, "detailRow"));
             const turnExpanded = Boolean(sourceModel.valueAt(sourceRow, "turnExpanded"));
-            const blockCount = renderModel ? Number(renderModel.count) : 0;
-            if (!renderModel || blockCount === 0 || (detailRow && !turnExpanded)) {
+            const blockCount = segmentModel ? Number(segmentModel.count) : 0;
+            if (!segmentModel || blockCount === 0 || (detailRow && !turnExpanded)) {
                 nextRows.push({
                     entryId: sourceEntryId,
                     sourceRow: sourceRow,
@@ -32,7 +32,7 @@ ListModel {
                 continue;
             }
             for (let blockRow = 0; blockRow < blockCount; ++blockRow) {
-                const block = renderModel.get(blockRow);
+                const block = segmentModel.get(blockRow);
                 const blockId = String(block.segmentId ?? ("row:" + blockRow));
                 nextRows.push({
                     entryId: blockRow === 0 ? sourceEntryId : sourceEntryId + "/markup/" + blockId,
@@ -79,20 +79,20 @@ ListModel {
             return viewportRow.blockRow;
 
         const document = sourceModel.valueAt(viewportRow.sourceRow, "markupDocument");
-        const renderModel = document ? document["renderModel"] : null;
-        if (viewportRow.blockRow >= 0 && renderModel) {
-            const block = renderModel.get(viewportRow.blockRow);
+        const segmentModel = document;
+        if (viewportRow.blockRow >= 0 && segmentModel) {
+            const block = segmentModel.get(viewportRow.blockRow);
             if (roleName === "blockCount")
-                return renderModel.count;
+                return segmentModel.count;
             if (roleName === "firstBlockInEntry")
                 return viewportRow.blockRow === 0;
             if (roleName === "lastBlockInEntry")
-                return viewportRow.blockRow + 1 === renderModel.count;
+                return viewportRow.blockRow + 1 === segmentModel.count;
             if (roleName === "blockId")
                 return block.segmentId;
             if (roleName === "blockText")
                 return block.segmentText;
-            if (roleName === "codeBlock" || roleName === "language" || roleName === "markdown")
+            if (roleName === "codeBlock" || roleName === "language" || roleName === "semanticSegment")
                 return block[roleName];
         }
         return sourceModel.valueAt(viewportRow.sourceRow, roleName);

@@ -156,7 +156,6 @@ Item {
             replacementWindow.activationRequestCount = 0;
             replacementWindow.flags = 0;
             benchmark.active = false;
-            benchmark.rendererName = "current";
             suite.finishedBenchmarkResult = null;
             benchmark.stopTimers();
             benchmark.resetAllMetrics();
@@ -196,9 +195,7 @@ Item {
             verify(result.metrics.p99FrameBudgetRatio <= 1.01);
         }
 
-        function test_acceptsTheSemanticRendererAdapter() {
-            benchmark.rendererName = "semantic";
-
+        function test_waitsForContentBeforeMeasurement() {
             benchmark.beginBenchmark();
 
             verify(!benchmark.resultEmitted);
@@ -207,15 +204,10 @@ Item {
             benchmark.stopTimers();
         }
 
-        function test_rejectsAnUnknownRendererAdapter() {
-            benchmark.rendererName = "unknown";
-
-            benchmark.beginBenchmark();
-
-            verify(benchmark.resultEmitted);
-            compare(benchmark.state, "finished");
+        function test_reportsTheSemanticRenderer() {
+            benchmark.failBeforeMeasurement("fixture failure");
             verify(suite.finishedBenchmarkResult !== null);
-            compare(suite.finishedBenchmarkResult.failures, ["unsupported renderer adapter: unknown"]);
+            compare(suite.finishedBenchmarkResult.renderer, "semantic");
         }
 
         function test_resettingAPhaseRetainsAggregateMetrics() {

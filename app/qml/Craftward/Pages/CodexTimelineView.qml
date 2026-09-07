@@ -18,9 +18,7 @@ Control {
     property bool motionDiagnosticsEnabled: false
     property bool timelineRenderBenchmarkEnabled: false
     property string timelineRenderBenchmarkThreadId: ""
-    property string timelineRenderBenchmarkRenderer: "current"
-    readonly property bool semanticRendererSelected: root.timelineRenderBenchmarkRenderer === "semantic"
-    readonly property var activeTimelineModel: root.semanticRendererSelected ? semanticViewportModel : presentationModel
+    readonly property var activeTimelineModel: semanticViewportModel
     readonly property real contentColumnWidth: timelineViewport.contentColumnWidth
     readonly property bool activityShimmerEnabled: root.controller !== null && root.controller.hasRunningEvidence && !root.controller.waitingOnApproval && !root.controller.waitingOnUserInput
     readonly property string motionDiagnosticsText: motionDiagnostics.statisticsText
@@ -49,7 +47,7 @@ Control {
     CodexTimelineViewportModel {
         id: semanticViewportModel
 
-        sourceModel: root.semanticRendererSelected ? presentationModel : null
+        sourceModel: presentationModel
     }
 
     TimelineMotionDiagnostics {
@@ -65,7 +63,6 @@ Control {
         targetViewport: timelineViewport
         targetWindow: root.Window.window
         active: root.timelineRenderBenchmarkEnabled && root.visible
-        rendererName: root.timelineRenderBenchmarkRenderer
         requestedThreadId: root.timelineRenderBenchmarkThreadId
         selectedThreadId: root.controller ? root.controller.threadId : ""
         conversationLoading: root.controller ? root.controller.loading : false
@@ -85,8 +82,8 @@ Control {
             timelineModel: root.activeTimelineModel
             rowDelegate: timelineRowComponent
             bottomContentInset: root.bottomContentInset
-            rowSpacing: root.semanticRendererSelected ? 0 : 10
-            heightCacheNamespace: root.semanticRendererSelected ? "semantic" : "current"
+            rowSpacing: 0
+            heightCacheNamespace: "semantic"
         }
 
         Label {
@@ -110,7 +107,6 @@ Control {
         CodexTimelineRow {
             width: parent ? parent.width : 0
             timelineModel: root.activeTimelineModel
-            rendererName: root.semanticRendererSelected ? "semantic" : "current"
             turnExpanded: {
                 const currentRevision = dataRevision;
                 return currentRevision >= 0 && root.activeTimelineModel ? Boolean(root.activeTimelineModel.valueAt(sourceRow, "turnExpanded")) : false;

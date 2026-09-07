@@ -1,10 +1,6 @@
 add_library(CraftwardMarkup STATIC
     markupdocumentmodel.cpp
     markupdocumentmodel.h
-    markuprendermodel.cpp
-    markuprendermodel.h
-    markupsemanticmodel.cpp
-    markupsemanticmodel.h
 )
 
 qt_add_qml_module(CraftwardMarkup
@@ -43,24 +39,9 @@ if(BUILD_TESTING)
     qt_add_executable(CraftwardMarkupSemanticTest tests/markupsemantictest.cpp)
     target_link_libraries(CraftwardMarkupSemanticTest PRIVATE
         CraftwardMarkup CraftwardMarkupplugin Qt6::Quick Qt6::Protobuf Qt6::Test
+        Ward::Core
         CraftwardComponentsplugin
         "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}")
     add_test(NAME CraftwardMarkupSemanticTest COMMAND CraftwardMarkupSemanticTest)
 
-    qt_add_executable(CraftwardMarkupDocumentModelTest
-        tests/markupdocumentmodeltest.cpp
-    )
-    target_link_libraries(CraftwardMarkupDocumentModelTest
-        PRIVATE
-            CraftwardMarkup
-            Qt6::Gui
-            Qt6::Protobuf
-            Qt6::Test
-            Ward::Core
-            "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
-    )
-    add_test(
-        NAME CraftwardMarkupDocumentModelTest
-        COMMAND CraftwardMarkupDocumentModelTest
-    )
 endif()

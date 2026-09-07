@@ -604,26 +604,11 @@ void ward_core_error_destroy(struct WardError *error);
 // `error` must be null or a live error returned by this interface.
 const char *ward_core_error_message(const struct WardError *error);
 
-// Parses source text into an owned serialized render document on the calling thread.
-//
-// The returned buffer is a `ward.markup.v1.Document` payload. The caller owns
-// it and must destroy it with [`ward_core_owned_buffer_destroy`].
-//
-// # Safety
-//
-// `source` must point to `source_size` readable bytes when `source_size` is
-// positive. The bytes must be UTF-8. `output_error`, when non-null, must be
-// writable.
-struct WardOwnedBuffer *ward_core_markup_parse(enum WardMarkupSourceFormat format,
-                                               const uint8_t *source,
-                                               size_t source_size,
-                                               struct WardError **output_error);
-
 // Parses a complete message snapshot into explicit inline and block semantics.
 //
-// The returned buffer is a `ward.markup.v1.SemanticDocument` payload, distinct
-// from the legacy `Document` payload. Reference resolution requires the complete
-// source, not an independently parsed tail. This synchronous entry point does
+// The returned buffer is a `ward.markup.v1.SemanticDocument` payload.
+// Reference resolution requires the complete source, not an independently parsed
+// tail. This synchronous entry point does
 // not retain state or perform layout. The caller owns the buffer and must destroy
 // it with `ward_core_owned_buffer_destroy`.
 //

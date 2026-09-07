@@ -117,7 +117,6 @@ tasks:
         CraftwardCodexTimelineViewportIntegrationTest
         CraftwardCodexTimelineViewportModelTest
         CraftwardLocalizationControllerTest
-        CraftwardMarkupDocumentModelTest
         CraftwardMarkupSemanticTest
         CraftwardRealmControllerTest
         CraftwardSyntaxHighlightingTest
@@ -125,7 +124,7 @@ tasks:
       - >-
         ctest --test-dir "{{.BUILD_DIR}}"
         --output-on-failure
-        -R '^Craftward(ApplicationController|CoreFfiSupport|CodexHistoryController|CodexTimelinePresentationModel|CodexTimelineViewportIntegration|CodexTimelineViewportModel|LocalizationController|MarkupDocumentModel|MarkupSemantic|RealmController|SyntaxHighlighting)Test$'
+        -R '^Craftward(ApplicationController|CoreFfiSupport|CodexHistoryController|CodexTimelinePresentationModel|CodexTimelineViewportIntegration|CodexTimelineViewportModel|LocalizationController|MarkupSemantic|RealmController|SyntaxHighlighting)Test$'
 
   configure:
     label: "app:configure:{{.BUILD_TYPE}}:testing={{.BUILD_TESTING}}"
@@ -193,7 +192,6 @@ tasks:
     vars:
       BUILD_TYPE: '{{default "Release" .BUILD_TYPE}}'
       BUILD_DIR: "build/{{.BUILD_TYPE}}"
-      RENDERER: '{{default "current" .RENDERER}}'
     requires:
       vars: [QT6_ROOT, THREAD_ID]
     deps:
@@ -203,7 +201,6 @@ tasks:
           SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
     env:
       CRAFTWARD_FRAME_TIMING_OVERLAY: "0"
-      CRAFTWARD_TIMELINE_RENDER_BENCHMARK_RENDERER: "{{.RENDERER}}"
       CRAFTWARD_TIMELINE_RENDER_BENCHMARK_THREAD: "{{.THREAD_ID}}"
       QT_MESSAGE_PATTERN: "%{message}"
     cmds:

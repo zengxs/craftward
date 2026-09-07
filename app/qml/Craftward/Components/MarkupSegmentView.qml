@@ -17,7 +17,6 @@ Control {
     required property bool codeBlock
     required property string segmentText
     required property string language
-    required property bool markdown
     property color textColor: palette.text
     property font codeFont: font
     property var semanticSegment: null
@@ -85,7 +84,7 @@ Control {
             selectedTextColor: Theme.textSelectionForeground
             selectionColor: Theme.textSelectionBackground
             wrapMode: TextEdit.Wrap
-            textFormat: root.markdown ? TextEdit.MarkdownText : TextEdit.PlainText
+            textFormat: TextEdit.PlainText
         }
     }
 
