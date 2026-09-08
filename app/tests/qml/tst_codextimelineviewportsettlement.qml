@@ -136,6 +136,8 @@ Item {
                 common: 0,
                 markers: 0,
                 drift: 0,
+                beforeContentY: before.contentY,
+                afterContentY: after.contentY,
                 missing: [],
                 changes: []
             };
@@ -243,6 +245,8 @@ Item {
                         row: 399
                     }) + expectedRowHeight(399) + suite.viewport.bottomContentInset - suite.viewport.height) <= 1, 5000, "The warm tail must be positioned above the composer inset");
             }
+            // Register the frame wait before requesting a render of an idle window.
+            Qt.callLater(() => suite.Window.window.update());
             verify(waitForRendering(suite.viewport));
             suite.viewport.followLiveTail = false;
             const scrollViewport = findChild(suite.viewport, "codexTimelineScrollViewport");
@@ -252,6 +256,7 @@ Item {
                     entryId: "entry:60",
                     row: 60
                 })) <= 1 && !suite.viewport.viewportUpdateScheduled && !suite.viewport.anchorRestoreRunning);
+            Qt.callLater(() => suite.Window.window.update());
             verify(waitForRendering(suite.viewport));
             const cachedCount = Object.keys(suite.viewport.rowHeights).length;
             verify(cachedCount > 0 && cachedCount < sourceModel.count, "The height cache must be partially warm");
@@ -284,7 +289,8 @@ Item {
                 last: baseline.rows[0].row
             }));
             verify(baseline.rows[0].row - start.rows[0].row >= 100);
-            verify(suite.viewport.followLiveTail || (data.estimatedBoundary && baseline.contentY >= start.maximumContentY - 1), "The flick must reach the bottom boundary: " + JSON.stringify({
+            // Qt can stop within one logical pixel of the edge without setting atYEnd.
+            verify(Math.abs(baseline.contentY - suite.viewport.maximumContentY) <= 1 || (data.estimatedBoundary && baseline.contentY >= start.maximumContentY - 1), "The flick must reach the bottom boundary: " + JSON.stringify({
                 start: start.contentY,
                 end: baseline.contentY,
                 maximum: suite.viewport.maximumContentY,

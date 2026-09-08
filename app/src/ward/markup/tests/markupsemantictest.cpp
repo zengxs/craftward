@@ -950,11 +950,11 @@ MarkupSemanticTest::mouseSelectionSpansProseCodeAndCells()
     QTest::mouseMove(&scene.window, SelectionScene::pointAt(code, 3));
     auto* copy = visualItems(scene.view.get(), QStringLiteral("markupCodeCopyButton")).first();
     QTRY_VERIFY(copy->isVisible());
-    QTRY_VERIFY(copy->mapToScene(QPointF(copy->width() / 2, copy->height() / 2)).x() < scene.window.width());
-    QTest::mouseClick(&scene.window,
-                      Qt::LeftButton,
-                      Qt::NoModifier,
-                      copy->mapToScene(QPointF(copy->width() / 2, copy->height() / 2)).toPoint());
+    // Hover adds the button to a Row; render the updated layout before reading its hit position.
+    QVERIFY(!scene.window.grabWindow().isNull());
+    const auto copyPoint = copy->mapToScene(QPointF(copy->width() / 2, copy->height() / 2)).toPoint();
+    QVERIFY(scene.window.contentItem()->contains(copyPoint));
+    QTest::mouseClick(&scene.window, Qt::LeftButton, Qt::NoModifier, copyPoint);
     QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("  code();"));
     auto* host = visualItems(scene.view.get(), QStringLiteral("selectionHost")).first();
     auto* pointer = host->findChild<QQuickItem*>(QStringLiteral("markupSelectionPointer"));
@@ -1252,9 +1252,16 @@ MarkupSemanticTest::preservesCodeHighlightingDuringSelection()
         const qreal scale = image.devicePixelRatio();
         const auto region = image.copy(QRectF(tokenRect.topLeft() * scale, tokenRect.size() * scale).toAlignedRect());
         int pixels = 0;
+        // At 1x, distance-field glyphs can have coverage blending at every
+        // pixel. Require the syntax color with a small per-channel tolerance.
+        constexpr int tolerance = 16;
         for (int y = 0; y < region.height(); ++y)
-            for (int x = 0; x < region.width(); ++x)
-                pixels += region.pixelColor(x, y) == keywordColor;
+            for (int x = 0; x < region.width(); ++x) {
+                const auto pixel = region.pixelColor(x, y);
+                pixels += qAbs(pixel.red() - keywordColor.red()) <= tolerance &&
+                          qAbs(pixel.green() - keywordColor.green()) <= tolerance &&
+                          qAbs(pixel.blue() - keywordColor.blue()) <= tolerance;
+            }
         return pixels;
     };
     QVERIFY(coloredKeywordPixels(fixture.window.grabWindow()) > 0);
@@ -1284,6 +1291,13 @@ MarkupSemanticTest::preservesCodeHighlightingDuringSelection()
         QVERIFY2(stableFrame(), "Clearing selection must retain syntax formats.");
         QCOMPARE(document->toPlainText(), code);
     }
+
+    // Ensure the image check still detects loss of syntax color inside selection.
+    model.selection()->selectAll();
+    QTRY_COMPARE(editor->property("selectedText").toString(), code);
+    QVERIFY(editor->setProperty("selectedTextColor", QColor(Qt::black)));
+    QVERIFY2(coloredKeywordPixels(fixture.window.grabWindow()) == 0,
+             "A uniform selected foreground must fail the syntax-color check.");
 }
 
 void
