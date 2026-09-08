@@ -48,6 +48,7 @@ class SyntaxHighlightingTest : public QObject
   private slots:
     void loadsMaintainedResources();
     void appliesUtf8RangesToAQTextDocument();
+    void refreshesAfterSameLengthSourceAndLanguageChanges();
 };
 
 void
@@ -119,6 +120,55 @@ SyntaxHighlightingTest::appliesUtf8RangesToAQTextDocument()
 
     highlighter.setDarkTheme(false);
     QTRY_VERIFY_WITH_TIMEOUT(hasFormat(*document, 3, 3, lightKeyword->style.foreground), 5000);
+}
+
+void
+SyntaxHighlightingTest::refreshesAfterSameLengthSourceAndLanguageChanges()
+{
+    const auto source = QStringLiteral("let answer = 42;\n");
+    const auto comment = QStringLiteral("//t answer = 42;\n");
+    QCOMPARE(comment.size(), source.size());
+    const auto engine = craftward::highlighting::SyntaxHighlightingEngine::shared();
+    const auto rust =
+      engine->highlight(source.toUtf8(), QByteArrayLiteral("rust"), craftward::highlighting::Theme::Light);
+    const auto modified =
+      engine->highlight(comment.toUtf8(), QByteArrayLiteral("rust"), craftward::highlighting::Theme::Light);
+    QVERIFY(rust.succeeded());
+    QVERIFY(modified.succeeded());
+    QVERIFY(!rust.spans.isEmpty());
+    QVERIFY(!modified.spans.isEmpty());
+    QVERIFY(rust.spans.first().style.foreground != modified.spans.first().style.foreground);
+
+    QQmlEngine qmlEngine;
+    QQmlComponent component(&qmlEngine);
+    component.setData("import QtQuick\nTextEdit { textFormat: TextEdit.PlainText }",
+                      QUrl(QStringLiteral("qrc:/SyntaxSourceChangeTest.qml")));
+    const std::unique_ptr<QObject> textEdit(component.create());
+    QVERIFY2(textEdit, qPrintable(component.errorString()));
+    QVERIFY(textEdit->setProperty("text", source));
+    auto* quickDocument = textEdit->property("textDocument").value<QQuickTextDocument*>();
+    auto* document = quickDocument->textDocument();
+    SyntaxDocumentHighlighter highlighter;
+    highlighter.setLanguage(QStringLiteral("rust"));
+    highlighter.setTextDocument(quickDocument);
+    const auto matchesFirstColor = [document](const craftward::highlighting::Result& result) {
+        const auto formats = document->firstBlock().layout()->formats();
+        return std::any_of(formats.cbegin(), formats.cend(), [&result](const QTextLayout::FormatRange& range) {
+            return range.start == 0 && range.length > 0 &&
+                   range.format.foreground().color() == result.spans.first().style.foreground;
+        });
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(matchesFirstColor(rust), 5000);
+
+    QVERIFY(textEdit->setProperty("text", comment));
+    QTRY_VERIFY_WITH_TIMEOUT(matchesFirstColor(modified), 5000);
+    QCOMPARE(document->toPlainText(), comment);
+
+    highlighter.setLanguage({});
+    QTRY_COMPARE_WITH_TIMEOUT(highlighter.syntaxName(), QStringLiteral("Plain Text"), 5000);
+    QVERIFY(!highlighter.languageRecognized());
+    QVERIFY(!matchesFirstColor(modified));
+    QCOMPARE(document->toPlainText(), comment);
 }
 
 QTEST_MAIN(SyntaxHighlightingTest)

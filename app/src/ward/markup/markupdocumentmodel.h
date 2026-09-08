@@ -7,10 +7,14 @@
 #include <QFutureWatcher>
 #include <QTimer>
 
+class MarkupSelection;
+Q_MOC_INCLUDE("ward/markup/markupselection.h")
+
 /// Retains semantic data, never text layouts, for one complete message.
 class MarkupDocumentModel : public QAbstractListModel
 {
     Q_OBJECT
+    Q_PROPERTY(MarkupSelection* selection READ selection CONSTANT)
 
   public:
     enum class SourceFormat
@@ -27,9 +31,11 @@ class MarkupDocumentModel : public QAbstractListModel
         PlainTextRole,
         LanguageRole,
         SemanticSegmentRole,
+        RenderPartsRole,
     };
 
     explicit MarkupDocumentModel(QObject* parent = nullptr);
+    [[nodiscard]] MarkupSelection* selection() { return selection_; }
     bool reconcileSource(const QString& source, SourceFormat format, bool finalized = true);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -47,6 +53,7 @@ class MarkupDocumentModel : public QAbstractListModel
         QString text;
         QString language;
         QVariant semantic;
+        QVariantList parts;
 
         bool operator==(const Segment&) const = default;
     };
@@ -63,6 +70,7 @@ class MarkupDocumentModel : public QAbstractListModel
     void applyFinished();
     void reconcileSegments(QList<Segment> segments);
 
+    MarkupSelection* selection_;
     QString source_;
     SourceFormat format_ = SourceFormat::PlainText;
     bool finalized_ = false;

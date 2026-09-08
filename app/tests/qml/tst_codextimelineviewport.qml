@@ -534,6 +534,60 @@ Item {
         }
     }
 
+    QtObject {
+        id: selectionOwner
+        property bool hasSelection: false
+        function begin(endpoint) {
+            hasSelection = false;
+        }
+        function extend(endpoint) {
+            hasSelection = true;
+        }
+        function clear() {
+            hasSelection = false;
+        }
+    }
+
+    Component {
+        id: selectionViewportComponent
+        Pages.CodexTimelineViewport {
+            id: selectionViewport
+            width: 600
+            height: 400
+            timelineModel: fakeTimelineModel
+            bottomContentInset: 0
+            estimatedRowHeight: 72
+            rowSpacing: 0
+            rowDelegate: Component {
+                Item {
+                    property int sourceRow: -1
+                    property int dataRevision: -1
+                    readonly property string entryId: dataRevision >= 0 ? fakeTimelineModel.entryIdAt(sourceRow) : ""
+                    implicitHeight: 72
+                    TextEdit {
+                        id: textSurface
+                        width: parent.width
+                        height: parent.height
+                        text: "Selectable timeline row " + parent.sourceRow
+                        readOnly: true
+                        property var coordinator: selectionOwner
+                        property var selectionExclusions: []
+                        property QtObject bridge: QtObject {
+                            function endpointAt(position) {
+                                return {
+                                    offset: position
+                                };
+                            }
+                        }
+                        Component.onCompleted: selectionViewport.selectionHost.attach(textSurface)
+                        Component.onDestruction: if (selectionViewport.selectionHost && typeof selectionViewport.selectionHost.detach === "function")
+                            selectionViewport.selectionHost.detach(textSurface)
+                    }
+                }
+            }
+        }
+    }
+
     TestCase {
         name: "CodexTimelineViewport"
         when: windowShown
@@ -599,6 +653,69 @@ Item {
             suite.trajectoryGeometryTrace = [];
             fakeTimelineModel.clear();
             ++fakeTimelineModel.revision;
+        }
+
+        function test_stationarySelectionPressDoesNotScroll_data() {
+            return [
+                {
+                    tag: "top",
+                    y: 10
+                },
+                {
+                    tag: "bottom",
+                    y: 390
+                }
+            ];
+        }
+
+        function test_stationarySelectionPressDoesNotScroll(data) {
+            fakeTimelineModel.resetRows(100);
+            suite.viewport = createTemporaryObject(selectionViewportComponent, suite);
+            verify(suite.viewport !== null);
+            tryVerify(() => suite.viewport.activeRowSlotCount > 0);
+            suite.viewport.followLiveTail = false;
+            suite.viewport.positionAtContentY(200);
+            tryVerify(() => Math.abs(suite.viewport.contentY - 200) < 1);
+            const initialY = suite.viewport.contentY;
+            mousePress(suite.viewport, 100, data.y);
+            tryVerify(() => suite.viewport.selectionHost.dragging);
+            wait(150);
+            const pressedY = suite.viewport.contentY;
+            const hasSelection = selectionOwner.hasSelection;
+            mouseRelease(suite.viewport, 100, data.y);
+            compare(pressedY, initialY, "A stationary press must not start edge scrolling");
+            compare(hasSelection, false, "A stationary press must not extend the selection");
+        }
+
+        function test_selectionAutoScrollStopsLiveTailFollowingDuringStreaming() {
+            fakeTimelineModel.resetRows(100);
+            suite.viewport = createTemporaryObject(selectionViewportComponent, suite);
+            verify(suite.viewport !== null);
+            tryVerify(() => suite.viewport.activeRowSlotCount > 0);
+            suite.viewport.followLatest();
+            tryVerify(() => Math.abs(suite.viewport.contentY - suite.viewport.maximumContentY) < 1);
+            const initialY = suite.viewport.contentY;
+            mousePress(suite.viewport, 180, 360);
+            tryVerify(() => suite.viewport.selectionHost.dragging);
+            mouseMove(suite.viewport, 180, 2);
+            tryVerify(() => suite.viewport.contentY < initialY - 40);
+            compare(suite.viewport.followLiveTail, false);
+            fakeTimelineModel.append({
+                entryId: "appended-entry"
+            });
+            ++fakeTimelineModel.revision;
+            wait(50);
+            verify(suite.viewport.contentY < initialY - 40, "Streaming pulled an active selection back to the live tail");
+            mouseRelease(suite.viewport, 180, 180);
+            const stoppedY = suite.viewport.contentY;
+            fakeTimelineModel.append({
+                entryId: "another-appended-entry"
+            });
+            ++fakeTimelineModel.revision;
+            wait(100);
+            compare(suite.viewport.followLiveTail, false);
+            verify(suite.viewport.contentY <= stoppedY + 1, "Streaming pulled the completed selection back to the live tail");
+            tryVerify(() => !suite.viewport.anchorSettlementSuppressed);
         }
 
         function test_materializesOnlyTheViewportNeighborhood() {

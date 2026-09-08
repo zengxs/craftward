@@ -1,13 +1,21 @@
 add_library(CraftwardMarkup STATIC
     markupdocumentmodel.cpp
     markupdocumentmodel.h
+    markuprenderplan.cpp
+    markuprenderplan.h
 )
 
 qt_add_qml_module(CraftwardMarkup
     URI Craftward.Markup
+    QML_FILES
+        MarkupSelectionDecoration.qml
     SOURCES
         markuptextdocument.cpp
         markuptextdocument.h
+        markupselection.cpp
+        markupselection.h
+        markupselectionbackground.cpp
+        markupselectionbackground.h
 )
 
 qt_add_protobuf(CraftwardMarkup

@@ -22,6 +22,7 @@ constexpr auto segmentTextRoleName = "segmentText";
 constexpr auto plainTextRoleName = "plainText";
 constexpr auto languageRoleName = "language";
 constexpr auto semanticSegmentRoleName = "semanticSegment";
+constexpr auto renderPartsRoleName = "renderParts";
 constexpr auto sourceEntryIdRoleName = "sourceEntryId";
 constexpr auto semanticBlockRoleName = "semanticBlock";
 constexpr auto blockIndexRoleName = "blockIndex";
@@ -177,6 +178,8 @@ CodexTimelineViewportModel::data(const QModelIndex& index, int role) const
             return blockValue(row, languageRoleName);
         case SemanticSegmentRole:
             return blockValue(row, semanticSegmentRoleName);
+        case RenderPartsRole:
+            return blockValue(row, renderPartsRoleName);
         case FirstBlockInEntryRole:
             return row.blockRow <= 0;
         case LastBlockInEntryRole:
@@ -203,6 +206,7 @@ CodexTimelineViewportModel::roleNames() const
     roles.insert(PlainTextRole, plainTextRoleName);
     roles.insert(LanguageRole, languageRoleName);
     roles.insert(SemanticSegmentRole, semanticSegmentRoleName);
+    roles.insert(RenderPartsRole, renderPartsRoleName);
     roles.insert(FirstBlockInEntryRole, firstBlockInEntryRoleName);
     roles.insert(LastBlockInEntryRole, lastBlockInEntryRoleName);
     return roles;

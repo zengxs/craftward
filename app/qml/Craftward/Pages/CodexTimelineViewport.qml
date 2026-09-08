@@ -11,6 +11,7 @@ import "../Components/FrameTiming.js" as FrameTiming
 Control {
     id: root
 
+    property alias selectionHost: textSelectionHost
     required property var timelineModel
     // The delegate contract exposes sourceRow, dataRevision, entryId, and implicitHeight.
     // Deferred delegates may also expose contentMaterializationRequested, contentMaterializationReady,
@@ -58,7 +59,7 @@ Control {
     readonly property real viewportHeight: scrollViewport.height
     readonly property real minimumContentY: scrollViewport.originY
     readonly property real maximumContentY: Math.max(scrollViewport.originY, scrollViewport.originY + scrollViewport.contentHeight - scrollViewport.height)
-    readonly property bool moving: scrollViewport.moving
+    readonly property bool moving: scrollViewport.moving || textSelectionHost.dragging
     readonly property real verticalVelocity: scrollViewport.verticalVelocity
 
     signal anchorPositionCorrected(real displacement)
@@ -328,7 +329,7 @@ Control {
                 slot.contentMaterializationAllowed = false;
                 continue;
             }
-            if (scrollViewport.moving || root.anchorSettlementSuppressed) {
+            if (root.moving || root.anchorSettlementSuppressed) {
                 slot.contentMaterializationAllowed = false;
                 continue;
             }
@@ -357,7 +358,7 @@ Control {
         const anchorRow = root.rowForAnchor(anchor);
         if (anchorRow >= 0 && Number(sourceRow) > anchorRow)
             return;
-        if (scrollViewport.moving)
+        if (root.moving)
             return;
         root.restoreAnchorAfterLayout(anchor);
         root.scheduleAnchorRestore(anchor);
@@ -454,7 +455,7 @@ Control {
         scrollViewport.contentY = Math.max(minimumY, Math.min(maximumY, Number(contentY)));
         root.lastVisibleAnchor = root.captureVisibleAnchor();
         Qt.callLater(() => {
-            if (root.followLiveTail || scrollViewport.moving)
+            if (root.followLiveTail || root.moving)
                 return;
             root.lastVisibleAnchor = root.captureVisibleAnchor();
         });
@@ -577,6 +578,7 @@ Control {
     }
 
     function resetForNewContent() {
+        textSelectionHost.clear();
         root.anchorRestoreRunning = false;
         root.anchorSettlementSuppressed = false;
         root.anchorSettlementResumeScheduled = false;
@@ -589,6 +591,56 @@ Control {
         root.clearRowHeights();
         root.followLiveTail = true;
         Qt.callLater(root.scrollToBottom);
+    }
+
+    function beginUserMovement() {
+        if (root.adjustingAnchor)
+            return;
+        root.anchorRestoreRunning = false;
+        root.anchorSettlementSuppressed = true;
+        root.anchorSettlementResumeScheduled = false;
+        root.anchorSettlementResumeFramesRemaining = 0;
+        root.pendingAnchor = null;
+        root.followLiveTail = false;
+        root.lastVisibleAnchor = root.captureVisibleAnchor();
+        root.lastMovementEndedAnchor = null;
+        root.lastMovementEndedRows = [];
+        root.updateContentMaterialization();
+    }
+
+    function endUserMovement(reachedLiveTail) {
+        if (root.adjustingAnchor)
+            return;
+        const stoppedAnchor = root.captureVisibleAnchor();
+        root.lastMovementEndedRows = root.visibleRowOffsetsForBenchmark();
+        root.lastMovementEndedAnchor = stoppedAnchor ? {
+            entryId: String(stoppedAnchor.entryId),
+            offset: Number(stoppedAnchor.offset),
+            row: Number(stoppedAnchor.row),
+            contentY: Number(scrollViewport.contentY)
+        } : null;
+        root.followLiveTail = reachedLiveTail;
+        const settled = root.flushDeferredRowMeasurements(stoppedAnchor);
+        if (reachedLiveTail && !settled)
+            root.scrollToBottom();
+        root.lastVisibleAnchor = root.captureVisibleAnchor();
+        root.anchorSettlementResumeFramesRemaining = Math.max(1, root.anchorSettlementQuietFrameCount);
+        root.anchorSettlementResumeScheduled = true;
+        root.scheduleViewportUpdate();
+    }
+
+    MarkupSelectionHost {
+        id: textSelectionHost
+        anchors.fill: parent
+        anchors.rightMargin: 18
+        viewport: scrollViewport
+        z: 2
+        onDraggingChanged: {
+            if (dragging)
+                root.beginUserMovement();
+            else if (!scrollViewport.moving)
+                root.endUserMovement(false);
+        }
     }
 
     padding: 0
@@ -662,7 +714,7 @@ Control {
             function synchronizeLoadedItemState() {
                 const loadedItem = rowLoader.item;
                 if (!loadedItem) {
-                    const retainedHeight = scrollViewport.moving ? Number(height) : 0;
+                    const retainedHeight = root.moving ? Number(height) : 0;
                     contentMaterializationRequested = false;
                     contentMaterializationReady = true;
                     contentMeasurementReady = false;
@@ -692,7 +744,7 @@ Control {
                 const previousHeight = height;
                 const cachedHeight = root.cachedRowHeight(heightCacheKey);
                 // A cached height still changes presented geometry when a pooled shell changes identity.
-                if (scrollViewport.moving && Math.abs(previousHeight - nextHeight) >= 0.5) {
+                if (root.moving && Math.abs(previousHeight - nextHeight) >= 0.5) {
                     pendingMeasuredHeight = nextHeight;
                     root.deferRowMeasurement(entryId, heightCacheKey, sourceRow, previousHeight, nextHeight);
                     return;
@@ -703,7 +755,7 @@ Control {
                     measuredHeight = nextHeight;
                     return;
                 }
-                if (scrollViewport.moving) {
+                if (root.moving) {
                     pendingMeasuredHeight = nextHeight;
                     root.deferRowMeasurement(entryId, heightCacheKey, sourceRow, previousHeight, nextHeight);
                     return;
@@ -858,40 +910,10 @@ Control {
             root.scheduleViewportUpdate(true);
         }
         onContentYChanged: root.scheduleViewportUpdate()
-        onMovementStarted: {
-            if (root.adjustingAnchor)
-                return;
-            root.anchorRestoreRunning = false;
-            root.anchorSettlementSuppressed = true;
-            root.anchorSettlementResumeScheduled = false;
-            root.anchorSettlementResumeFramesRemaining = 0;
-            root.pendingAnchor = null;
-            root.followLiveTail = false;
-            root.lastVisibleAnchor = root.captureVisibleAnchor();
-            root.lastMovementEndedAnchor = null;
-            root.lastMovementEndedRows = [];
-            root.updateContentMaterialization();
-        }
+        onMovementStarted: root.beginUserMovement()
         onMovementEnded: {
-            if (root.adjustingAnchor)
-                return;
-            const reachedLiveTail = atYEnd;
-            const stoppedAnchor = root.captureVisibleAnchor();
-            root.lastMovementEndedRows = root.visibleRowOffsetsForBenchmark();
-            root.lastMovementEndedAnchor = stoppedAnchor ? {
-                entryId: String(stoppedAnchor.entryId),
-                offset: Number(stoppedAnchor.offset),
-                row: Number(stoppedAnchor.row),
-                contentY: Number(scrollViewport.contentY)
-            } : null;
-            root.followLiveTail = reachedLiveTail;
-            const settled = root.flushDeferredRowMeasurements(stoppedAnchor);
-            if (reachedLiveTail && !settled)
-                root.scrollToBottom();
-            root.lastVisibleAnchor = root.captureVisibleAnchor();
-            root.anchorSettlementResumeFramesRemaining = Math.max(1, root.anchorSettlementQuietFrameCount);
-            root.anchorSettlementResumeScheduled = true;
-            root.scheduleViewportUpdate();
+            if (!textSelectionHost.dragging)
+                root.endUserMovement(atYEnd);
         }
     }
 
@@ -911,7 +933,7 @@ Control {
     FrameAnimation {
         running: root.anchorRestoreRunning
         onTriggered: {
-            if (scrollViewport.moving) {
+            if (root.moving) {
                 root.anchorRestoreRunning = false;
                 root.pendingAnchor = null;
                 return;

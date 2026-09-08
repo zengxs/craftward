@@ -19,7 +19,10 @@ Control {
     required property string language
     property color textColor: palette.text
     property font codeFont: font
-    property var semanticSegment: null
+    property var renderParts: null
+    property var selectionCoordinator: null
+    property var selectionHost: null
+    readonly property var activeSelectionHost: selectionHost || localSelectionHost
 
     padding: 0
     implicitWidth: 0
@@ -39,34 +42,53 @@ Control {
     contentItem: Loader {
         id: segmentLoader
 
-        sourceComponent: root.codeBlock ? codeSegment : (root.semanticSegment ? semanticProseSegment : proseSegment)
+        sourceComponent: root.codeBlock ? codeSegment : (root.renderParts ? semanticProseSegment : proseSegment)
     }
 
     Component {
         id: semanticProseSegment
 
-        TextEdit {
-            id: semanticText
-
-            objectName: "markupProseText"
-            color: root.textColor
-            font: root.font
-            readOnly: true
-            selectByMouse: true
-            selectedTextColor: Theme.textSelectionForeground
-            selectionColor: Theme.textSelectionBackground
-            wrapMode: TextEdit.Wrap
-            textFormat: TextEdit.RichText
-
-            MarkupTextDocument {
-                objectName: "markupNativeAdapter"
-                textDocument: semanticText.textDocument
-                segment: root.semanticSegment
-                font: root.font
-                codeFont: root.codeFont
-                textColor: root.textColor
-                linkColor: root.palette.link
-                codeBackground: Theme.dark ? TailwindColors.zinc800 : TailwindColors.zinc100
+        Column {
+            id: parts
+            spacing: 8
+            Repeater {
+                model: root.renderParts || []
+                delegate: Loader {
+                    id: partLoader
+                    required property var modelData
+                    width: parts.width
+                    sourceComponent: modelData.kind === "table" ? tablePart : textPart
+                    Component {
+                        id: textPart
+                        MarkupSelectableText {
+                            surface: partLoader.modelData.surface
+                            coordinator: root.selectionCoordinator
+                            selectionHost: root.activeSelectionHost
+                            color: root.textColor
+                            font: root.font
+                            codeFont: root.codeFont
+                            linkColor: root.palette.link
+                        }
+                    }
+                    Component {
+                        id: tablePart
+                        Item {
+                            implicitHeight: table.implicitHeight
+                            MarkupTable {
+                                id: table
+                                x: partLoader.modelData.indent
+                                width: Math.max(1, parent.width - x)
+                                part: partLoader.modelData
+                                coordinator: root.selectionCoordinator
+                                selectionHost: root.activeSelectionHost
+                                textColor: root.textColor
+                                font: root.font
+                                codeFont: root.codeFont
+                                linkColor: root.palette.link
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -128,23 +150,34 @@ Control {
                 clip: true
 
                 ScrollBar.horizontal: ScrollBar {
+                    id: horizontalBar
                     policy: ScrollBar.AsNeeded
                 }
 
-                TextEdit {
+                MarkupSelectableText {
                     id: codeText
 
                     objectName: "markupCodeText"
                     width: Math.max(codeFlick.width, implicitWidth)
-                    text: root.segmentText
+                    surface: root.renderParts && root.renderParts.length ? root.renderParts[0].surface : null
+                    coordinator: root.selectionCoordinator
+                    selectionHost: root.activeSelectionHost
+                    selectionExclusions: [codeToolbar, horizontalBar]
                     color: root.textColor
                     font: root.codeFont
                     readOnly: true
-                    selectByMouse: true
-                    selectedTextColor: Theme.textSelectionForeground
-                    selectionColor: Theme.textSelectionBackground
+                    preserveSelectionColors: true
                     wrapMode: TextEdit.NoWrap
                     textFormat: TextEdit.PlainText
+
+                    // The native adapter owns content once its surface arrives.
+                    Binding {
+                        target: codeText
+                        property: "text"
+                        when: !codeText.surface
+                        value: root.segmentText
+                        restoreMode: Binding.RestoreNone
+                    }
 
                     SyntaxDocumentHighlighter {
                         id: syntaxHighlighter
@@ -194,7 +227,7 @@ Control {
                         objectName: "markupCodeCopyButton"
                         visible: codeSurface.actionsVisible
                         onClicked: {
-                            if (Components.ApplicationClipboard.copyText(codeText.text))
+                            if (Components.ApplicationClipboard.copyText(root.segmentText))
                                 confirmCopied();
                         }
                     }
@@ -214,5 +247,11 @@ Control {
                 }
             }
         }
+    }
+    MarkupSelectionHost {
+        id: localSelectionHost
+        anchors.fill: parent
+        visible: !root.selectionHost
+        z: 2
     }
 }

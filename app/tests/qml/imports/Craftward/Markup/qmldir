@@ -1,2 +1,3 @@
 module Craftward.Markup
 MarkupTextDocument 1.0 MarkupTextDocument.qml
+MarkupSelectionBackground 1.0 MarkupSelectionBackground.qml

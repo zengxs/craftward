@@ -123,6 +123,7 @@ struct SyntaxDocumentHighlighter::Private
     QMetaObject::Connection documentChangedConnection;
     QMetaObject::Connection documentDestroyedConnection;
     QMetaObject::Connection contentsChangedConnection;
+    QString source;
     QString language;
     QString syntaxName;
     QList<FormatSpan> spans;
@@ -250,7 +251,8 @@ SyntaxDocumentHighlighter::attachDocument()
     d->spans.clear();
     if (nativeDocument) {
         d->contentsChangedConnection = connect(nativeDocument, &QTextDocument::contentsChanged, this, [this] {
-            if (!d->applyingFormats)
+            // Selection and formatting can notify without changing the source.
+            if (!d->applyingFormats && document()->toPlainText() != d->source)
                 scheduleHighlight();
         });
     }
@@ -261,6 +263,7 @@ void
 SyntaxDocumentHighlighter::scheduleHighlight()
 {
     ++d->requestedGeneration;
+    d->source = document() ? document()->toPlainText() : QString();
     d->spans.clear();
     rehighlightDocument();
     if (document())
@@ -277,7 +280,7 @@ SyntaxDocumentHighlighter::dispatchHighlight()
 
     HighlightRequest request{
         .generation = d->requestedGeneration,
-        .source = document()->toPlainText(),
+        .source = d->source,
         .language = d->language,
         .theme = d->darkTheme ? craftward::highlighting::Theme::Dark : craftward::highlighting::Theme::Light,
     };

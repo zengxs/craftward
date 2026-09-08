@@ -4,6 +4,7 @@
 #include "ward/markup/markupdocumentmodel.h"
 
 #include "document.qpb.h"
+#include "markupselection.h"
 #include "ward/coreffierror.h"
 
 #include <ward_core.h>
@@ -100,6 +101,7 @@ splitBlock(const SemanticBlock& block)
 
 MarkupDocumentModel::MarkupDocumentModel(QObject* parent)
   : QAbstractListModel(parent)
+  , selection_(new MarkupSelection(this))
 {
     // Generated enum registrars may run after the static message registration.
     // Drain them before workers deserialize repeated enum fields such as columns.
@@ -133,6 +135,8 @@ MarkupDocumentModel::data(const QModelIndex& index, int role) const
             return segment.language;
         case SemanticSegmentRole:
             return segment.semantic;
+        case RenderPartsRole:
+            return segment.parts;
         default:
             return {};
     }
@@ -141,10 +145,10 @@ MarkupDocumentModel::data(const QModelIndex& index, int role) const
 QHash<int, QByteArray>
 MarkupDocumentModel::roleNames() const
 {
-    return {
-        { SegmentIdRole, "segmentId" }, { CodeBlockRole, "codeBlock" }, { SegmentTextRole, "segmentText" },
-        { PlainTextRole, "plainText" }, { LanguageRole, "language" },   { SemanticSegmentRole, "semanticSegment" }
-    };
+    return { { SegmentIdRole, "segmentId" },     { CodeBlockRole, "codeBlock" },
+             { SegmentTextRole, "segmentText" }, { PlainTextRole, "plainText" },
+             { LanguageRole, "language" },       { SemanticSegmentRole, "semanticSegment" },
+             { RenderPartsRole, "renderParts" } };
 }
 
 bool
@@ -203,7 +207,9 @@ MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocu
     }
     if (!result.error.isEmpty()) {
         if (!source.isEmpty())
-            result.segments.append(Segment{ .id = QStringLiteral("fallback:0"), .text = source });
+            result.segments.append(Segment{ .id = QStringLiteral("fallback:0"),
+                                            .text = source,
+                                            .parts = markupLiteralPart(QStringLiteral("fallback:0"), source) });
         return result;
     }
 
@@ -225,7 +231,8 @@ MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocu
         const auto nodes = group.first().nodes();
         if (nodes.first().hasList() || nodes.first().hasTable())
             id += QLatin1Char('/') + nodes.at(1).nodeId();
-        result.segments.append(Segment{ .id = id, .text = text, .semantic = QVariant::fromValue(payload) });
+        result.segments.append(Segment{
+          .id = id, .text = text, .semantic = QVariant::fromValue(payload), .parts = markupRenderParts(payload) });
         group.clear();
     };
     for (const auto& block : document.blocks()) {
@@ -259,6 +266,7 @@ MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocu
                 segment.text =
                   QString::fromUtf8(encoded.sliced(part.source().start(), part.source().end() - part.source().start()));
             }
+            segment.parts = markupLiteralPart(segment.id, segment.text);
             result.segments.append(std::move(segment));
         }
     }
@@ -283,6 +291,10 @@ MarkupDocumentModel::applyFinished()
 void
 MarkupDocumentModel::reconcileSegments(QList<Segment> segments)
 {
+    QList<MarkupTextSurface> surfaces;
+    for (const auto& segment : segments)
+        surfaces.append(markupSurfaces(segment.parts));
+    selection_->reconcile(surfaces);
     qsizetype prefix = 0;
     while (prefix < std::min(segments_.size(), segments.size()) && segments_[prefix].id == segments[prefix].id) {
         if (segments_[prefix] != segments[prefix]) {

@@ -75,9 +75,9 @@ On append, nodes whose kind and starting position remain unchanged retain their
 IDs. Completed unaffected blocks remain equal. Completing delimiters or adding
 a reference definition may reinterpret earlier content and replace nodes; this
 is a semantic update, not an identity guarantee across arbitrary edits. Snapshot
-indices are never persistent identities. Selection reconciliation for replaced
-nodes and document generations belongs to the subsequent message-selection
-integration.
+indices are never persistent identities. The message selection owner reconciles endpoints after each accepted snapshot.
+It retains surviving node identities, clamps shortened text to grapheme boundaries,
+and clears a selection whose endpoint was replaced.
 
 Source ranges are half-open UTF-8 byte ranges in the complete source. Container
 ranges are normalized to cover their descendants before IDs are assigned. This
@@ -116,22 +116,86 @@ this is not a strict per-segment memory limit. Arbitrary character slicing and
 whole-history text layouts are not introduced. Grouping avoids creating a native
 document and QML row for every short paragraph or list item.
 
-The `semanticSegment` role carries a `SemanticDocument` containing only that
-group's blocks. Original block IDs, node IDs, and decoded-text mappings are
-retained. Split outer list/table containers describe the selected child range;
+The `semanticSegment` role retains the group's typed semantic document, including
+original block IDs, node IDs, and decoded-text mappings. The `renderParts` role
+carries a value-only projection produced by the same worker. A part is either a
+text surface or a table with rows of independent text surfaces. The projection
+contains text runs and formatting values, never a text document or measured
+geometry. Split outer list/table containers describe the selected child range;
 their ordered-list start is adjusted while child identities remain unchanged.
-Unchanged completed groups compare equal. Updates reconcile model rows locally
-and leave equal materialized documents and their native selections untouched.
-An affected group is rebuilt; preserving selection across a changed group or
-across delegate destruction requires the subsequent logical selection layer.
+Unchanged completed groups compare equal and reconcile without resetting rows.
 
-`MarkupTextDocument` writes typed nodes directly into a materialized TextEdit's
+`MarkupTextDocument` writes one projected surface into a materialized TextEdit's
 `QTextDocument`. It handles paragraphs, headings, quotes, lists and task markers,
-tables with equal-width aligned columns, rules, nested emphasis, inline code,
-resolved links, literal inline HTML, and annotation labels. Native Qt shaping,
-wrapping, link hit testing, and selection operate on decoded UTF-16 text.
-Top-level code retains its syntax highlighter and copy toolbar. List/table groups
-use native text layout rather than a QML object per cell or inline node.
+rules, nested emphasis, inline code, resolved links, literal inline HTML, and
+annotation labels. Native Qt shaping, wrapping, and link hit testing operate on
+decoded UTF-16 text. Top-level code retains its syntax highlighter, horizontal
+scrolling, and copy toolbar.
+
+Once a surface is available, the native adapter exclusively owns its document
+content. Code delegates may display fallback text while waiting for the surface;
+that binding is disabled without restoring a previous value when the adapter
+takes over. Code TextEdits keep PlainText format throughout their lifetime so
+delayed payloads cannot trigger HTML reinterpretation or discard line breaks.
+
+Syntax highlighting distinguishes source changes from document notifications.
+Selection and formatting may emit contentsChanged without changing plain text;
+those notifications retain existing syntax spans. Actual source, language, or
+theme changes still invalidate spans and schedule asynchronous highlighting.
+
+Code blocks preserve syntax foreground colors inside the selection.
+`MarkupSelectionBackground` paints beneath the existing TextEdit while its native
+selection foreground and background are transparent. The TextEdit still owns
+the projected selection and layout; this item adds no text document or input
+handler. It derives visual rectangles from public QTextLine glyph ranges,
+including bidi runs and partial ligatures, and accounts for tabs and selected
+paragraph separators. Layout changes refresh those rectangles, and the existing
+code viewport supplies scrolling and clipping. Transparent native selection also
+suppresses selected text decorations, so this layer restores syntax underlines
+from the existing glyph runs and formats. Its small Qt Quick Shapes component
+uses curve strokes to retain Qt's antialiasing and is created only for decorated
+selected runs. Prose and table cells retain their normal selection colors.
+
+`MarkupTable` coordinates equal column widths, column alignment, and the maximum
+cell height in each row. Every cell uses the same `MarkupSelectableText` and
+native text adapter as prose. Only materialized timeline segments create cells;
+long top-level tables still split at the existing structural limits. Nested
+tables retain their quote/list indentation and appear after preceding prose.
+There is no `QTextTable`, alternate table renderer, or private Qt Quick dependency.
+The mouse-release image regression remains in both Qt and native font modes.
+
+`MarkupDocumentModel` owns one `MarkupSelection` for the complete message. Its
+endpoints contain block-scoped node identities and decoded UTF-16 offsets, snapped
+to grapheme boundaries. Synthetic identities cover block separators and literal
+or top-level code surfaces. The selection survives delegate destruction and
+reprojects when text is materialized or restyled. Appending text retains existing
+endpoints; replacing an endpoint's semantic node clears the selection.
+
+The selection index and native renderer consume the same text projection. Plain
+text copy uses newlines between blocks and table rows, tabs between cells, and
+preserves internal code whitespace. Lists copy their text without generated
+markers. Annotation labels copy their visible text. Copy does not materialize
+offscreen documents and does not include another message.
+
+The native adapter maps between semantic UTF-16 offsets and document positions
+when Qt collapses CRLF to a single paragraph separator. Hit testing and word
+selection convert to semantic offsets; projected selection ranges convert back
+to document positions. The semantic text retains its original line endings for
+copying. The map records only collapsed CRLF pairs within each inserted run and
+is rebuilt when the surface changes, independently of document materialization.
+
+`MarkupSelectionHost` registers live surfaces and routes mouse dragging,
+shift-click, word selection, Copy, Select All, and Escape to the message owner.
+Dragging near the viewport edge scrolls and extends the selection once pointer
+movement reaches the platform drag threshold. A stationary press does not start
+edge scrolling. Accepted selection gestures share the viewport movement
+lifecycle: they stop live-tail following, defer geometry changes, and settle only
+after both selection dragging and Flickable motion end. The release endpoint is
+committed before settlement.
+Starting a
+selection in another message clears the previous one; extending an existing
+selection stays in its original message. Code toolbars and scrollbars retain
+their own input handling. Links activate on a click without a drag or selection.
 
 Document replacements and style refreshes use a single cursor edit transaction
 with layout enabled. TextEdit measures its content when `contentsChanged`
@@ -164,12 +228,27 @@ using Qt Protobuf and compares UTF-16 positions with real QString lengths.
 Native Qt tests now cover production QML wiring, resolved links, nested code
 formatting, Unicode selection, table alignment and inline content, structural
 grouping, stale snapshots, layout release, cold-snapshot routing, palette refresh
-geometry, and replacements between paragraphs, lists, and tables. Existing
+geometry, and replacements between paragraphs, lists, and tables. Selection tests
+drive real mouse events across prose, code, and cells, verify offscreen copy and
+streaming reconciliation, and destroy/rematerialize selected table delegates.
+Deferred code tests create the delegate before its payload arrives and verify
+both assignment orders, literal characters, whitespace, measured height,
+selection, palette refresh, and streaming append. Existing
 viewport identity, shutdown, and scroll-settlement regressions remain required.
+Code-selection tests verify that syntax formats survive mouse press, dragging,
+release, and deselection in both Qt and native font rendering, including lines
+outside the selection. Image checks confirm that selected tokens retain their
+foreground colors in light and dark themes. Background geometry is compared
+against Qt's native selection for partial words, spaces, tabs, bidi text,
+ligatures, and wrapping. Further checks cover blank lines, font changes,
+horizontal scrolling and clipping, streaming append, and deselection.
+Complete and partial selections also retain bold, italic, and underlined syntax
+in both font rendering modes, allowing one 8-bit color step of compositing
+roundoff where underlines intersect glyphs.
 
-The next submission can add message-wide logical selection and real interactions.
+The next submission can add real inline controls and reference interactions.
 It must retain viewport materialization limits, stable identities, local model
-notifications, and the established scroll geometry regressions. Streaming
-selection, overlay pooling, expanded keyboard/accessibility behavior, rich
-clipboard export, and interactive popovers remain open. Concentrated frame-time
-optimization remains deferred under the user's existing decision.
+notifications, and the established scroll geometry regressions. Expanded keyboard
+navigation and accessibility selection, rich clipboard export, overlay pooling,
+and interactive popovers remain open. Concentrated frame-time optimization
+remains deferred under the user's existing decision.

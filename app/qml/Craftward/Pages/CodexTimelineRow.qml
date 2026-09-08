@@ -13,6 +13,7 @@ Control {
     id: root
 
     required property var timelineModel
+    property var selectionHost: null
     property int sourceRow: -1
     property int dataRevision: -1
     required property bool turnExpanded
@@ -277,7 +278,12 @@ Control {
         MarkupSegmentView {
             codeBlock: Boolean(root.value("codeBlock"))
             segmentText: root.textValue("blockText")
-            semanticSegment: root.value("semanticSegment") ?? null
+            renderParts: root.value("renderParts") ?? null
+            selectionHost: root.selectionHost
+            selectionCoordinator: {
+                const document = root.value("markupDocument");
+                return document ? document.selection ?? null : null;
+            }
             language: root.textValue("language")
             textColor: root.palette.text
             font: root.font

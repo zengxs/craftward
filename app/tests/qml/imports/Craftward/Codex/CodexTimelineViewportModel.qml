@@ -92,7 +92,7 @@ ListModel {
                 return block.segmentId;
             if (roleName === "blockText")
                 return block.segmentText;
-            if (roleName === "codeBlock" || roleName === "language" || roleName === "semanticSegment")
+            if (roleName === "codeBlock" || roleName === "language" || roleName === "semanticSegment" || roleName === "renderParts")
                 return block[roleName];
         }
         return sourceModel.valueAt(viewportRow.sourceRow, roleName);

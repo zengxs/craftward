@@ -17,6 +17,9 @@ qt_add_qml_module(CraftwardComponents
         IconButton.qml
         MenuComboBox.qml
         MarkupSegmentView.qml
+        MarkupSelectableText.qml
+        MarkupSelectionHost.qml
+        MarkupTable.qml
         ModalDialog.qml
         OverlayScrollBar.qml
         PrimaryButton.qml

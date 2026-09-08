@@ -8,3 +8,4 @@ MarkupSegmentView 1.0 MarkupSegmentView.qml
 MenuComboBox 1.0 MenuComboBox.qml
 OverlayScrollBar 1.0 OverlayScrollBar.qml
 singleton Typography 1.0 Typography.qml
+MarkupSelectionHost 1.0 MarkupSelectionHost.qml

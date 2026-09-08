@@ -105,6 +105,7 @@ Control {
         id: timelineRowComponent
 
         CodexTimelineRow {
+            selectionHost: timelineViewport.selectionHost
             width: parent ? parent.width : 0
             timelineModel: root.activeTimelineModel
             turnExpanded: {
