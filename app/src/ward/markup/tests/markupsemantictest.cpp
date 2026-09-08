@@ -241,6 +241,8 @@ class MarkupSemanticTest : public QObject
     void resolvesReferencesAcrossTheCompleteSnapshot();
     void rendersInlineFormatsAndNativeLinkHits();
     void preservesEmphasisAroundInlineCode();
+    void confinesInlineCodeBackgroundToItsText_data();
+    void confinesInlineCodeBackgroundToItsText();
     void productionSegmentConsumesSemanticPayload();
     void splitsListsAndTablesAtStableBoundaries();
     void placesNestedTablesBelowThePrecedingParagraph();
@@ -428,6 +430,62 @@ MarkupSemanticTest::preservesEmphasisAroundInlineCode()
     QVERIFY(formatAt(text.document(), QStringLiteral("italic")).fontItalic());
     QVERIFY(formatAt(text.document(), QStringLiteral("deleted")).fontStrikeOut());
     QCOMPARE(formatAt(text.document(), QStringLiteral("bold")).font().family(), QStringLiteral("Menlo"));
+}
+
+void
+MarkupSemanticTest::confinesInlineCodeBackgroundToItsText_data()
+{
+    QTest::addColumn<QString>("source");
+    QTest::addColumn<int>("renderType");
+    const auto paragraphs = QStringLiteral("`first`\n\nPlain `second` text");
+    const auto list = QStringLiteral("- `first`\n- Plain `second` text");
+    QTest::newRow("paragraphs-qt") << paragraphs << 0;
+    QTest::newRow("paragraphs-native") << paragraphs << 1;
+    QTest::newRow("list-qt") << list << 0;
+    QTest::newRow("list-native") << list << 1;
+}
+
+void
+MarkupSemanticTest::confinesInlineCodeBackgroundToItsText()
+{
+    QFETCH(QString, source);
+    QFETCH(int, renderType);
+    MarkupDocumentModel model;
+    model.reconcileSource(source, Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    QQuickWindow window;
+    window.setColor(Qt::white);
+    window.resize(480, 160);
+    NativeText text(payload(&model, 0));
+    QVERIFY2(text.object, qPrintable(text.component.errorString()));
+    auto* editor = qobject_cast<QQuickItem*>(text.object.get());
+    QVERIFY(editor);
+    QVERIFY(editor->setProperty("renderType", renderType));
+    editor->setParentItem(window.contentItem());
+    QCOMPARE(text.document()->blockCount(), 2);
+    QCOMPARE(text.document()->lastBlock().text(), QStringLiteral("Plain second text"));
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QCoreApplication::processEvents();
+    const QImage rendered = window.grabWindow();
+    QVERIFY(!rendered.isNull());
+    const auto artifactDirectory = qEnvironmentVariable("CRAFTWARD_TEST_ARTIFACT_DIR");
+    if (!artifactDirectory.isEmpty())
+        QVERIFY(
+          rendered.save(artifactDirectory +
+                        QStringLiteral("/inline-background-%1.png").arg(QString::fromLatin1(QTest::currentDataTag()))));
+
+    const auto block = text.document()->lastBlock();
+    const auto bounds = text.document()->documentLayout()->blockBoundingRect(block);
+    // Sample empty space within the paragraph, beyond the last glyph.
+    const auto sample = editor->mapToScene(bounds.center());
+    const qreal pixelRatio = rendered.width() / qreal(window.width());
+    QCOMPARE(rendered.pixelColor(qRound(sample.x() * pixelRatio), qRound(sample.y() * pixelRatio)), QColor(Qt::white));
+    QCOMPARE(formatAt(text.document(), QStringLiteral("Plain")).background().style(), Qt::NoBrush);
+    QCOMPARE(formatAt(text.document(), QStringLiteral("text")).background().style(), Qt::NoBrush);
+    QCOMPARE(formatAt(text.document(), QStringLiteral("first")).background().color(), QColor("#eeeeee"));
+    QCOMPARE(formatAt(text.document(), QStringLiteral("second")).background().color(), QColor("#eeeeee"));
 }
 
 void

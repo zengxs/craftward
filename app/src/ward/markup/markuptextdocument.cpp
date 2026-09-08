@@ -92,7 +92,7 @@ MarkupTextDocument::render()
         if (first)
             transaction.setBlockFormat(block.format);
         else
-            transaction.insertBlock(block.format);
+            transaction.insertBlock(block.format, QTextCharFormat());
         first = false;
         if (!block.listKey.isEmpty()) {
             auto* list = lists.value(block.listKey);
