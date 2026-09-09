@@ -12,6 +12,7 @@
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QFont>
 #include <QGuiApplication>
 #include <QObject>
 #include <QQmlApplicationEngine>
@@ -81,8 +82,11 @@ main(int argc, char* argv[])
     QCoreApplication::setOrganizationName(QStringLiteral("Craftward"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Craftward"));
 
-    // Use native text rendering for better font quality, especially for CJK fonts.
+    // Use the platform font rasterizer for text at its displayed size.
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
+    QFont defaultFont = QGuiApplication::font();
+    defaultFont.setPointSizeF(14.0);
+    QGuiApplication::setFont(defaultFont);
 
     WardError* rawRuntimeError = nullptr;
     std::unique_ptr<WardRuntime, RuntimeDeleter> runtime(ward_core_runtime_create(&rawRuntimeError));

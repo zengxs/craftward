@@ -19,6 +19,18 @@
 namespace {
 using Decorations = QList<QPair<QRectF, QColor>>;
 
+QRectF
+lineBreakRectangle(const QTextBlock& block, const QTextLine& line, int position)
+{
+    QTextCursor cursor(block);
+    cursor.setPosition(block.position() + position);
+    cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+    const auto font = cursor.charFormat().font().resolve(block.document()->defaultFont());
+    const qreal width = QFontMetricsF(font).horizontalAdvance(QLatin1Char(' '));
+    const qreal x = line.cursorToX(position);
+    return QRectF(block.textDirection() == Qt::RightToLeft ? x - width : x, line.y(), width, line.height());
+}
+
 void
 appendDecorations(Decorations& decorations,
                   const QTextBlock& block,
@@ -81,9 +93,12 @@ selectionRectangles(QTextDocument* document,
                     int end,
                     const QPointF& origin,
                     const QColor& textColor,
+                    bool nativeSelection,
+                    bool joinParagraphs,
                     Decorations& decorations)
 {
     QList<QRectF> rectangles;
+    QList<QRectF> previousSpans;
     start = std::clamp(start, 0, document->characterCount() - 1);
     end = std::clamp(end, start, document->characterCount() - 1);
     for (auto block = document->findBlock(start); block.isValid() && block.position() < end; block = block.next()) {
@@ -93,6 +108,9 @@ selectionRectangles(QTextDocument* document,
         const auto text = block.text();
         const int localStart = std::max(0, start - block.position());
         const int localEnd = std::min(int(text.size()), end - block.position());
+        if (!joinParagraphs)
+            previousSpans.clear();
+        const auto offset = layout->position() + origin;
         for (int i = 0; i < layout->lineCount(); ++i) {
             const auto line = layout->lineAt(i);
             const int from = std::max(localStart, line.textStart());
@@ -107,7 +125,7 @@ selectionRectangles(QTextDocument* document,
                     decorated |= run.underline() || run.overline() || run.strikeOut();
                 }
                 // Transparent native selection also suppresses its text decorations.
-                if (decorated)
+                if (decorated && !nativeSelection)
                     appendDecorations(decorations, block, line, from, to, origin, textColor);
                 // Tabs have cursor advances but are omitted from glyphRuns().
                 for (int position = text.indexOf(QLatin1Char('\t'), from); position >= 0 && position < to;
@@ -116,26 +134,50 @@ selectionRectangles(QTextDocument* document,
                     const auto last = line.cursorToX(position, QTextLine::Trailing);
                     spans.append(QRectF(std::min(first, last), line.y(), qAbs(last - first), line.height()));
                 }
+                // Hard breaks have no glyph range, including otherwise empty lines.
+                for (int position = text.indexOf(QChar::LineSeparator, from); position >= 0 && position < to;
+                     position = text.indexOf(QChar::LineSeparator, position + 1)) {
+                    const auto marker = lineBreakRectangle(block, line, position);
+                    spans.append(marker);
+                    if (nativeSelection)
+                        rectangles.append(marker.translated(offset));
+                }
             }
             // Give selected paragraph separators a visible cell, including empty lines.
             if (i + 1 == layout->lineCount() && block.next().isValid() && end > block.position() + text.size()) {
-                const auto width = QFontMetricsF(document->defaultFont()).horizontalAdvance(QLatin1Char(' '));
-                const auto x = line.cursorToX(text.size());
-                spans.append(
-                  QRectF(block.textDirection() == Qt::RightToLeft ? x - width : x, line.y(), width, line.height()));
+                const auto marker = lineBreakRectangle(block, line, text.size());
+                spans.append(marker);
+                if (nativeSelection)
+                    rectangles.append(marker.translated(offset));
             }
             std::sort(spans.begin(), spans.end(), [](const QRectF& a, const QRectF& b) { return a.left() < b.left(); });
             QList<QRectF> merged;
             for (const auto& span : spans) {
                 if (span.width() <= 0)
                     continue;
-                if (!merged.isEmpty() && span.left() <= merged.last().right() + 0.01)
-                    merged.last() = merged.last().united(span);
+                const auto rectangle = span.translated(offset);
+                if (!merged.isEmpty() && rectangle.left() <= merged.last().right() + 0.01)
+                    merged.last() = merged.last().united(rectangle);
                 else
-                    merged.append(span);
+                    merged.append(rectangle);
             }
-            for (auto rectangle : merged)
-                rectangles.append(rectangle.translated(layout->position() + origin));
+            if (!previousSpans.isEmpty() && !merged.isEmpty()) {
+                const qreal top = previousSpans.first().bottom();
+                const qreal bottom = merged.first().top();
+                if (bottom > top) {
+                    // Adjacent selected lines share their leading within the allowed scope.
+                    // Keep each half aligned with that line's selected visual spans.
+                    const qreal middle = (top + bottom) / 2;
+                    for (const auto& span : previousSpans)
+                        rectangles.append(QRectF(span.x(), top, span.width(), middle - top));
+                    for (const auto& span : merged)
+                        rectangles.append(QRectF(span.x(), middle, span.width(), bottom - middle));
+                }
+            }
+            if (!nativeSelection)
+                for (const auto& rectangle : merged)
+                    rectangles.append(rectangle);
+            previousSpans = std::move(merged);
         }
     }
     return rectangles;
@@ -165,6 +207,38 @@ MarkupSelectionBackground::setColor(const QColor& color)
 }
 
 void
+MarkupSelectionBackground::setNativeSelection(bool nativeSelection)
+{
+    if (nativeSelection_ == nativeSelection)
+        return;
+    nativeSelection_ = nativeSelection;
+    scheduleLayout();
+    emit nativeSelectionChanged();
+}
+
+bool
+MarkupSelectionBackground::nativeSelection() const
+{
+    return nativeSelection_;
+}
+
+void
+MarkupSelectionBackground::setJoinParagraphs(bool joinParagraphs)
+{
+    if (joinParagraphs_ == joinParagraphs)
+        return;
+    joinParagraphs_ = joinParagraphs;
+    scheduleLayout();
+    emit joinParagraphsChanged();
+}
+
+bool
+MarkupSelectionBackground::joinParagraphs() const
+{
+    return joinParagraphs_;
+}
+
+void
 MarkupSelectionBackground::updatePolish()
 {
     QList<QRectF> rectangles;
@@ -174,8 +248,14 @@ MarkupSelectionBackground::updatePolish()
         const int start = editor->property("selectionStart").toInt();
         const int end = editor->property("selectionEnd").toInt();
         if (start < end)
-            rectangles = selectionRectangles(
-              geometry->document, start, end, geometry->origin, editor->property("color").value<QColor>(), decorations);
+            rectangles = selectionRectangles(geometry->document,
+                                             start,
+                                             end,
+                                             geometry->origin,
+                                             editor->property("color").value<QColor>(),
+                                             nativeSelection_,
+                                             joinParagraphs_,
+                                             decorations);
     }
     if (rectangles_ != rectangles || decorations_ != decorations) {
         rectangles_ = std::move(rectangles);

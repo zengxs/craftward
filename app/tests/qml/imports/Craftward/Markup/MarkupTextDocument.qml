@@ -12,6 +12,7 @@ QtObject {
     readonly property bool hasInlineCode: false
     property font font
     property font codeFont
+    property real lineHeightScale: 1
     property color textColor
     property color linkColor
     property color annotationBackground

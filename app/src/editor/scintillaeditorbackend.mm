@@ -12,6 +12,7 @@
 #include <QFontDatabase>
 #include <QPointer>
 #include <QtGlobal>
+#include <QtMath>
 
 #include <array>
 #include <utility>
@@ -122,7 +123,8 @@ class ScintillaEditorBackendPrivate
         [view message:SCI_SETEXTRAASCENT wParam:0];
         [view message:SCI_SETEXTRADESCENT wParam:0];
         const int baseLineHeight = static_cast<int>([view message:SCI_TEXTHEIGHT wParam:0]);
-        const int targetLineHeight = qRound(baseLineHeight * lineHeightScale);
+        // Cocoa's font points and Scintilla's layout coordinates use the same logical units.
+        const int targetLineHeight = qCeil(fontPointSize * lineHeightScale);
         const int extraLineHeight = qMax(0, targetLineHeight - baseLineHeight);
         const int extraAscent = extraLineHeight / 2;
         [view message:SCI_SETEXTRAASCENT wParam:extraAscent];

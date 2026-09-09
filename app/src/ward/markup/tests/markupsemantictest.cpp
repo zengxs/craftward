@@ -21,6 +21,7 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QRawFont>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTextBlock>
@@ -236,6 +237,7 @@ class MarkupSemanticTest : public QObject
     void resolvesReferencesAcrossTheCompleteSnapshot();
     void rendersInlineFormatsAndNativeLinkHits();
     void preservesEmphasisAroundInlineCode();
+    void resolvesChineseBoldWithoutChangingRegularOrCodeFonts();
     void confinesInlineCodeBackgroundToItsText_data();
     void confinesInlineCodeBackgroundToItsText();
     void decoratesInlineCodeWithoutChangingTextLayout_data();
@@ -265,6 +267,10 @@ class MarkupSemanticTest : public QObject
     void codeSelectionBackgroundMatchesNativeGeometry_data();
     void codeSelectionBackgroundMatchesNativeGeometry();
     void codeSelectionBackgroundFollowsLayoutAndScrolling();
+    void joinsSelectionWithinParagraphs_data();
+    void joinsSelectionWithinParagraphs();
+    void selectsEmptyLinesWithContinuousBackground_data();
+    void selectsEmptyLinesWithContinuousBackground();
     void preservesSelectedCodeDecorations_data();
     void preservesSelectedCodeDecorations();
 };
@@ -427,6 +433,77 @@ MarkupSemanticTest::preservesEmphasisAroundInlineCode()
     QVERIFY(formatAt(text.document(), QStringLiteral("italic")).fontItalic());
     QVERIFY(formatAt(text.document(), QStringLiteral("deleted")).fontStrikeOut());
     QCOMPARE(formatAt(text.document(), QStringLiteral("bold")).font().family(), QStringLiteral("Menlo"));
+}
+
+void
+MarkupSemanticTest::resolvesChineseBoldWithoutChangingRegularOrCodeFonts()
+{
+    MarkupDocumentModel model;
+    model.reconcileSource(QStringLiteral("常规 Regular **粗体 Bold** **`代码 Code`**"), Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    QQuickWindow window;
+    NativeText text(payload(&model, 0));
+    QVERIFY2(text.object, qPrintable(text.component.errorString()));
+    QFont bodyFont = QGuiApplication::font();
+    bodyFont.setPointSizeF(14.0);
+    QVERIFY(text.object->setProperty("font", bodyFont));
+    QVERIFY(text.object->setProperty("renderType", 1));
+    text.document()->documentLayout()->documentSize();
+
+    const auto artifactDirectory = qEnvironmentVariable("CRAFTWARD_TEST_ARTIFACT_DIR");
+    if (!artifactDirectory.isEmpty()) {
+        auto* editor = qobject_cast<QQuickItem*>(text.object.get());
+        editor->setParentItem(window.contentItem());
+        window.setColor(Qt::white);
+        window.resize(480, 100);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(window.grabWindow().save(artifactDirectory + QStringLiteral("/native-bold-fallback.png")));
+    }
+
+    const auto renderedFont = [&](const QString& token) {
+        const int position = text.document()->toPlainText().indexOf(token);
+        if (position < 0)
+            return QRawFont();
+        const auto block = text.document()->findBlock(position);
+        const auto runs = block.layout()->glyphRuns(position - block.position(), 1);
+        return runs.size() == 1 ? runs.first().rawFont() : QRawFont();
+    };
+    const auto referenceFont = [](const QString& glyph, const QFont& font) {
+        QTextLayout layout(glyph, font);
+        layout.beginLayout();
+        layout.createLine().setLineWidth(480);
+        layout.endLayout();
+        const auto runs = layout.glyphRuns();
+        return runs.size() == 1 ? runs.first().rawFont() : QRawFont();
+    };
+    const auto checkFont = [](const QRawFont& actual, const QRawFont& expected, const QString& glyph) {
+        QVERIFY(actual.isValid());
+        QVERIFY(expected.isValid());
+        QCOMPARE(actual.familyName(), expected.familyName());
+        QCOMPARE(actual.styleName(), expected.styleName());
+        const auto actualGlyphs = actual.glyphIndexesForString(glyph);
+        const auto expectedGlyphs = expected.glyphIndexesForString(glyph);
+        QCOMPARE(actualGlyphs.size(), 1);
+        QCOMPARE(expectedGlyphs.size(), 1);
+        QCOMPARE(actual.alphaMapForGlyph(actualGlyphs.first(), QRawFont::PixelAntialiasing),
+                 expected.alphaMapForGlyph(expectedGlyphs.first(), QRawFont::PixelAntialiasing));
+    };
+
+    checkFont(renderedFont(QStringLiteral("常")), referenceFont(QStringLiteral("常"), bodyFont), QStringLiteral("常"));
+    checkFont(
+      renderedFont(QStringLiteral("Regular")), referenceFont(QStringLiteral("R"), bodyFont), QStringLiteral("R"));
+    QFont boldFont = bodyFont;
+    boldFont.setWeight(QFont::Bold);
+    checkFont(renderedFont(QStringLiteral("Bold")), referenceFont(QStringLiteral("B"), boldFont), QStringLiteral("B"));
+    boldFont.setFamily(QStringLiteral("PingFang SC"));
+    checkFont(renderedFont(QStringLiteral("粗")), referenceFont(QStringLiteral("粗"), boldFont), QStringLiteral("粗"));
+    QFont codeFont = bodyFont;
+    codeFont.setFamilies(text.object->property("codeFont").value<QFont>().families());
+    codeFont.setFixedPitch(true);
+    codeFont.setWeight(QFont::Bold);
+    checkFont(renderedFont(QStringLiteral("代")), referenceFont(QStringLiteral("代"), codeFont), QStringLiteral("代"));
+    checkFont(renderedFont(QStringLiteral("Code")), referenceFont(QStringLiteral("C"), codeFont), QStringLiteral("C"));
 }
 
 void
@@ -1623,9 +1700,13 @@ MarkupSemanticTest::codeSelectionBackgroundFollowsLayoutAndScrolling()
 
     QVERIFY(flick->property("contentWidth").toReal() > flick->width());
     QVERIFY(flick->setProperty("contentX", 90.0));
-    const auto inside = flick->mapToScene(QPointF(flick->width() / 2, 1));
+    QRectF firstLine;
+    QVERIFY(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, firstLine), Q_ARG(int, 0)));
+    // Added leading can precede the first line, so sample within its native bounds.
+    const qreal selectionY = editor->mapToItem(flick, firstLine.topLeft()).y() + 1;
+    const auto inside = flick->mapToScene(QPointF(flick->width() / 2, selectionY));
     QCOMPARE(colorAt(inside), selectionColor);
-    const auto outside = flick->mapToScene(QPointF(-2, 1));
+    const auto outside = flick->mapToScene(QPointF(-2, selectionY));
     QVERIFY(colorAt(outside) != selectionColor);
     QCOMPARE(editor->property("selectedText").toString(), code);
 
@@ -1640,6 +1721,232 @@ MarkupSemanticTest::codeSelectionBackgroundFollowsLayoutAndScrolling()
     model.selection()->clear();
     QTRY_VERIFY(editor->property("selectedText").toString().isEmpty());
     QVERIFY(colorAt(blankPoint()) != selectionColor);
+}
+
+void
+MarkupSemanticTest::joinsSelectionWithinParagraphs_data()
+{
+    QTest::addColumn<int>("renderType");
+    QTest::addColumn<bool>("hardBreak");
+    QTest::newRow("native-wrap") << 1 << false;
+    QTest::newRow("native-hard-break") << 1 << true;
+    QTest::newRow("qt-wrap") << 0 << false;
+    QTest::newRow("qt-hard-break") << 0 << true;
+}
+
+void
+MarkupSemanticTest::joinsSelectionWithinParagraphs()
+{
+    QFETCH(int, renderType);
+    QFETCH(bool, hardBreak);
+    MarkupDocumentModel model;
+    const auto paragraph =
+      hardBreak ? QStringLiteral("> Alpha **粗体 Bold** `code`  \n> Beta [link](https://example.com) gamma.")
+                : QStringLiteral("> Alpha **粗体 Bold** `code` beta [link](https://example.com) gamma delta "
+                                 "epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma.");
+    model.reconcileSource(paragraph + QStringLiteral("\n>\n> Separate paragraph."), Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    NativeText fixture(payload(&model, 0));
+    QVERIFY2(fixture.object, qPrintable(fixture.component.errorString()));
+    auto* editor = qobject_cast<QQuickItem*>(fixture.object.get());
+    QVERIFY(editor);
+    QVERIFY(editor->setProperty("renderType", renderType));
+    editor->setWidth(280);
+    editor->setPosition(QPointF(12, 12));
+    QQuickWindow window;
+    window.setColor(Qt::white);
+    window.resize(320, 450);
+    editor->setParentItem(window.contentItem());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* document = fixture.document();
+    QCOMPARE(document->blockCount(), 2);
+
+    for (const qreal scale : { qreal(1.6), qreal(2.2) }) {
+        QVERIFY(editor->setProperty("lineHeightScale", scale));
+        QVERIFY(QMetaObject::invokeMethod(editor, "selectAll"));
+        QCoreApplication::processEvents();
+        window.resize(320, qCeil(editor->implicitHeight()) + 24);
+        const auto selected = editor->property("selectedText").toString();
+        const auto selectionColor = editor->property("selectionColor").value<QColor>();
+        auto* background = visualItems(editor, QStringLiteral("markupSelectionBackground")).value(0);
+        if (background)
+            background->setVisible(false);
+        const auto reference = window.grabWindow();
+        if (background)
+            background->setVisible(true);
+        const auto actual = window.grabWindow();
+        const qreal dpr = actual.devicePixelRatio();
+        const auto artifacts = qEnvironmentVariable("CRAFTWARD_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty()) {
+            const auto name = QStringLiteral("/paragraph-%1-%2").arg(QTest::currentDataTag()).arg(scale);
+            QVERIFY(reference.save(artifacts + name + QStringLiteral("-before.png")));
+            QVERIFY(actual.save(artifacts + name + QStringLiteral("-after.png")));
+        }
+
+        QList<QRectF> gaps;
+        const auto* layout = document->firstBlock().layout();
+        QVERIFY(layout->lineCount() >= 2);
+        QRectF cursor;
+        QVERIFY(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, 0)));
+        const auto origin = editor->mapToScene(cursor.topLeft()) - layout->position() -
+                            QPointF(layout->lineAt(0).cursorToX(0), layout->lineAt(0).y());
+        for (int i = 1; i < layout->lineCount(); ++i) {
+            const auto previous = layout->lineAt(i - 1);
+            const auto line = layout->lineAt(i);
+            const qreal top = previous.y() + previous.height();
+            const qreal bottom = line.y();
+            QVERIFY(bottom > top);
+            const QRectF gap(origin + layout->position() + QPointF(0, top), QSizeF(editor->width(), bottom - top));
+            gaps.append(gap);
+            const auto shared = previous.naturalTextRect().intersected(
+              QRectF(line.naturalTextRect().x(), previous.y(), line.naturalTextWidth(), previous.height()));
+            QVERIFY(shared.width() > 4);
+            const int x = qRound((origin.x() + layout->position().x() + shared.center().x()) * dpr);
+            for (int y = qCeil(gap.top() * dpr); y < qFloor(gap.bottom() * dpr); ++y)
+                QCOMPARE(actual.pixelColor(x, y), selectionColor);
+        }
+        QList<QRectF> additions = gaps;
+        const auto blockText = document->firstBlock().text();
+        const qreal space = QFontMetricsF(document->defaultFont()).horizontalAdvance(QLatin1Char(' '));
+        for (int i = 0; i < layout->lineCount(); ++i) {
+            const auto line = layout->lineAt(i);
+            const int last = line.textStart() + line.textLength() - 1;
+            const bool hardBreak = last >= 0 && blockText.at(last) == QChar::LineSeparator;
+            if (hardBreak || i + 1 == layout->lineCount()) {
+                const int position = hardBreak ? last : blockText.size();
+                additions.append(QRectF(origin + layout->position() + QPointF(line.cursorToX(position), line.y()),
+                                        QSizeF(space, line.height())));
+            }
+        }
+        // Leading and break markers must not change glyphs, native colors, or paragraph spacing.
+        for (int y = 0; y < actual.height(); ++y)
+            for (int x = 0; x < actual.width(); ++x) {
+                const auto point = QPointF(x + 0.5, y + 0.5) / dpr;
+                const bool inAddition = std::any_of(additions.cbegin(), additions.cend(), [&](const QRectF& rectangle) {
+                    return rectangle.contains(point);
+                });
+                if (!inAddition)
+                    QCOMPARE(actual.pixelColor(x, y), reference.pixelColor(x, y));
+            }
+        QCOMPARE(editor->property("selectedText").toString(), selected);
+
+        if (scale > 2) {
+            const auto first = layout->lineAt(0);
+            const auto second = layout->lineAt(1);
+            const int start = first.textStart() + 6;
+            const int end = second.textStart() + second.textLength() / 2;
+            QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, start), Q_ARG(int, end)));
+            const auto partial = window.grabWindow();
+            const auto colorAt = [&](qreal x, qreal fraction) {
+                return partial.pixelColor((QPointF(origin.x() + layout->position().x() + x,
+                                                   gaps.first().top() + gaps.first().height() * fraction) *
+                                           dpr)
+                                            .toPoint());
+            };
+            // The first and last lines retain their partial horizontal ranges.
+            QCOMPARE(colorAt((first.cursorToX(start - 1) + first.cursorToX(start)) / 2, 0.25), Qt::white);
+            QCOMPARE(colorAt((first.cursorToX(start) + first.naturalTextRect().right()) / 2, 0.25), selectionColor);
+            QCOMPARE(colorAt((second.naturalTextRect().left() + second.cursorToX(end)) / 2, 0.75), selectionColor);
+            QCOMPARE(colorAt((second.cursorToX(end) + second.naturalTextRect().right()) / 2, 0.75), Qt::white);
+            for (int i = 1; i < gaps.size(); ++i)
+                QCOMPARE(partial.pixelColor((gaps.at(i).center() * dpr).toPoint()), Qt::white);
+        }
+
+        QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, 5)));
+        const auto singleLine = window.grabWindow();
+        for (const auto& gap : gaps)
+            QCOMPARE(singleLine.pixelColor((gap.center() * dpr).toPoint()), Qt::white);
+        QVERIFY(QMetaObject::invokeMethod(editor, "deselect"));
+        const auto cleared = window.grabWindow();
+        for (const auto& gap : gaps)
+            QCOMPARE(cleared.pixelColor((gap.center() * dpr).toPoint()), Qt::white);
+    }
+}
+
+void
+MarkupSemanticTest::selectsEmptyLinesWithContinuousBackground_data()
+{
+    QTest::addColumn<int>("renderType");
+    QTest::addColumn<bool>("codeBlock");
+    QTest::newRow("native-prose") << 1 << false;
+    QTest::newRow("qt-prose") << 0 << false;
+    QTest::newRow("native-code") << 1 << true;
+    QTest::newRow("qt-code") << 0 << true;
+}
+
+void
+MarkupSemanticTest::selectsEmptyLinesWithContinuousBackground()
+{
+    QFETCH(int, renderType);
+    QFETCH(bool, codeBlock);
+    MarkupDocumentModel model;
+    model.reconcileSource(codeBlock ? QStringLiteral("```text\nAlpha\n\nBeta\n```")
+                                    : QStringLiteral("Alpha\\\n\\\nBeta"),
+                          Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    SelectionScene scene(&model);
+    QVERIFY2(scene.view, qPrintable(scene.component.errorString()));
+    scene.window.resize(520, 180);
+    scene.window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&scene.window));
+    auto* editor = scene.editorContaining(QStringLiteral("Alpha"));
+    QVERIFY(editor);
+    QVERIFY(editor->setProperty("renderType", renderType));
+    auto* document = editor->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+
+    for (const qreal scale : { codeBlock ? qreal(1.45) : qreal(1.6), qreal(2.2) }) {
+        QCOMPARE(document->blockCount(), codeBlock ? 3 : 1);
+        QVERIFY(editor->setProperty("lineHeightScale", scale));
+        model.selection()->selectAll();
+        QTRY_COMPARE(editor->property("selectedText").toString().replace(QChar::LineSeparator, QLatin1Char('\n')),
+                     QStringLiteral("Alpha\n\nBeta"));
+        auto* background = visualItems(editor, QStringLiteral("markupSelectionBackground")).value(0);
+        QVERIFY(background);
+        const auto selectionColor = background->property("color").value<QColor>();
+        const qreal space = QFontMetricsF(document->defaultFont()).horizontalAdvance(QLatin1Char(' '));
+        QList<QRectF> lines;
+        for (const int position : { 0, 6, 7 }) {
+            QRectF cursor;
+            QVERIFY(QMetaObject::invokeMethod(
+              editor, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, position)));
+            lines.append(editor->mapRectToScene(cursor));
+        }
+        const auto image = scene.window.grabWindow();
+        const auto colorAt = [&](const QPointF& point) {
+            return image.pixelColor((point * image.devicePixelRatio()).toPoint());
+        };
+        const auto artifacts = qEnvironmentVariable("CRAFTWARD_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty())
+            QVERIFY(
+              image.save(artifacts + QStringLiteral("/empty-line-%1-%2.png").arg(QTest::currentDataTag()).arg(scale)));
+        // A selected empty line has one space of feedback, not an entire row.
+        const auto marker = QPointF(lines.at(1).left() + space / 2, lines.at(1).center().y());
+        QCOMPARE(colorAt(marker), selectionColor);
+        QVERIFY(colorAt(marker + QPointF(space * 2, 0)) != selectionColor);
+        // Both sides of the empty line join at the production line-height scale.
+        for (int i = 1; i < lines.size(); ++i) {
+            const qreal top = lines.at(i - 1).bottom();
+            const qreal bottom = lines.at(i).top();
+            QVERIFY(bottom > top);
+            const qreal x = lines.at(i).left() + space / 2;
+            for (const qreal fraction : { qreal(0.25), qreal(0.75) })
+                QCOMPARE(colorAt(QPointF(x, top + (bottom - top) * fraction)), selectionColor);
+        }
+        QCOMPARE(model.selection()->text(), QStringLiteral("Alpha\n\nBeta"));
+
+        // Selecting only the line break still gives visible feedback.
+        QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 6), Q_ARG(int, 7)));
+        auto partial = scene.window.grabWindow();
+        QCOMPARE(partial.pixelColor((marker * partial.devicePixelRatio()).toPoint()), selectionColor);
+        QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, 6)));
+        partial = scene.window.grabWindow();
+        QVERIFY(partial.pixelColor((marker * partial.devicePixelRatio()).toPoint()) != selectionColor);
+        model.selection()->clear();
+        QTRY_VERIFY(editor->property("selectedText").toString().isEmpty());
+        const auto cleared = scene.window.grabWindow();
+        QVERIFY(cleared.pixelColor((marker * cleared.devicePixelRatio()).toPoint()) != selectionColor);
+    }
 }
 
 void

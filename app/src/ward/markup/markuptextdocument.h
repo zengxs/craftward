@@ -26,6 +26,7 @@ class MarkupTextDocument
     Q_PROPERTY(bool hasInlineCode READ hasInlineCode NOTIFY surfaceChanged)
     Q_PROPERTY(QFont font MEMBER font_ NOTIFY styleChanged)
     Q_PROPERTY(QFont codeFont MEMBER codeFont_ NOTIFY styleChanged)
+    Q_PROPERTY(qreal lineHeightScale MEMBER lineHeightScale_ NOTIFY styleChanged)
     Q_PROPERTY(QColor textColor MEMBER textColor_ NOTIFY styleChanged)
     Q_PROPERTY(QColor linkColor MEMBER linkColor_ NOTIFY styleChanged)
     Q_PROPERTY(QColor annotationBackground MEMBER annotationBackground_ NOTIFY styleChanged)
@@ -69,6 +70,7 @@ class MarkupTextDocument
     QList<CollapsedLineBreak> collapsedLineBreaks_;
     QFont font_;
     QFont codeFont_;
+    qreal lineHeightScale_ = 1.0;
     QColor textColor_ = Qt::black;
     QColor linkColor_ = Qt::blue;
     QColor annotationBackground_ = Qt::lightGray;

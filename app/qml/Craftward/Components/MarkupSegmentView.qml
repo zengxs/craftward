@@ -165,6 +165,7 @@ Control {
                     selectionExclusions: [codeToolbar, horizontalBar]
                     color: root.textColor
                     font: root.codeFont
+                    lineHeightScale: Components.Typography.codeLineHeightScale
                     readOnly: true
                     preserveSelectionColors: true
                     wrapMode: TextEdit.NoWrap

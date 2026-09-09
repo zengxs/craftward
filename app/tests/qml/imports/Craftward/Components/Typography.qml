@@ -10,5 +10,6 @@ QtObject {
     readonly property font codeFont: Qt.font({
         "family": monoFamily
     })
-    readonly property real codeLineHeightScale: 1
+    readonly property real proseLineHeightScale: 1.6
+    readonly property real codeLineHeightScale: 1.45
 }

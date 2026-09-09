@@ -6,4 +6,6 @@ import QtQuick
 Item {
     property var textEdit
     property color color
+    property bool nativeSelection: false
+    property bool joinParagraphs: false
 }

@@ -6,6 +6,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Craftward.Design
 import Craftward.Markup
+import Craftward.Components as Components
 
 TextEdit {
     id: root
@@ -16,6 +17,7 @@ TextEdit {
     property var selectionExclusions: []
     property bool preserveSelectionColors: false
     property font codeFont: font
+    property real lineHeightScale: Components.Typography.proseLineHeightScale
     property color linkColor: "blue"
     property color codeBackground: Theme.inlineCodeSurface
     property real codeVerticalPadding: 1
@@ -93,11 +95,14 @@ TextEdit {
     Loader {
         anchors.fill: parent
         z: -1
-        active: root.preserveSelectionColors
+        active: root.preserveSelectionColors || root.selectionStart < root.selectionEnd
         sourceComponent: MarkupSelectionBackground {
             objectName: "markupSelectionBackground"
             textEdit: root
-            color: Theme.dark ? TailwindColors.zinc700 : Theme.textSelectionBackground
+            nativeSelection: !root.preserveSelectionColors
+            // Each source line in a code block is a separate QTextBlock.
+            joinParagraphs: root.preserveSelectionColors
+            color: root.preserveSelectionColors ? (Theme.dark ? TailwindColors.zinc700 : Theme.textSelectionBackground) : root.selectionColor
         }
     }
 
@@ -108,6 +113,7 @@ TextEdit {
         surface: root.surface
         font: root.font
         codeFont: root.codeFont
+        lineHeightScale: root.lineHeightScale
         textColor: root.color
         linkColor: root.linkColor
         // Annotation labels use the document's native character background.

@@ -15,14 +15,22 @@ class MarkupSelectionBackground : public MarkupTextBackground
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY colorChanged)
+    Q_PROPERTY(bool nativeSelection READ nativeSelection WRITE setNativeSelection NOTIFY nativeSelectionChanged)
+    Q_PROPERTY(bool joinParagraphs READ joinParagraphs WRITE setJoinParagraphs NOTIFY joinParagraphsChanged)
 
   public:
     explicit MarkupSelectionBackground(QQuickItem* parent = nullptr);
     [[nodiscard]] QColor color() const;
     void setColor(const QColor& color);
+    [[nodiscard]] bool nativeSelection() const;
+    void setNativeSelection(bool nativeSelection);
+    [[nodiscard]] bool joinParagraphs() const;
+    void setJoinParagraphs(bool joinParagraphs);
 
   signals:
     void colorChanged();
+    void nativeSelectionChanged();
+    void joinParagraphsChanged();
 
   protected:
     void updatePolish() override;
@@ -36,4 +44,6 @@ class MarkupSelectionBackground : public MarkupTextBackground
     QList<QQuickItem*> decorationItems_;
     QQmlComponent* decorationComponent_ = nullptr;
     QColor color_ = Qt::lightGray;
+    bool nativeSelection_ = false;
+    bool joinParagraphs_ = false;
 };

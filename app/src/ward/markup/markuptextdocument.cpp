@@ -5,12 +5,26 @@
 
 #include "markuprenderplan.h"
 
+#include <QFontInfo>
 #include <QTextBlock>
 #include <QTextBoundaryFinder>
 #include <QTextCursor>
 #include <QTextList>
 
 #include <algorithm>
+#include <cmath>
+
+namespace {
+QFont
+scaledFont(QFont font, qreal scale)
+{
+    if (font.pixelSize() > 0)
+        font.setPixelSize(qRound(font.pixelSize() * scale));
+    else
+        font.setPointSizeF(font.pointSizeF() * scale);
+    return font;
+}
+}
 
 MarkupTextDocument::MarkupTextDocument(QObject* parent)
   : QObject(parent)
@@ -99,10 +113,18 @@ MarkupTextDocument::render()
     QHash<QString, QTextList*> lists;
     bool first = true;
     for (const auto& block : surface.blocks) {
+        qreal scale = 1.0;
+        for (const auto& run : block.runs)
+            scale = std::max(scale, run.scale);
+        const int fontPixelSize = QFontInfo(scaledFont(font_, scale)).pixelSize();
+        auto blockFormat = block.format;
+        // Use the font size rather than multiplying the font's built-in leading.
+        // Taller fallback glyphs may still expand the line to avoid clipping.
+        blockFormat.setLineHeight(std::ceil(fontPixelSize * lineHeightScale_), QTextBlockFormat::MinimumHeight);
         if (first)
-            transaction.setBlockFormat(block.format);
+            transaction.setBlockFormat(blockFormat);
         else
-            transaction.insertBlock(block.format, QTextCharFormat());
+            transaction.insertBlock(blockFormat, QTextCharFormat());
         first = false;
         if (!block.listKey.isEmpty()) {
             auto* list = lists.value(block.listKey);
@@ -112,13 +134,8 @@ MarkupTextDocument::render()
                 lists.insert(block.listKey, transaction.createList(block.list));
         }
         for (const auto& run : block.runs) {
-            auto font = font_;
-            if (font.pixelSize() > 0)
-                font.setPixelSize(qRound(font.pixelSize() * run.scale));
-            else
-                font.setPointSizeF(font.pointSizeF() * run.scale);
             QTextCharFormat format;
-            format.setFont(font);
+            format.setFont(scaledFont(font_, run.scale));
             format.setForeground(textColor_);
             format.merge(run.format);
             if (run.code) {
@@ -126,6 +143,13 @@ MarkupTextDocument::render()
                 format.setFontFixedPitch(true);
                 // The background item decorates native glyph ranges without changing the text.
                 format.setProperty(InlineCodeProperty, true);
+            } else if (format.fontWeight() >= QFont::Bold) {
+                // Prefer a real Chinese bold face within emphasized prose.
+                auto families = format.fontFamilies().toStringList();
+                const auto chineseFamily = QStringLiteral("PingFang SC");
+                if (!families.contains(chineseFamily))
+                    families.append(chineseFamily);
+                format.setFontFamilies(families);
             }
             if (run.annotation || format.isAnchor())
                 format.setForeground(linkColor_);

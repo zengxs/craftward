@@ -12,7 +12,9 @@
 namespace {
 
 constexpr qreal codeFontPointSize = 13.0;
-constexpr qreal codeLineHeightScaleValue = 1.25;
+// Line height is a multiple of the font size, with native glyph metrics as a minimum.
+constexpr qreal proseLineHeightScaleValue = 1.6;
+constexpr qreal codeLineHeightScaleValue = 1.45;
 
 bool
 registerNativeFont(NSURL* fontUrl)
@@ -99,6 +101,12 @@ QFont
 Typography::codeFont() const
 {
     return m_codeFont;
+}
+
+qreal
+Typography::proseLineHeightScale() const
+{
+    return proseLineHeightScaleValue;
 }
 
 qreal

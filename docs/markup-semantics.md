@@ -156,6 +156,14 @@ from the existing glyph runs and formats. Its small Qt Quick Shapes component
 uses curve strokes to retain Qt's antialiasing and is created only for decorated
 selected runs. Prose and table cells retain their normal selection colors.
 
+Selected hard breaks and paragraph separators receive a visible cell one space
+wide, using the break's font. Selection backgrounds share the added leading
+between adjacent selected lines, including empty lines. Prose and table cells
+keep this connection within each paragraph; their overlay supplements native
+selection with leading and break markers. Within a code surface, the connection
+also spans QTextBlock boundaries because each source line is a separate block.
+These backgrounds do not change selection endpoints or copied whitespace.
+
 `MarkupTable` coordinates equal column widths, column alignment, and the maximum
 cell height in each row. Every cell uses the same `MarkupSelectableText` and
 native text adapter as prose. Only materialized timeline segments create cells;

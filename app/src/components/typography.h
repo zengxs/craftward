@@ -16,6 +16,7 @@ class Typography : public QObject
     QML_SINGLETON
     Q_PROPERTY(QString monoFamily READ monoFamily CONSTANT)
     Q_PROPERTY(QFont codeFont READ codeFont CONSTANT)
+    Q_PROPERTY(qreal proseLineHeightScale READ proseLineHeightScale CONSTANT)
     Q_PROPERTY(qreal codeLineHeightScale READ codeLineHeightScale CONSTANT)
 
   public:
@@ -23,6 +24,7 @@ class Typography : public QObject
 
     QString monoFamily() const;
     QFont codeFont() const;
+    qreal proseLineHeightScale() const;
     qreal codeLineHeightScale() const;
 
   private:
