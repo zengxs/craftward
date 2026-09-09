@@ -14,8 +14,12 @@ qt_add_qml_module(CraftwardMarkup
         markuptextdocument.h
         markupselection.cpp
         markupselection.h
+        markuptextbackground.cpp
+        markuptextbackground.h
         markupselectionbackground.cpp
         markupselectionbackground.h
+        markupcodebackground.cpp
+        markupcodebackground.h
 )
 
 qt_add_protobuf(CraftwardMarkup

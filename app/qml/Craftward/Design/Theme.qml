@@ -19,6 +19,7 @@ QtObject {
     readonly property color dangerForeground: dark ? TailwindColors.red400 : TailwindColors.red700
     readonly property color dangerSurface: Qt.rgba(dangerForeground.r, dangerForeground.g, dangerForeground.b, dark ? 0.14 : 0.08)
     readonly property color dangerBorder: Qt.rgba(dangerForeground.r, dangerForeground.g, dangerForeground.b, dark ? 0.36 : 0.24)
+    readonly property color inlineCodeSurface: dark ? TailwindColors.zinc700 : TailwindColors.zinc200
     readonly property color menuSelectionBackground: TailwindColors.blue500
     readonly property color menuSelectionForeground: TailwindColors.white
     readonly property color metadataBadgeRing: Qt.rgba(system.windowText.r, system.windowText.g, system.windowText.b, dark ? 0.14 : 0.1)

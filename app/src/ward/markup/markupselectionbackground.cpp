@@ -3,14 +3,11 @@
 
 #include "markupselectionbackground.h"
 
-#include <QAbstractTextDocumentLayout>
 #include <QFontMetricsF>
 #include <QGlyphRun>
-#include <QMetaProperty>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQmlInfo>
-#include <QQuickTextDocument>
 #include <QSGSimpleRectNode>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -20,14 +17,6 @@
 #include <algorithm>
 
 namespace {
-void
-disconnectAll(QList<QMetaObject::Connection>& connections)
-{
-    for (const auto& connection : connections)
-        QObject::disconnect(connection);
-    connections.clear();
-}
-
 using Decorations = QList<QPair<QRectF, QColor>>;
 
 void
@@ -154,44 +143,9 @@ selectionRectangles(QTextDocument* document,
 }
 
 MarkupSelectionBackground::MarkupSelectionBackground(QQuickItem* parent)
-  : QQuickItem(parent)
+  : MarkupTextBackground(parent, { "selectionStart", "selectionEnd", "color" })
 {
     setFlag(ItemHasContents);
-}
-
-QQuickItem*
-MarkupSelectionBackground::textEdit() const
-{
-    return textEdit_;
-}
-
-void
-MarkupSelectionBackground::setTextEdit(QQuickItem* item)
-{
-    if (textEdit_ == item)
-        return;
-    disconnectAll(itemConnections_);
-    textEdit_ = item;
-    if (item) {
-        const auto slot = metaObject()->method(metaObject()->indexOfSlot("scheduleLayout()"));
-        for (const auto* name : { "selectionStart",
-                                  "selectionEnd",
-                                  "cursorRectangle",
-                                  "contentWidth",
-                                  "contentHeight",
-                                  "textDocument",
-                                  "color" }) {
-            const auto property = item->metaObject()->property(item->metaObject()->indexOfProperty(name));
-            if (property.hasNotifySignal())
-                itemConnections_.append(connect(item, property.notifySignal(), this, slot));
-        }
-        itemConnections_.append(connect(item, &QObject::destroyed, this, [this] {
-            scheduleLayout();
-            emit textEditChanged();
-        }));
-    }
-    scheduleLayout();
-    emit textEditChanged();
 }
 
 QColor
@@ -211,70 +165,17 @@ MarkupSelectionBackground::setColor(const QColor& color)
 }
 
 void
-MarkupSelectionBackground::scheduleLayout()
-{
-    polish();
-}
-
-void
-MarkupSelectionBackground::observeDocument()
-{
-    auto* quick = textEdit_ ? textEdit_->property("textDocument").value<QQuickTextDocument*>() : nullptr;
-    auto* document = quick ? quick->textDocument() : nullptr;
-    auto* layout = document ? document->documentLayout() : nullptr;
-    if (quickDocument_ == quick && document_ == document && layout_ == layout)
-        return;
-    disconnectAll(documentConnections_);
-    quickDocument_ = quick;
-    document_ = document;
-    layout_ = layout;
-    if (quick) {
-        documentConnections_.append(
-          connect(quick, &QQuickTextDocument::textDocumentChanged, this, &MarkupSelectionBackground::scheduleLayout));
-        documentConnections_.append(
-          connect(quick, &QObject::destroyed, this, &MarkupSelectionBackground::scheduleLayout));
-    }
-    if (document) {
-        documentConnections_.append(
-          connect(document, &QTextDocument::contentsChanged, this, &MarkupSelectionBackground::scheduleLayout));
-        documentConnections_.append(
-          connect(document, &QTextDocument::documentLayoutChanged, this, &MarkupSelectionBackground::scheduleLayout));
-        documentConnections_.append(
-          connect(document, &QObject::destroyed, this, &MarkupSelectionBackground::scheduleLayout));
-    }
-    if (layout) {
-        documentConnections_.append(
-          connect(layout, &QAbstractTextDocumentLayout::update, this, &MarkupSelectionBackground::scheduleLayout));
-        documentConnections_.append(
-          connect(layout, &QAbstractTextDocumentLayout::updateBlock, this, &MarkupSelectionBackground::scheduleLayout));
-        documentConnections_.append(connect(
-          layout, &QAbstractTextDocumentLayout::documentSizeChanged, this, &MarkupSelectionBackground::scheduleLayout));
-    }
-}
-
-void
 MarkupSelectionBackground::updatePolish()
 {
-    observeDocument();
     QList<QRectF> rectangles;
     Decorations decorations;
-    if (textEdit_ && document_) {
-        const int start = textEdit_->property("selectionStart").toInt();
-        const int end = textEdit_->property("selectionEnd").toInt();
-        if (start < end) {
-            document_->documentLayout()->documentSize();
-            const auto* first = document_->firstBlock().layout();
-            if (first && first->lineCount() > 0) {
-                const auto line = first->lineAt(0);
-                QRectF cursor;
-                QMetaObject::invokeMethod(
-                  textEdit_, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, 0));
-                const auto origin = textEdit_->mapToItem(this, cursor.topLeft()) - first->position() -
-                                    QPointF(line.cursorToX(0), line.y());
-                rectangles = selectionRectangles(
-                  document_, start, end, origin, textEdit_->property("color").value<QColor>(), decorations);
-            }
-        }
+    if (const auto geometry = documentGeometry()) {
+        const auto* editor = textEdit();
+        const int start = editor->property("selectionStart").toInt();
+        const int end = editor->property("selectionEnd").toInt();
+        if (start < end)
+            rectangles = selectionRectangles(
+              geometry->document, start, end, geometry->origin, editor->property("color").value<QColor>(), decorations);
     }
     if (rectangles_ != rectangles || decorations_ != decorations) {
         rectangles_ = std::move(rectangles);
@@ -339,11 +240,4 @@ MarkupSelectionBackground::updatePaintNode(QSGNode* node, UpdatePaintNodeData*)
         child = next;
     }
     return node;
-}
-
-void
-MarkupSelectionBackground::geometryChange(const QRectF& geometry, const QRectF& previous)
-{
-    QQuickItem::geometryChange(geometry, previous);
-    scheduleLayout();
 }

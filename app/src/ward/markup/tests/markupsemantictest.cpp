@@ -95,8 +95,8 @@ class NativeText
         engine.rootContext()->setContextProperty(QStringLiteral("semanticPayload"), textPayload(segment));
         component.setData(R"(
             import QtQuick
-            import Craftward.Markup
-            TextEdit {
+            import Craftward.Components
+            MarkupSelectableText {
                 id: nativeText
                 width: 480
                 font.family: "Helvetica Neue"
@@ -105,14 +105,9 @@ class NativeText
                 selectByMouse: true
                 wrapMode: TextEdit.Wrap
                 textFormat: TextEdit.RichText
-                MarkupTextDocument {
-                    objectName: "adapter"
-                    textDocument: nativeText.textDocument
-                    surface: semanticPayload
-                    font: nativeText.font
-                    codeFont { family: "Menlo"; pixelSize: 16 }
-                    codeBackground: "#eeeeee"
-                }
+                surface: semanticPayload
+                codeFont { family: "Menlo"; pixelSize: 16 }
+                codeBackground: "#eeeeee"
                 function targetAt(position) {
                     const rect = positionToRectangle(position);
                     return linkAt(rect.x + 2, rect.y + rect.height / 2);
@@ -243,6 +238,8 @@ class MarkupSemanticTest : public QObject
     void preservesEmphasisAroundInlineCode();
     void confinesInlineCodeBackgroundToItsText_data();
     void confinesInlineCodeBackgroundToItsText();
+    void decoratesInlineCodeWithoutChangingTextLayout_data();
+    void decoratesInlineCodeWithoutChangingTextLayout();
     void productionSegmentConsumesSemanticPayload();
     void splitsListsAndTablesAtStableBoundaries();
     void placesNestedTablesBelowThePrecedingParagraph();
@@ -484,8 +481,135 @@ MarkupSemanticTest::confinesInlineCodeBackgroundToItsText()
     QCOMPARE(rendered.pixelColor(qRound(sample.x() * pixelRatio), qRound(sample.y() * pixelRatio)), QColor(Qt::white));
     QCOMPARE(formatAt(text.document(), QStringLiteral("Plain")).background().style(), Qt::NoBrush);
     QCOMPARE(formatAt(text.document(), QStringLiteral("text")).background().style(), Qt::NoBrush);
-    QCOMPARE(formatAt(text.document(), QStringLiteral("first")).background().color(), QColor("#eeeeee"));
-    QCOMPARE(formatAt(text.document(), QStringLiteral("second")).background().color(), QColor("#eeeeee"));
+    QCOMPARE(formatAt(text.document(), QStringLiteral("first")).background().style(), Qt::NoBrush);
+    QCOMPARE(formatAt(text.document(), QStringLiteral("second")).background().style(), Qt::NoBrush);
+    QCOMPARE(visualItems(editor, QStringLiteral("markupCodeBackground")).size(), 2);
+}
+
+void
+MarkupSemanticTest::decoratesInlineCodeWithoutChangingTextLayout_data()
+{
+    QTest::addColumn<QString>("source");
+    QTest::addColumn<int>("renderType");
+    QTest::addColumn<bool>("dark");
+    for (const int renderType : { 0, 1 }) {
+        const auto suffix = renderType == 0 ? "-qt" : "-native";
+        QTest::newRow(qPrintable(QStringLiteral("short") + suffix))
+          << QStringLiteral("Before `hello` after.") << renderType << false;
+        QTest::newRow(qPrintable(QStringLiteral("wrapped") + suffix))
+          << QStringLiteral("`some_very_long_identifier_abcdefghijklmnopqrstuvwxyz_0123456789` tail.") << renderType
+          << false;
+        QTest::newRow(qPrintable(QStringLiteral("unicode") + suffix))
+          << QString::fromUtf8("文字 `你好👩‍💻é` and `مرحبا بالعالم`.") << renderType << false;
+        QTest::newRow(qPrintable(QStringLiteral("dark") + suffix))
+          << QStringLiteral("Before `hello` after.") << renderType << true;
+    }
+}
+
+void
+MarkupSemanticTest::decoratesInlineCodeWithoutChangingTextLayout()
+{
+    QFETCH(QString, source);
+    QFETCH(int, renderType);
+    QFETCH(bool, dark);
+    MarkupDocumentModel model;
+    model.reconcileSource(source, Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    NativeText decorated(payload(&model, 0));
+    NativeText reference(payload(&model, 0));
+    QVERIFY2(decorated.object, qPrintable(decorated.component.errorString()));
+    QVERIFY2(reference.object, qPrintable(reference.component.errorString()));
+    auto* editor = qobject_cast<QQuickItem*>(decorated.object.get());
+    auto* plain = qobject_cast<QQuickItem*>(reference.object.get());
+    QVERIFY(editor && plain);
+    QQuickWindow window;
+    const QColor pageColor(dark ? "#18181b" : "#ffffff");
+    const QColor backgroundColor(dark ? "#27272a" : "#eeeeee");
+    window.setColor(pageColor);
+    window.resize(460, 240);
+    for (auto* item : { editor, plain }) {
+        item->setParentItem(window.contentItem());
+        item->setWidth(200);
+        item->setY(16);
+        QVERIFY(item->setProperty("renderType", renderType));
+        QVERIFY(item->setProperty("color", QColor(dark ? "#fafafa" : "#000000")));
+        QVERIFY(item->setProperty("codeBackground", backgroundColor));
+    }
+    editor->setX(16);
+    plain->setX(244);
+    QVERIFY(plain->setProperty("codeVerticalPadding", 0));
+    QVERIFY(plain->setProperty("codeRadius", 0));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(!visualItems(editor, QStringLiteral("markupCodeBackground")).isEmpty());
+    QTRY_COMPARE(visualItems(editor, QStringLiteral("markupCodeBackground")).size(),
+                 visualItems(plain, QStringLiteral("markupCodeBackground")).size());
+
+    const auto verifyLayout = [&] {
+        QCOMPARE(decorated.document()->toPlainText(), reference.document()->toPlainText());
+        for (auto block = decorated.document()->begin(), other = reference.document()->begin(); block.isValid();
+             block = block.next(), other = other.next()) {
+            QVERIFY(other.isValid());
+            QCOMPARE(block.layout()->lineCount(), other.layout()->lineCount());
+            for (int i = 0; i < block.layout()->lineCount(); ++i) {
+                const auto line = block.layout()->lineAt(i);
+                const auto original = other.layout()->lineAt(i);
+                QCOMPARE(line.textStart(), original.textStart());
+                QCOMPARE(line.textLength(), original.textLength());
+                QCOMPARE(line.height(), original.height());
+                QCOMPARE(line.ascent(), original.ascent());
+                QCOMPARE(line.glyphRuns(), original.glyphRuns());
+            }
+        }
+        const auto backgrounds = visualItems(editor, QStringLiteral("markupCodeBackground"));
+        const auto originals = visualItems(plain, QStringLiteral("markupCodeBackground"));
+        QCOMPARE(backgrounds.size(), originals.size());
+        for (int i = 0; i < backgrounds.size(); ++i) {
+            QCOMPARE(backgrounds.at(i)->x(), originals.at(i)->x());
+            QCOMPARE(backgrounds.at(i)->width(), originals.at(i)->width());
+            QCOMPARE(backgrounds.at(i)->height(), originals.at(i)->height() + 2);
+            QVERIFY(backgrounds.at(i)->y() >= 0);
+            QVERIFY(backgrounds.at(i)->y() + backgrounds.at(i)->height() <= editor->height() + 0.01);
+            // Top padding shifts the text down; the background extends back up by one pixel.
+            QCOMPARE(backgrounds.at(i)->y(), originals.at(i)->y());
+        }
+    };
+    verifyLayout();
+
+    const QImage rendered = window.grabWindow();
+    QVERIFY(!rendered.isNull());
+    const auto* first = visualItems(editor, QStringLiteral("markupCodeBackground")).first();
+    const auto corner = first->mapToScene(QPointF(0.25, 0.25));
+    const auto top = first->mapToScene(QPointF(first->width() / 2, 0.5));
+    const qreal ratio = rendered.width() / qreal(window.width());
+    const auto pixelAt = [&](const QPointF& point) {
+        return rendered.pixelColor(qFloor(point.x() * ratio), qFloor(point.y() * ratio));
+    };
+    QCOMPARE(pixelAt(corner), pageColor);
+    QCOMPARE(pixelAt(top), backgroundColor);
+    const auto artifactDirectory = qEnvironmentVariable("CRAFTWARD_TEST_ARTIFACT_DIR");
+    if (!artifactDirectory.isEmpty())
+        QVERIFY(
+          rendered.save(artifactDirectory +
+                        QStringLiteral("/inline-style-%1.png").arg(QString::fromLatin1(QTest::currentDataTag()))));
+
+    QVERIFY(QMetaObject::invokeMethod(editor, "selectAll"));
+    QCOMPARE(editor->property("selectedText").toString(), decorated.document()->toPlainText());
+    if (!artifactDirectory.isEmpty())
+        QVERIFY(window.grabWindow().save(
+          artifactDirectory +
+          QStringLiteral("/inline-style-selected-%1.png").arg(QString::fromLatin1(QTest::currentDataTag()))));
+
+    editor->setWidth(120);
+    plain->setWidth(120);
+    QTest::qWait(30);
+    verifyLayout();
+    QVERIFY(QMetaObject::invokeMethod(editor, "deselect"));
+    const auto replacement = markupLiteralPart(QStringLiteral("plain"), QStringLiteral("Plain replacement"));
+    QVERIFY(editor->setProperty("surface", textPayload(replacement)));
+    QTRY_VERIFY(visualItems(editor, QStringLiteral("markupCodeBackground")).isEmpty());
+    QCOMPARE(editor->property("topPadding").toReal(), qreal(0));
+    QCOMPARE(editor->property("bottomPadding").toReal(), qreal(0));
 }
 
 void

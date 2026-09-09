@@ -9,11 +9,12 @@ QtObject {
     signal rendered
     property var textDocument
     property var surface
+    readonly property bool hasInlineCode: false
     property font font
     property font codeFont
     property color textColor
     property color linkColor
-    property color codeBackground
+    property color annotationBackground
 
     function documentPosition(surfacePosition) {
         return surfacePosition;

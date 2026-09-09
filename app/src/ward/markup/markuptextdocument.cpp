@@ -55,6 +55,16 @@ MarkupTextDocument::setSurface(const QVariant& surface)
     emit surfaceChanged();
 }
 
+bool
+MarkupTextDocument::hasInlineCode() const
+{
+    for (const auto& block : surface_.value<MarkupTextSurface>().blocks)
+        for (const auto& run : block.runs)
+            if (run.code && !run.text.isEmpty())
+                return true;
+    return false;
+}
+
 void
 MarkupTextDocument::classBegin()
 {
@@ -114,12 +124,13 @@ MarkupTextDocument::render()
             if (run.code) {
                 format.setFontFamilies(codeFont_.families());
                 format.setFontFixedPitch(true);
-                format.setBackground(codeBackground_);
+                // The background item decorates native glyph ranges without changing the text.
+                format.setProperty(InlineCodeProperty, true);
             }
             if (run.annotation || format.isAnchor())
                 format.setForeground(linkColor_);
             if (run.annotation)
-                format.setBackground(codeBackground_);
+                format.setBackground(annotationBackground_);
             transaction.insertText(run.text, format);
         }
     }

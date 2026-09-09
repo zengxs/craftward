@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QQmlParserStatus>
 #include <QQuickTextDocument>
+#include <QTextFormat>
 #include <QVariant>
 #include <QtQmlIntegration/qqmlintegration.h>
 
@@ -22,19 +23,23 @@ class MarkupTextDocument
     Q_INTERFACES(QQmlParserStatus)
     Q_PROPERTY(QQuickTextDocument* textDocument READ textDocument WRITE setTextDocument NOTIFY textDocumentChanged)
     Q_PROPERTY(QVariant surface READ surface WRITE setSurface NOTIFY surfaceChanged)
+    Q_PROPERTY(bool hasInlineCode READ hasInlineCode NOTIFY surfaceChanged)
     Q_PROPERTY(QFont font MEMBER font_ NOTIFY styleChanged)
     Q_PROPERTY(QFont codeFont MEMBER codeFont_ NOTIFY styleChanged)
     Q_PROPERTY(QColor textColor MEMBER textColor_ NOTIFY styleChanged)
     Q_PROPERTY(QColor linkColor MEMBER linkColor_ NOTIFY styleChanged)
-    Q_PROPERTY(QColor codeBackground MEMBER codeBackground_ NOTIFY styleChanged)
+    Q_PROPERTY(QColor annotationBackground MEMBER annotationBackground_ NOTIFY styleChanged)
 
   public:
+    static constexpr int InlineCodeProperty = QTextFormat::UserProperty;
+
     explicit MarkupTextDocument(QObject* parent = nullptr);
 
     [[nodiscard]] QQuickTextDocument* textDocument() const;
     void setTextDocument(QQuickTextDocument* document);
     [[nodiscard]] QVariant surface() const;
     void setSurface(const QVariant& surface);
+    [[nodiscard]] bool hasInlineCode() const;
     Q_INVOKABLE [[nodiscard]] QVariantMap endpointAt(int position) const;
     Q_INVOKABLE [[nodiscard]] QVariantMap wordAt(int position) const;
     Q_INVOKABLE [[nodiscard]] int documentPosition(int surfacePosition) const;
@@ -66,6 +71,6 @@ class MarkupTextDocument
     QFont codeFont_;
     QColor textColor_ = Qt::black;
     QColor linkColor_ = Qt::blue;
-    QColor codeBackground_ = Qt::lightGray;
+    QColor annotationBackground_ = Qt::lightGray;
     bool complete_ = true;
 };
