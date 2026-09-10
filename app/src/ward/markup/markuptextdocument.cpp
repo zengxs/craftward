@@ -3,6 +3,7 @@
 
 #include "ward/markup/markuptextdocument.h"
 
+#include "markuplistmetrics.h"
 #include "markuprenderplan.h"
 
 #include <QFontInfo>
@@ -109,6 +110,7 @@ MarkupTextDocument::render()
     transaction.setCharFormat(QTextCharFormat());
     document->setDefaultFont(font_);
     document->setDocumentMargin(0);
+    document->setIndentWidth(listIndentWidth_ > 0 ? listIndentWidth_ : markupListIndentWidth(surface_, font_));
     const auto surface = surface_.value<MarkupTextSurface>();
     QHash<QString, QTextList*> lists;
     bool first = true;
@@ -126,6 +128,16 @@ MarkupTextDocument::render()
         else
             transaction.insertBlock(blockFormat, QTextCharFormat());
         first = false;
+        QTextCharFormat markerFormat;
+        // Keep native numbering and indentation; MarkupListMarkers draws the marker.
+        if (!block.listKey.isEmpty())
+            markerFormat.setForeground(Qt::transparent);
+        if (!block.listKey.isEmpty() && block.list.style() == QTextListFormat::ListDisc &&
+            blockFormat.marker() == QTextBlockFormat::MarkerType::NoMarker) {
+            // Enlarge the bullet without shifting its baseline with a larger font.
+            markerFormat.setFontWeight(QFont::Black);
+        }
+        transaction.setBlockCharFormat(markerFormat);
         if (!block.listKey.isEmpty()) {
             auto* list = lists.value(block.listKey);
             if (list)

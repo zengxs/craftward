@@ -166,6 +166,30 @@ Item {
             compare(row.implicitHeight, retainedHeight);
         }
 
+        function test_listContinuationUsesItsItemSpacing() {
+            for (const spacing of [0, 10]) {
+                const row = createViewport([messageRow({
+                        lastBlockInEntry: false,
+                        renderParts: [
+                            {
+                                kind: "text",
+                                spacingAfter: spacing
+                            }
+                        ]
+                    })]);
+                compare(row.semanticBlockSpacing, spacing);
+            }
+            const last = createViewport([messageRow({
+                    renderParts: [
+                        {
+                            kind: "text",
+                            spacingAfter: 10
+                        }
+                    ]
+                })]);
+            compare(last.semanticBlockSpacing, 0);
+        }
+
         function test_latestRunningEvidenceSuppressesActionsButNotOlderMessages() {
             suite.hasRunningEvidence = true;
             let row = createViewport([messageRow()]);

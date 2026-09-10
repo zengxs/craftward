@@ -15,6 +15,7 @@
 #include <QClipboard>
 #include <QFontMetricsF>
 #include <QGuiApplication>
+#include <QPainterPath>
 #include <QPersistentModelIndex>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -244,6 +245,19 @@ class MarkupSemanticTest : public QObject
     void decoratesInlineCodeWithoutChangingTextLayout();
     void productionSegmentConsumesSemanticPayload();
     void splitsListsAndTablesAtStableBoundaries();
+    void distinguishesListSpacing_data();
+    void distinguishesListSpacing();
+    void sizesListIndentationAndNestedMarkers();
+    void enlargesDiscMarkersWithoutMovingText();
+    void alignsListMarkersWithInlineText_data();
+    void alignsListMarkersWithInlineText();
+    void preservesListLayoutAcrossSegments_data();
+    void preservesListLayoutAcrossSegments();
+    void preservesListSpacingAcrossEmptySegments_data();
+    void preservesListSpacingAcrossEmptySegments();
+    void alignsNestedListTablesWithText();
+    void preservesBlockSpacingBeforeLists_data();
+    void preservesBlockSpacingBeforeLists();
     void placesNestedTablesBelowThePrecedingParagraph();
     void preservesCodeAndUnsupportedSource();
     void keepsUnchangedTextSelectionAndReleasesDocuments();
@@ -757,6 +771,434 @@ MarkupSemanticTest::splitsListsAndTablesAtStableBoundaries()
     QTRY_COMPARE(model->rowCount(), 10);
     QCOMPARE(payload(model, 1), firstBody);
     QCOMPARE(changed.size(), 0);
+}
+
+void
+MarkupSemanticTest::distinguishesListSpacing_data()
+{
+    QTest::addColumn<QString>("source");
+    QTest::addColumn<bool>("loose");
+    QTest::newRow("tight-bullets") << QStringLiteral("- Alpha\n- Beta") << false;
+    QTest::newRow("loose-bullets") << QStringLiteral("- Alpha\n\n- Beta") << true;
+    QTest::newRow("tight-numbers") << QStringLiteral("1. Alpha\n2. Beta") << false;
+    QTest::newRow("loose-numbers") << QStringLiteral("1. Alpha\n\n2. Beta") << true;
+    QTest::newRow("tight-tasks") << QStringLiteral("- [ ] Alpha\n- [x] Beta") << false;
+    QTest::newRow("loose-tasks") << QStringLiteral("- [ ] Alpha\n\n- [x] Beta") << true;
+}
+
+void
+MarkupSemanticTest::distinguishesListSpacing()
+{
+    QFETCH(QString, source);
+    QFETCH(bool, loose);
+    MarkupDocumentModel model;
+    model.reconcileSource(source, Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    const auto semantic =
+      model.data(model.index(0, 0), MarkupDocumentModel::SemanticSegmentRole).value<SemanticDocument>();
+    const auto nodes = semantic.blocks().first().nodes();
+    const bool hasItemParagraph = std::any_of(nodes.cbegin(), nodes.cend(), [&](const SemanticNode& node) {
+        return node.hasContainer() &&
+               node.container() == ContainerKindGadget::ContainerKind::CONTAINER_KIND_PARAGRAPH &&
+               node.hasParentIndex() && nodes.at(node.parentIndex()).hasContainer() &&
+               nodes.at(node.parentIndex()).container() == ContainerKindGadget::ContainerKind::CONTAINER_KIND_LIST_ITEM;
+    });
+    QCOMPARE(hasItemParagraph, loose);
+    NativeText fixture(payload(&model, 0));
+    QVERIFY2(fixture.object, qPrintable(fixture.component.errorString()));
+    auto* document = fixture.document();
+    QCOMPARE(document->blockCount(), 2);
+    const auto first = document->firstBlock();
+    const auto second = first.next();
+    QCOMPARE(first.text(), QStringLiteral("Alpha"));
+    QCOMPARE(second.text(), QStringLiteral("Beta"));
+    QCOMPARE(first.blockFormat().topMargin(), 0);
+    QCOMPARE(second.blockFormat().topMargin(), loose ? 10 : 0);
+    if (source.contains(QStringLiteral("[ ]"))) {
+        QCOMPARE(first.blockFormat().marker(), QTextBlockFormat::MarkerType::Unchecked);
+        QCOMPARE(second.blockFormat().marker(), QTextBlockFormat::MarkerType::Checked);
+    }
+    model.selection()->selectAll();
+    QCOMPARE(model.selection()->text(), QStringLiteral("Alpha\nBeta"));
+}
+
+void
+MarkupSemanticTest::sizesListIndentationAndNestedMarkers()
+{
+    MarkupDocumentModel model;
+    model.reconcileSource(QStringLiteral("- Alpha\n  - Beta\n    - Gamma\n- Delta"), Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    NativeText fixture(payload(&model, 0));
+    QVERIFY2(fixture.object, qPrintable(fixture.component.errorString()));
+    auto* document = fixture.document();
+    QCOMPARE(document->blockCount(), 4);
+    QCOMPARE(document->indentWidth(), 32);
+    const auto first = document->firstBlock();
+    QCOMPARE(first.textList()->format().style(), QTextListFormat::ListDisc);
+    QCOMPARE(first.next().textList()->format().style(), QTextListFormat::ListCircle);
+    QCOMPARE(first.next().next().textList()->format().style(), QTextListFormat::ListSquare);
+    QCOMPARE(first.next().next().next().textList()->format().style(), QTextListFormat::ListDisc);
+    auto font = fixture.object->property("font").value<QFont>();
+    font.setPixelSize(24);
+    QVERIFY(fixture.object->setProperty("font", font));
+    QTRY_COMPARE(document->indentWidth(), 48);
+    document->documentLayout()->documentSize();
+    QCOMPARE(document->firstBlock().layout()->lineAt(0).x(), 48);
+    QCOMPARE(document->firstBlock().next().layout()->lineAt(0).x(), 96);
+}
+
+void
+MarkupSemanticTest::enlargesDiscMarkersWithoutMovingText()
+{
+    MarkupDocumentModel model;
+    model.reconcileSource(QStringLiteral("- Alpha 中文列表：长文本用于检查换行位置与选区是否稳定。\n"
+                                         "  - Beta\n    - Gamma\n  1. Delta\n"
+                                         "- [ ] Task\n- [x] Done\n- Omega"),
+                          Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    NativeText actual(payload(&model, 0));
+    NativeText reference(payload(&model, 0));
+    QVERIFY(actual.object && reference.object);
+    const auto glyphBounds = [](const QFont& font) {
+        QTextLayout layout(QString(QChar(0x2022)), font);
+        layout.beginLayout();
+        const auto line = layout.createLine();
+        layout.endLayout();
+        const auto run = layout.glyphRuns().first();
+        return run.rawFont().pathForGlyph(run.glyphIndexes().first()).boundingRect().translated(0, line.ascent());
+    };
+    for (const int size : { 14, 24 }) {
+        auto font = QGuiApplication::font();
+        font.setPixelSize(size);
+        for (const auto* fixture : { &actual, &reference }) {
+            QVERIFY(fixture->object->setProperty("width", 260));
+            QVERIFY(fixture->object->setProperty("font", font));
+        }
+        auto* document = actual.document();
+        auto* baseline = reference.document();
+        for (auto block = baseline->begin(); block.isValid(); block = block.next()) {
+            QTextCursor cursor(block);
+            cursor.setBlockCharFormat(QTextCharFormat());
+        }
+        QCOMPARE(document->blockCount(), 7);
+        QCOMPARE(document->toPlainText(), baseline->toPlainText());
+        QCOMPARE(document->documentLayout()->documentSize(), baseline->documentLayout()->documentSize());
+        auto expected = baseline->begin();
+        for (auto block = document->begin(); block.isValid(); block = block.next(), expected = expected.next()) {
+            const auto markerFont = block.charFormat().font();
+            const auto originalFont = expected.charFormat().font();
+            const bool disc = block.textList()->format().style() == QTextListFormat::ListDisc &&
+                              block.blockFormat().marker() == QTextBlockFormat::MarkerType::NoMarker;
+            if (disc) {
+                const auto bounds = glyphBounds(markerFont);
+                const auto original = glyphBounds(originalFont);
+                QVERIFY(bounds.width() >= size * 0.28 && bounds.width() <= size * 0.34);
+                QVERIFY(bounds.width() > original.width() * 1.4);
+                QVERIFY(qAbs(bounds.center().y() - original.center().y()) < 0.5);
+            } else {
+                QCOMPARE(markerFont, originalFont);
+            }
+            QCOMPARE(block.layout()->position(), expected.layout()->position());
+            QCOMPARE(block.layout()->lineCount(), expected.layout()->lineCount());
+            for (int i = 0; i < block.layout()->lineCount(); ++i) {
+                QCOMPARE(block.layout()->lineAt(i).rect(), expected.layout()->lineAt(i).rect());
+                QCOMPARE(block.layout()->lineAt(i).ascent(), expected.layout()->lineAt(i).ascent());
+            }
+            auto originalRun = expected.begin();
+            for (auto run = block.begin(); !run.atEnd(); ++run, ++originalRun)
+                QCOMPARE(run.fragment().charFormat(), originalRun.fragment().charFormat());
+        }
+        QVERIFY(QMetaObject::invokeMethod(actual.object.get(), "selectAll"));
+        QCOMPARE(actual.object->property("selectedText").toString().replace(QChar::ParagraphSeparator, QChar::LineFeed),
+                 document->toPlainText());
+    }
+    model.selection()->selectAll();
+    QCOMPARE(model.selection()->text(), actual.document()->toPlainText());
+}
+
+void
+MarkupSemanticTest::alignsListMarkersWithInlineText_data()
+{
+    QTest::addColumn<int>("renderType");
+    QTest::newRow("qt") << 0;
+    QTest::newRow("native") << 1;
+}
+
+void
+MarkupSemanticTest::alignsListMarkersWithInlineText()
+{
+    QFETCH(int, renderType);
+    MarkupDocumentModel listModel;
+    MarkupDocumentModel inlineModel;
+    listModel.reconcileSource(QStringLiteral("1. **排版**：计算文字宽度"), Format::Markdown);
+    inlineModel.reconcileSource(QStringLiteral("1\\. **排版**：计算文字宽度"), Format::Markdown);
+    QTRY_COMPARE(listModel.rowCount(), 1);
+    QTRY_COMPARE(inlineModel.rowCount(), 1);
+    QQuickWindow window;
+    window.setColor(Qt::white);
+    window.resize(600, 180);
+    NativeText actual(payload(&listModel, 0));
+    NativeText reference(payload(&inlineModel, 0));
+    QVERIFY(actual.object && reference.object);
+    auto* editor = qobject_cast<QQuickItem*>(actual.object.get());
+    auto* inlineEditor = qobject_cast<QQuickItem*>(reference.object.get());
+    for (auto* item : { editor, inlineEditor }) {
+        item->setParentItem(window.contentItem());
+        QVERIFY(item->setProperty("width", 220));
+        QVERIFY(item->setProperty("renderType", renderType));
+        QVERIFY(item->setProperty("color", QColor(Qt::black)));
+    }
+    editor->setPosition(QPointF(20, 20));
+    inlineEditor->setPosition(QPointF(320, 20));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const auto grab = [&] {
+        QCoreApplication::processEvents();
+        return window.grabWindow();
+    };
+    const auto inkBounds = [](const QImage& image, const QRect& region) {
+        QRect result;
+        for (int y = region.top(); y <= region.bottom(); ++y)
+            for (int x = region.left(); x <= region.right(); ++x)
+                if (image.pixelColor(x, y).value() < 128)
+                    result |= QRect(x, y, 1, 1);
+        return result;
+    };
+    for (const int size : { 14, 24 }) {
+        auto font = QGuiApplication::font();
+        font.setPixelSize(size);
+        QVERIFY(editor->setProperty("font", font));
+        QVERIFY(inlineEditor->setProperty("font", font));
+        const auto image = grab();
+        QVERIFY(!image.isNull());
+        const qreal dpr = image.width() / qreal(window.width());
+        const auto first = actual.document()->firstBlock().layout()->lineAt(0);
+        const auto inlineFirst = reference.document()->firstBlock().layout()->lineAt(0);
+        const auto pixels = [dpr](const QRectF& rect) {
+            return QRectF(rect.topLeft() * dpr, rect.size() * dpr).toAlignedRect();
+        };
+        const auto gutter = pixels(QRectF(editor->position(), QSizeF(first.x() - 1, first.rect().bottom())));
+        const auto inlineNumber =
+          pixels(QRectF(inlineEditor->position(), QSizeF(inlineFirst.cursorToX(2), inlineFirst.rect().bottom())));
+        const auto markerInk = inkBounds(image, gutter);
+        const auto inlineInk = inkBounds(image, inlineNumber);
+        QVERIFY(!markerInk.isEmpty() && !inlineInk.isEmpty());
+        // Inline numbers already share the fallback glyphs' baseline through Qt's layout.
+        QVERIFY(qAbs(markerInk.top() - inlineInk.top()) <= 1);
+        QVERIFY(qAbs(markerInk.bottom() - inlineInk.bottom()) <= 1);
+        const qreal gap = editor->x() + first.x() - (markerInk.right() + 1) / dpr;
+        QVERIFY(gap >= size * 0.65 && gap <= size * 0.9);
+        QVERIFY(markerInk.left() >= editor->x() * dpr);
+
+        // Selection must neither move the decoration nor revive the transparent native marker.
+        QVERIFY(QMetaObject::invokeMethod(editor, "selectAll"));
+        QCOMPARE(grab().copy(gutter), image.copy(gutter));
+        QCOMPARE(editor->property("selectedText").toString(), actual.document()->toPlainText());
+        QVERIFY(QMetaObject::invokeMethod(editor, "deselect"));
+        const auto markers = visualItems(editor, QStringLiteral("markupListMarkers"));
+        QCOMPARE(markers.size(), 1);
+        markers.first()->setVisible(false);
+        QVERIFY(inkBounds(grab(), gutter).isEmpty());
+        markers.first()->setVisible(true);
+        QCOMPARE(grab().copy(gutter), image.copy(gutter));
+    }
+}
+
+void
+MarkupSemanticTest::preservesListLayoutAcrossSegments_data()
+{
+    QTest::addColumn<bool>("loose");
+    QTest::newRow("tight") << false;
+    QTest::newRow("loose") << true;
+}
+
+void
+MarkupSemanticTest::preservesListLayoutAcrossSegments()
+{
+    QFETCH(bool, loose);
+    const auto sourceFor = [&](int count) {
+        QStringList items;
+        for (int i = 0; i < count; ++i)
+            items.append(QStringLiteral("%1. Item %2").arg(9980 + i).arg(i));
+        return items.join(loose ? QStringLiteral("\n\n") : QStringLiteral("\n"));
+    };
+    MarkupDocumentModel model;
+    model.reconcileSource(sourceFor(20), Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 2);
+    SelectionScene scene(&model);
+    QVERIFY2(scene.view, qPrintable(scene.component.errorString()));
+    scene.window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&scene.window));
+    auto* editor = scene.editorContaining(QStringLiteral("Item 0"));
+    QVERIFY(editor);
+    auto* document = editor->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+    const auto oldIndent = document->indentWidth();
+    model.selection()->selectAll();
+    const auto selected = model.selection()->text();
+    QTRY_VERIFY(!editor->property("selectedText").toString().isEmpty());
+    const auto localSelection = editor->property("selectedText").toString();
+    QSignalSpy reconciled(&model, &MarkupDocumentModel::documentReconciled);
+    model.reconcileSource(sourceFor(21), Format::Markdown);
+    QTRY_COMPARE(reconciled.size(), 1);
+    // Updated render parts may rematerialize the selected text surface.
+    editor = scene.editorContaining(QStringLiteral("Item 0"));
+    QVERIFY(editor);
+    document = editor->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+    QVERIFY(document->indentWidth() > oldIndent);
+    QTRY_COMPARE(editor->property("selectedText").toString(), localSelection);
+    QCOMPARE(model.selection()->text(), selected);
+    const QFontMetricsF metrics(document->defaultFont());
+    QVERIFY(document->indentWidth() >= metrics.horizontalAdvance(QStringLiteral("10000. ")));
+    for (int row = 0; row < model.rowCount(); ++row) {
+        const auto parts = payload(&model, row).toList();
+        QCOMPARE(parts.last().toMap().value(QStringLiteral("spacingAfter"), 8).toInt(),
+                 row == 0 ? (loose ? 10 : 0) : 8);
+        NativeText fixture(payload(&model, row));
+        QVERIFY2(fixture.object, qPrintable(fixture.component.errorString()));
+        QCOMPARE(fixture.document()->indentWidth(), document->indentWidth());
+        QCOMPARE(fixture.document()->firstBlock().textList()->itemText(fixture.document()->firstBlock()),
+                 QStringLiteral("%1.").arg(9980 + row * 16));
+    }
+}
+
+void
+MarkupSemanticTest::preservesListSpacingAcrossEmptySegments_data()
+{
+    QTest::addColumn<bool>("ordered");
+    QTest::addColumn<bool>("loose");
+    QTest::newRow("tight-numbers") << true << false;
+    QTest::newRow("loose-numbers") << true << true;
+    QTest::newRow("tight-bullets") << false << false;
+    QTest::newRow("loose-bullets") << false << true;
+}
+
+void
+MarkupSemanticTest::preservesListSpacingAcrossEmptySegments()
+{
+    QFETCH(bool, ordered);
+    QFETCH(bool, loose);
+    QStringList items;
+    for (int i = 1; i <= 32; ++i)
+        items.append(ordered ? QStringLiteral("%1.").arg(i) : QStringLiteral("-"));
+    const auto separator = loose ? QStringLiteral("\n\n") : QStringLiteral("\n");
+    MarkupDocumentModel model;
+    model.reconcileSource(items.join(separator), Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 2);
+    // Appending text reveals the complete list's loose paragraph structure.
+    items.append(ordered ? QStringLiteral("33. Content") : QStringLiteral("- Content"));
+    model.reconcileSource(items.join(separator), Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 3);
+    const qreal spacing = loose ? 10 : 0;
+    for (int row = 0; row < model.rowCount(); ++row) {
+        const auto parts = payload(&model, row).toList();
+        QCOMPARE(parts.last().toMap().value(QStringLiteral("spacingAfter"), 8).toReal(), row < 2 ? spacing : 8);
+        NativeText fixture(payload(&model, row));
+        QVERIFY2(fixture.object, qPrintable(fixture.component.errorString()));
+        const auto* document = fixture.document();
+        QCOMPARE(document->blockCount(), row < 2 ? 16 : 1);
+        for (auto block = document->begin(); block.isValid(); block = block.next())
+            QCOMPARE(block.blockFormat().topMargin(), block == document->firstBlock() ? 0 : spacing);
+        if (ordered)
+            QCOMPARE(document->firstBlock().textList()->itemText(document->firstBlock()),
+                     QStringLiteral("%1.").arg(row * 16 + 1));
+    }
+    model.selection()->selectAll();
+    QCOMPARE(model.selection()->text(), QString(32, QLatin1Char('\n')) + QStringLiteral("Content"));
+}
+
+void
+MarkupSemanticTest::alignsNestedListTablesWithText()
+{
+    MarkupDocumentModel model;
+    model.reconcileSource(QStringLiteral("12345. Parent\n\n"
+                                         "       Continuation paragraph.\n\n"
+                                         "       | A | B |\n"
+                                         "       | --- | --- |\n"
+                                         "       | one | two |\n\n"
+                                         "12346. Next item.\n"),
+                          Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("semanticPayload"), payload(&model, 0));
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import Craftward.Components
+        MarkupSegmentView {
+            width: 480
+            codeBlock: false
+            segmentText: ""
+            language: ""
+            font.pixelSize: 16
+            renderParts: semanticPayload
+        }
+    )",
+                      QUrl(QStringLiteral("qrc:/NestedListTableTest.qml")));
+    const std::unique_ptr<QQuickItem> view(qobject_cast<QQuickItem*>(component.create()));
+    QVERIFY2(view, qPrintable(component.errorString()));
+    const auto editors = visualItems(view.get(), QStringLiteral("markupProseText"));
+    auto* paragraph = editors.value(0);
+    auto* next = editors.value(editors.size() - 1);
+    auto* table = visualItems(view.get(), QStringLiteral("markupTable")).value(0);
+    QVERIFY(paragraph && next && table);
+    QCOMPARE(next->property("textDocument").value<QQuickTextDocument*>()->textDocument()->toPlainText(),
+             QStringLiteral("Next item."));
+    auto* document = paragraph->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+    for (const int size : { 16, 24 }) {
+        auto font = view->property("font").value<QFont>();
+        font.setPixelSize(size);
+        QVERIFY(view->setProperty("font", font));
+        QCoreApplication::processEvents();
+        document->documentLayout()->documentSize();
+        const qreal indent = document->firstBlock().layout()->lineAt(0).x();
+        QVERIFY(indent > size * 2);
+        QCOMPARE(document->firstBlock().next().layout()->lineAt(0).x(), indent);
+        QTRY_COMPARE(table->mapToItem(view.get(), QPointF()).x(), indent);
+        QTRY_COMPARE(next->mapToItem(view.get(), QPointF()).y() -
+                       table->mapToItem(view.get(), QPointF(0, table->height())).y(),
+                     10);
+    }
+}
+
+void
+MarkupSemanticTest::preservesBlockSpacingBeforeLists_data()
+{
+    QTest::addColumn<QString>("source");
+    QTest::addColumn<QString>("followingText");
+    QTest::addColumn<qreal>("gap");
+    QTest::newRow("quoted-table-then-tight-list")
+      << QStringLiteral("> | A |\n> | --- |\n> | B |\n>\n> - First\n> - Second") << QStringLiteral("First") << qreal(8);
+    QTest::newRow("quoted-table-then-loose-list")
+      << QStringLiteral("> | A |\n> | --- |\n> | B |\n>\n> - First\n>\n> - Second") << QStringLiteral("First")
+      << qreal(8);
+    QTest::newRow("table-then-nested-list")
+      << QStringLiteral("- Parent\n\n  | A |\n  | --- |\n  | B |\n\n  - Nested\n\n- Next") << QStringLiteral("Nested")
+      << qreal(8);
+    QTest::newRow("table-then-sibling-item")
+      << QStringLiteral("- Parent\n\n  | A |\n  | --- |\n  | B |\n\n- Next") << QStringLiteral("Next") << qreal(10);
+}
+
+void
+MarkupSemanticTest::preservesBlockSpacingBeforeLists()
+{
+    QFETCH(QString, source);
+    QFETCH(QString, followingText);
+    QFETCH(qreal, gap);
+    MarkupDocumentModel model;
+    model.reconcileSource(source, Format::Markdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    SelectionScene scene(&model);
+    QVERIFY2(scene.view, qPrintable(scene.component.errorString()));
+    scene.window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&scene.window));
+    auto* following = scene.editorContaining(followingText);
+    const auto tables = visualItems(scene.view.get(), QStringLiteral("markupTable"));
+    QVERIFY(following);
+    QCOMPARE(tables.size(), 1);
+    auto* table = tables.first();
+    QTRY_COMPARE(following->mapToItem(scene.view.get(), QPointF()).y() -
+                   table->mapToItem(scene.view.get(), QPointF(0, table->height())).y(),
+                 gap);
 }
 
 void

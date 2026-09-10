@@ -18,6 +18,7 @@ TextEdit {
     property bool preserveSelectionColors: false
     property font codeFont: font
     property real lineHeightScale: Components.Typography.proseLineHeightScale
+    property real listIndentWidth: MarkupListMetrics.indentWidth(surface, font)
     property color linkColor: "blue"
     property color codeBackground: Theme.inlineCodeSurface
     property real codeVerticalPadding: 1
@@ -69,6 +70,12 @@ TextEdit {
         cursorShape: root.linkAt(point.position.x, point.position.y) ? Qt.PointingHandCursor : Qt.IBeamCursor
     }
 
+    MarkupListMarkers {
+        objectName: "markupListMarkers"
+        anchors.fill: parent
+        textEdit: root
+    }
+
     MarkupCodeBackground {
         id: codeBackgrounds
         objectName: "markupCodeBackgrounds"
@@ -114,6 +121,7 @@ TextEdit {
         font: root.font
         codeFont: root.codeFont
         lineHeightScale: root.lineHeightScale
+        listIndentWidth: root.listIndentWidth
         textColor: root.color
         linkColor: root.linkColor
         // Annotation labels use the document's native character background.

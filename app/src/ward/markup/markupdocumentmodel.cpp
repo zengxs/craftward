@@ -53,7 +53,8 @@ decodedText(const SemanticBlock& block)
 }
 
 // Split at structural boundaries. The copied outer container describes only this
-// segment, so an appended sibling does not invalidate earlier segment payloads.
+// segment, so an appended sibling does not invalidate earlier semantic payloads.
+// List-wide marker measurements can still update their render parts.
 QList<SemanticBlock>
 splitBlock(const SemanticBlock& block)
 {
@@ -213,6 +214,10 @@ MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocu
         return result;
     }
 
+    // Preserve list-wide marker width and root item spacing before segmentation.
+    QHash<QString, MarkupListContext> listContexts;
+    for (const auto& block : document.blocks())
+        listContexts.insert(block.blockId(), markupListContext(block));
     QList<SemanticBlock> group;
     quint64 groupStart = 0;
     const auto flushGroup = [&] {
@@ -231,8 +236,10 @@ MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocu
         const auto nodes = group.first().nodes();
         if (nodes.first().hasList() || nodes.first().hasTable())
             id += QLatin1Char('/') + nodes.at(1).nodeId();
-        result.segments.append(Segment{
-          .id = id, .text = text, .semantic = QVariant::fromValue(payload), .parts = markupRenderParts(payload) });
+        result.segments.append(Segment{ .id = id,
+                                        .text = text,
+                                        .semantic = QVariant::fromValue(payload),
+                                        .parts = markupRenderParts(payload, listContexts) });
         group.clear();
     };
     for (const auto& block : document.blocks()) {
@@ -256,8 +263,16 @@ MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocu
                 if (group.isEmpty())
                     groupStart = part.source().start();
                 group.append(part);
-                if (structuredGroup)
+                if (structuredGroup) {
                     flushGroup();
+                    if (root.hasList() && &part != &parts.last()) {
+                        auto& renderParts = result.segments.last().parts;
+                        auto lastPart = renderParts.last().toMap();
+                        lastPart.insert(QStringLiteral("spacingAfter"),
+                                        listContexts.value(block.blockId()).rootItemSpacing);
+                        renderParts.last() = lastPart;
+                    }
+                }
                 continue;
             } else {
                 flushGroup();

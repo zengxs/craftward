@@ -5,6 +5,7 @@
 
 #include "document.qpb.h"
 
+#include <QHash>
 #include <QTextFormat>
 #include <QVariant>
 
@@ -33,6 +34,7 @@ struct MarkupTextBlock
 struct MarkupTextSurface
 {
     QString separator = QStringLiteral("\n");
+    int listNumberDigits = 0;
     QList<MarkupTextBlock> blocks;
     [[nodiscard]] QList<MarkupTextRun> selectionRuns() const;
     [[nodiscard]] QString text() const;
@@ -40,8 +42,22 @@ struct MarkupTextSurface
 };
 Q_DECLARE_METATYPE(MarkupTextSurface)
 
+/// Complete-block list values retained when a top-level list is split.
+struct MarkupListContext
+{
+    int numberDigits = 0;
+    qreal rootItemSpacing = 0;
+};
+
+[[nodiscard]] MarkupListContext
+markupListContext(const ward::markup::v1::SemanticBlock& block);
 [[nodiscard]] QVariantList
-markupRenderParts(const ward::markup::v1::SemanticDocument& document);
+markupRenderParts(const ward::markup::v1::SemanticDocument& document,
+                  const QHash<QString, MarkupListContext>& listContexts = {});
+[[nodiscard]] int
+markupListNumberDigits(const ward::markup::v1::SemanticBlock& block);
+[[nodiscard]] qreal
+markupListItemSpacing(const QList<ward::markup::v1::SemanticNode>& nodes, qsizetype listIndex = 0);
 [[nodiscard]] QVariantList
 markupLiteralPart(const QString& key, const QString& text);
 [[nodiscard]] QList<MarkupTextSurface>

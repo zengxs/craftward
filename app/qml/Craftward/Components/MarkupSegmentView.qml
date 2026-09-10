@@ -20,6 +20,7 @@ Control {
     property color textColor: palette.text
     property font codeFont: font
     property var renderParts: null
+    readonly property real listIndentWidth: MarkupListMetrics.indentWidth(renderParts, font)
     property var selectionCoordinator: null
     property var selectionHost: null
     readonly property var activeSelectionHost: selectionHost || localSelectionHost
@@ -50,41 +51,48 @@ Control {
 
         Column {
             id: parts
-            spacing: 8
             Repeater {
+                id: partRepeater
                 model: root.renderParts || []
-                delegate: Loader {
-                    id: partLoader
+                delegate: Item {
+                    id: partItem
                     required property var modelData
+                    required property int index
                     width: parts.width
-                    sourceComponent: modelData.kind === "table" ? tablePart : textPart
-                    Component {
-                        id: textPart
-                        MarkupSelectableText {
-                            surface: partLoader.modelData.surface
-                            coordinator: root.selectionCoordinator
-                            selectionHost: root.activeSelectionHost
-                            color: root.textColor
-                            font: root.font
-                            codeFont: root.codeFont
-                            linkColor: root.palette.link
-                        }
-                    }
-                    Component {
-                        id: tablePart
-                        Item {
-                            implicitHeight: table.implicitHeight
-                            MarkupTable {
-                                id: table
-                                x: partLoader.modelData.indent
-                                width: Math.max(1, parent.width - x)
-                                part: partLoader.modelData
+                    implicitHeight: partLoader.implicitHeight + (index + 1 < partRepeater.count ? (modelData.spacingAfter ?? 8) : 0)
+                    Loader {
+                        id: partLoader
+                        width: parent.width
+                        sourceComponent: partItem.modelData.kind === "table" ? tablePart : textPart
+                        Component {
+                            id: textPart
+                            MarkupSelectableText {
+                                surface: partItem.modelData.surface
                                 coordinator: root.selectionCoordinator
                                 selectionHost: root.activeSelectionHost
-                                textColor: root.textColor
+                                color: root.textColor
                                 font: root.font
                                 codeFont: root.codeFont
+                                listIndentWidth: root.listIndentWidth
                                 linkColor: root.palette.link
+                            }
+                        }
+                        Component {
+                            id: tablePart
+                            Item {
+                                implicitHeight: table.implicitHeight
+                                MarkupTable {
+                                    id: table
+                                    x: partItem.modelData.quoteIndent + partItem.modelData.listDepth * root.listIndentWidth
+                                    width: Math.max(1, parent.width - x)
+                                    part: partItem.modelData
+                                    coordinator: root.selectionCoordinator
+                                    selectionHost: root.activeSelectionHost
+                                    textColor: root.textColor
+                                    font: root.font
+                                    codeFont: root.codeFont
+                                    linkColor: root.palette.link
+                                }
                             }
                         }
                     }

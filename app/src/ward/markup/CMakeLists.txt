@@ -10,6 +10,10 @@ qt_add_qml_module(CraftwardMarkup
     QML_FILES
         MarkupSelectionDecoration.qml
     SOURCES
+        markuplistmarkers.cpp
+        markuplistmarkers.h
+        markuplistmetrics.cpp
+        markuplistmetrics.h
         markuptextdocument.cpp
         markuptextdocument.h
         markupselection.cpp

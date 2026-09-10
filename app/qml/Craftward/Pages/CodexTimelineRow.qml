@@ -40,7 +40,12 @@ Control {
     readonly property bool semanticBlock: Boolean(root.value("semanticBlock"))
     readonly property bool firstBlockInEntry: !root.semanticBlock || Boolean(root.value("firstBlockInEntry"))
     readonly property bool lastBlockInEntry: !root.semanticBlock || Boolean(root.value("lastBlockInEntry"))
-    readonly property real semanticBlockSpacing: root.semanticBlock && !root.lastBlockInEntry ? 8 : 0
+    readonly property real semanticBlockSpacing: {
+        if (!root.semanticBlock || root.lastBlockInEntry)
+            return 0;
+        const parts = root.value("renderParts");
+        return parts && parts.length ? (parts[parts.length - 1].spacingAfter ?? 8) : 8;
+    }
     readonly property real semanticEntrySpacing: (!root.semanticBlock || root.lastBlockInEntry) ? 10 : 0
     readonly property bool presentationVisible: !root.detailRow || root.firstDetailInTurn || root.turnExpanded
 

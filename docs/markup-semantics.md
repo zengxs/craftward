@@ -124,6 +124,9 @@ contains text runs and formatting values, never a text document or measured
 geometry. Split outer list/table containers describe the selected child range;
 their ordered-list start is adjusted while child identities remain unchanged.
 Unchanged completed groups compare equal and reconcile without resetting rows.
+Ordered lists share their maximum marker digit count across segments. Appending
+an item that adds a digit updates earlier render parts to keep the text aligned;
+their semantic identities and selection endpoints remain stable.
 
 `MarkupTextDocument` writes one projected surface into a materialized TextEdit's
 `QTextDocument`. It handles paragraphs, headings, quotes, lists and task markers,
@@ -131,6 +134,30 @@ rules, nested emphasis, inline code, resolved links, literal inline HTML, and
 annotation labels. Native Qt shaping, wrapping, and link hit testing operate on
 decoded UTF-16 text. Top-level code retains its syntax highlighter, horizontal
 scrolling, and copy toolbar.
+
+List indentation starts at two font ems and grows when the widest digit advance,
+marker suffix, and marker gap require more room. Native text, continuation
+paragraphs, and nested tables share this font-dependent indentation. Tight lists
+have no extra item gap; loose lists add ten pixels. Direct paragraphs within
+list items distinguish loose lists from tight lists without inheriting a nested
+list's spacing. The complete outer list's item gap is retained before splitting,
+so a segment containing only empty items keeps the same spacing as the rest of
+its list. Item gaps also apply after a table that ends the preceding sibling item
+and between segments of the same list. A table followed by a new independent or
+nested list retains the ordinary eight-pixel block gap.
+Unordered markers cycle through a filled disc, hollow circle, and square at
+successive nesting levels. Numbering and hanging text alignment remain owned by
+Qt's native list layout. A marker decoration uses the same Qt Quick text renderer
+as the body and aligns each marker with the first line's baseline. Its advance
+ends 0.7 em before ordered-list text and 0.9 em before unordered-list text, with
+mirrored placement for right-to-left paragraphs. Native marker ink is transparent
+to avoid drawing it twice; body characters and selection offsets are unchanged.
+
+Solid bullet markers use a heavy font weight at the body font size, producing a
+diameter of approximately 0.3 em with the macOS system font. This preserves their
+vertical alignment. Marker formatting is scoped to the block character format;
+body runs, numbered markers, hollow circles, squares, and task checkboxes retain
+their existing fonts.
 
 Once a surface is available, the native adapter exclusively owns its document
 content. Code delegates may display fallback text while waiting for the surface;
@@ -243,6 +270,14 @@ Deferred code tests create the delegate before its payload arrives and verify
 both assignment orders, literal characters, whitespace, measured height,
 selection, palette refresh, and streaming append. Existing
 viewport identity, shutdown, and scroll-settlement regressions remain required.
+List regressions cover tight and loose bullet, numbered, and task lists, nested
+markers, font-size changes, table alignment, and streaming across a marker digit
+boundary while retaining the projected selection. Empty-item segments retain the
+complete list's spacing when text is appended in a later segment. Table boundaries
+distinguish new lists from sibling items. Rendered numbered markers are
+compared with inline numbers beside Chinese bold text to verify their baseline
+at multiple font sizes. Selection must not move the marker or reveal duplicate
+native ink in either Qt or native rendering.
 Code-selection tests verify that syntax formats survive mouse press, dragging,
 release, and deselection in both Qt and native font rendering, including lines
 outside the selection. Image checks confirm that selected tokens retain their

@@ -15,7 +15,7 @@ class QAbstractTextDocumentLayout;
 class QQuickTextDocument;
 class QTextDocument;
 
-/// Tracks the native document and coordinate origin for text background items.
+/// Tracks the native document and coordinate origin for text decorations.
 class MarkupTextBackground : public QQuickItem
 {
     Q_OBJECT

@@ -3,6 +3,9 @@
 
 #include "markuprenderplan.h"
 
+#include <algorithm>
+#include <array>
+
 namespace {
 using namespace ward::markup::v1;
 using ContainerKind = ContainerKindGadget::ContainerKind;
@@ -12,10 +15,12 @@ using ColumnAlignment = ColumnAlignmentGadget::ColumnAlignment;
 class Projector
 {
   public:
-    QVariantList project(const SemanticDocument& document)
+    QVariantList project(const SemanticDocument& document, const QHash<QString, MarkupListContext>& listContexts)
     {
         for (const auto& block : document.blocks()) {
             blockId_ = block.blockId();
+            const auto context = listContexts.constFind(blockId_);
+            listContext_ = context != listContexts.cend() ? context.value() : markupListContext(block);
             nodes_ = block.nodes();
             children_ = QList<QList<qsizetype>>(nodes_.size());
             for (qsizetype i = 0; i < nodes_.size(); ++i) {
@@ -54,6 +59,7 @@ class Projector
         block.format.setLeftMargin(quote * 14);
         block.format.setIndent(indent);
         block.format.setTopMargin(surface_.blocks.isEmpty() ? 0 : spacing);
+        surface_.listNumberDigits = std::max(surface_.listNumberDigits, listContext_.numberDigits);
         surface_.blocks.append(std::move(block));
     }
 
@@ -96,18 +102,30 @@ class Projector
         parts_.append(QVariantMap{ { QStringLiteral("kind"), QStringLiteral("table") },
                                    { QStringLiteral("rows"), rows },
                                    { QStringLiteral("columns"), alignments.size() },
-                                   { QStringLiteral("indent"), quote * 14 + indent * 40 } });
+                                   { QStringLiteral("quoteIndent"), quote * 14 },
+                                   { QStringLiteral("listDepth"), indent } });
     }
 
     void list(qsizetype index, const MarkupTextRun& style, int quote, int indent)
     {
         QTextListFormat format;
         format.setIndent(indent + 1);
-        format.setStyle(nodes_[index].list().hasStart() ? QTextListFormat::ListDecimal : QTextListFormat::ListDisc);
+        constexpr std::array bullets{ QTextListFormat::ListDisc,
+                                      QTextListFormat::ListCircle,
+                                      QTextListFormat::ListSquare };
+        format.setStyle(nodes_[index].list().hasStart() ? QTextListFormat::ListDecimal
+                                                        : bullets[indent % bullets.size()]);
         format.setStart(nodes_[index].list().hasStart() ? nodes_[index].list().start() : 1);
+        const qreal spacing = index == 0 ? listContext_.rootItemSpacing : markupListItemSpacing(nodes_, index);
         int ordinal = 0;
         for (qsizetype item : children_[index]) {
-            begin(item, quote, 0, 2);
+            // A first item after a table starts a separate block, not an item boundary.
+            if (ordinal > 0 && surface_.blocks.isEmpty() && !parts_.isEmpty()) {
+                auto part = parts_.last().toMap();
+                part.insert(QStringLiteral("spacingAfter"), spacing);
+                parts_.last() = part;
+            }
+            begin(item, quote, 0, spacing);
             surface_.blocks.last().list = format;
             surface_.blocks.last().list.setStart(format.start() + ordinal++);
             surface_.blocks.last().listKey = key(index);
@@ -203,6 +221,7 @@ class Projector
     }
 
     QString blockId_;
+    MarkupListContext listContext_;
     QList<SemanticNode> nodes_;
     QList<QList<qsizetype>> children_;
     MarkupTextSurface surface_;
@@ -235,9 +254,49 @@ MarkupTextSurface::text() const
 }
 
 QVariantList
-markupRenderParts(const ward::markup::v1::SemanticDocument& document)
+markupRenderParts(const ward::markup::v1::SemanticDocument& document,
+                  const QHash<QString, MarkupListContext>& listContexts)
 {
-    return Projector().project(document);
+    return Projector().project(document, listContexts);
+}
+
+MarkupListContext
+markupListContext(const ward::markup::v1::SemanticBlock& block)
+{
+    return { .numberDigits = markupListNumberDigits(block), .rootItemSpacing = markupListItemSpacing(block.nodes()) };
+}
+
+int
+markupListNumberDigits(const ward::markup::v1::SemanticBlock& block)
+{
+    const auto nodes = block.nodes();
+    QList<int> itemCounts(nodes.size(), 0);
+    for (const auto& node : nodes)
+        if (node.hasParentIndex() && node.parentIndex() < nodes.size() && node.hasContainer() &&
+            node.container() == ContainerKind::CONTAINER_KIND_LIST_ITEM)
+            ++itemCounts[node.parentIndex()];
+    int digits = 0;
+    for (qsizetype i = 0; i < nodes.size(); ++i)
+        if (nodes[i].hasList() && nodes[i].list().hasStart()) {
+            const quint64 last = nodes[i].list().start() + std::max(0, itemCounts[i] - 1);
+            digits = std::max(digits, int(QString::number(last).size()));
+        }
+    return digits;
+}
+
+qreal
+markupListItemSpacing(const QList<ward::markup::v1::SemanticNode>& nodes, qsizetype listIndex)
+{
+    // Tight-list text is inline; only direct item paragraphs make this list loose.
+    const bool loose = std::any_of(nodes.cbegin(), nodes.cend(), [&](const SemanticNode& node) {
+        if (!node.hasContainer() || node.container() != ContainerKind::CONTAINER_KIND_PARAGRAPH ||
+            !node.hasParentIndex() || node.parentIndex() >= nodes.size())
+            return false;
+        const auto& parent = nodes[node.parentIndex()];
+        return parent.hasParentIndex() && parent.parentIndex() == listIndex && parent.hasContainer() &&
+               parent.container() == ContainerKind::CONTAINER_KIND_LIST_ITEM;
+    });
+    return loose ? 10 : 0;
 }
 
 QVariantList

@@ -13,6 +13,7 @@ QtObject {
     property font font
     property font codeFont
     property real lineHeightScale: 1
+    property real listIndentWidth: 0
     property color textColor
     property color linkColor
     property color annotationBackground
