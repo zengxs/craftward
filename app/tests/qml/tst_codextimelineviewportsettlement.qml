@@ -4,6 +4,7 @@
 import QtQuick
 import QtQuick.Window
 import QtTest
+import Craftward.TestSupport
 import "../../qml/Craftward/Pages" as Pages
 
 Item {
@@ -12,22 +13,56 @@ Item {
     width: 800
     height: 600
     property var viewport: null
+    property var scrollViewport: null
+    property var movementEndFrame: null
+    property var settledFrame: null
     property bool sampling: false
     property var movingFrames: []
+    property var lastPresentedMovingFrame: null
     property var stoppedFrames: []
     property bool columnLayout: false
     property var heightPattern: [48, 72, 96]
     property real minimumMovingSampleDistance: 0
     property real maximumObservedVelocity: 0
 
+    AnimationClock {
+        id: animationClock
+    }
+
     function snapshot() {
         return {
-            contentY: viewport.contentY,
-            maximumContentY: viewport.maximumContentY,
-            velocity: viewport.verticalVelocity,
+            // Read one native viewport state; wrapper bindings may still be notifying.
+            contentY: scrollViewport.contentY,
+            maximumContentY: Math.max(scrollViewport.originY, scrollViewport.originY + scrollViewport.contentHeight - scrollViewport.height),
+            originY: scrollViewport.originY,
+            atYEnd: scrollViewport ? scrollViewport.atYEnd : false,
+            velocity: scrollViewport.verticalVelocity,
             rows: viewport.visibleRowOffsetsForBenchmark(),
             trajectory: viewport.trajectoryRowOffsetsForBenchmark()
         };
+    }
+
+    Connections {
+        target: suite.viewport
+
+        function onVerticalVelocityChanged() {
+            if (suite.sampling)
+                suite.maximumObservedVelocity = Math.max(suite.maximumObservedVelocity, Math.abs(suite.viewport.verticalVelocity));
+        }
+
+        function onLastMovementEndedAnchorChanged() {
+            if (suite.viewport && suite.viewport.lastMovementEndedAnchor)
+                suite.movementEndFrame = suite.snapshot();
+        }
+    }
+
+    Connections {
+        target: suite.scrollViewport
+
+        function onMovementEnded() {
+            // This connection follows the viewport's own synchronous settlement handler.
+            suite.settledFrame = suite.snapshot();
+        }
     }
 
     Connections {
@@ -37,8 +72,8 @@ Item {
             if (!suite.sampling || !suite.viewport)
                 return;
             const frame = suite.snapshot();
-            if (suite.viewport.moving) {
-                suite.maximumObservedVelocity = Math.max(suite.maximumObservedVelocity, Math.abs(frame.velocity));
+            if (suite.scrollViewport.moving) {
+                suite.lastPresentedMovingFrame = frame;
                 if (suite.movingFrames.length > 0 && Math.abs(frame.contentY - suite.movingFrames[suite.movingFrames.length - 1].contentY) < suite.minimumMovingSampleDistance)
                     return;
                 suite.movingFrames = suite.movingFrames.concat([frame]);
@@ -117,12 +152,17 @@ Item {
 
         function cleanup() {
             suite.sampling = false;
+            animationClock.disable();
+            suite.scrollViewport = null;
             if (suite.viewport)
                 suite.viewport.destroy();
             suite.viewport = null;
             suite.movingFrames = [];
+            suite.lastPresentedMovingFrame = null;
             suite.stoppedFrames = [];
             suite.maximumObservedVelocity = 0;
+            suite.movementEndFrame = null;
+            suite.settledFrame = null;
             wait(0);
             sourceModel.clear();
             ++sourceModel.revision;
@@ -221,6 +261,30 @@ Item {
                     prewarmTail: false,
                     columnLayout: true,
                     minimumMovingSampleDistance: 6000
+                },
+                {
+                    tag: "coarse-animation-steps",
+                    prewarmTail: false,
+                    columnLayout: true,
+                    animationSteps: [100]
+                },
+                {
+                    tag: "irregular-animation-steps",
+                    prewarmTail: false,
+                    columnLayout: true,
+                    animationSteps: [16, 33, 100, 17, 50]
+                },
+                {
+                    tag: "changing-estimated-extent",
+                    prewarmTail: false,
+                    columnLayout: true,
+                    animationSteps: [76, 28, 113, 95, 45, 45, 30, 94]
+                },
+                {
+                    tag: "tail-adjustment-before-presentation",
+                    prewarmTail: false,
+                    columnLayout: true,
+                    animationSteps: [79, 72, 97, 80, 119, 12, 108, 50]
                 }
             ];
         }
@@ -251,6 +315,7 @@ Item {
             suite.viewport.followLiveTail = false;
             const scrollViewport = findChild(suite.viewport, "codexTimelineScrollViewport");
             verify(scrollViewport !== null);
+            suite.scrollViewport = scrollViewport;
             scrollViewport.positionViewAtIndex(60, ListView.Beginning);
             tryVerify(() => suite.viewport.delegateForEntry("entry:60") !== null && Math.abs(suite.viewport.anchorOffsetForBenchmark({
                     entryId: "entry:60",
@@ -271,17 +336,31 @@ Item {
             verifyFrameGeometry(start, rowTops, origin, "Start");
             suite.sampling = true;
 
+            animationClock.enable();
             suite.viewport.flickContentForBenchmark(32000, 16000);
+            wait(0);
 
-            tryVerify(() => suite.stoppedFrames.length >= 6, 5000);
+            const animationSteps = data.animationSteps ?? [16];
+            for (let frame = 0, elapsed = 0; suite.stoppedFrames.length < 6 && elapsed < 5000; ++frame) {
+                const milliseconds = animationSteps[frame % animationSteps.length];
+                let advanced = false;
+                Qt.callLater(() => {
+                    advanced = animationClock.advance(milliseconds);
+                    suite.Window.window.update();
+                });
+                verify(waitForRendering(suite.viewport));
+                verify(advanced);
+                elapsed += milliseconds;
+            }
+            verify(suite.stoppedFrames.length >= 6, "The controlled flick must produce six stopped frames");
             suite.sampling = false;
-            verify(suite.maximumObservedVelocity >= 30000, "The stress flick reached only " + suite.maximumObservedVelocity + " px/s in presented frames");
+            verify(suite.maximumObservedVelocity >= 30000, "The stress flick reached only " + suite.maximumObservedVelocity + " px/s");
             verify(suite.movingFrames.length > 0);
             const anchor = suite.viewport.movementEndedAnchorForBenchmark();
-            const baseline = {
-                contentY: anchor.contentY,
-                rows: suite.viewport.movementEndedRowsForBenchmark()
-            };
+            const movementEnd = suite.movementEndFrame;
+            const baseline = suite.settledFrame;
+            verify(anchor !== null && movementEnd !== null && baseline !== null);
+            compare(movementEnd.contentY, anchor.contentY);
             verify(baseline.contentY - start.contentY >= 24000, "Travel: " + JSON.stringify({
                 start: start.contentY,
                 end: baseline.contentY,
@@ -290,12 +369,21 @@ Item {
             }));
             verify(baseline.rows[0].row - start.rows[0].row >= 100);
             // Qt can stop within one logical pixel of the edge without setting atYEnd.
-            verify(Math.abs(baseline.contentY - suite.viewport.maximumContentY) <= 1 || (data.estimatedBoundary && baseline.contentY >= start.maximumContentY - 1), "The flick must reach the bottom boundary: " + JSON.stringify({
-                start: start.contentY,
-                end: baseline.contentY,
-                maximum: suite.viewport.maximumContentY,
-                rows: baseline.rows
+            // ListView's estimated content extent may disagree with its actual end flag.
+            verify(movementEnd.atYEnd || Math.abs(movementEnd.contentY - movementEnd.maximumContentY) <= 1 || (data.estimatedBoundary && movementEnd.contentY >= start.maximumContentY - 1), "The flick must reach the bottom boundary: " + JSON.stringify({
+                start: start,
+                movementEnd: movementEnd,
+                settled: baseline
             }));
+            // Expanding content can stop at its previous estimated boundary.
+            if (!data.estimatedBoundary) {
+                const tail = suite.settledFrame.rows.find(row => row.row === sourceModel.count - 1);
+                verify(tail !== undefined, "The settled viewport must contain the final row");
+                verify(Math.abs(tail.offset + tail.height + suite.viewport.bottomContentInset - suite.viewport.height) <= 1, "The settled tail must align with the composer inset: " + JSON.stringify({
+                    movementEnd: movementEnd,
+                    settled: suite.settledFrame
+                }));
+            }
             verify(baseline.rows.filter(row => row.row >= 388 && suite.heightPattern[row.row % 3] !== 72).length >= 2, "At least two visible rows must have non-estimated content heights: " + JSON.stringify(baseline.rows));
 
             let previous = start;
@@ -310,8 +398,16 @@ Item {
             }
             if (suite.minimumMovingSampleDistance > 0)
                 verify(disjointFrameCount > 0, "Sparse samples must exercise frames with no common rows");
-            verifyFrameGeometry(baseline, rowTops, origin, "Movement boundary");
-            verify(baseline.contentY >= previous.contentY - 1, "Movement end reversed scroll direction");
+            verifyFrameGeometry(baseline, rowTops, origin, "Settled boundary");
+            // The pre-settlement position is intermediate state, not a presented frame.
+            // Keep the last real moving frame even when ordinary samples are sparse.
+            verify(suite.lastPresentedMovingFrame !== null);
+            verifyFrameGeometry(suite.lastPresentedMovingFrame, rowTops, origin, "Last presented moving frame");
+            verify(baseline.contentY >= suite.lastPresentedMovingFrame.contentY - 1, "The transition into stopped frames reversed scroll direction: " + JSON.stringify({
+                lastMoving: suite.lastPresentedMovingFrame,
+                movementEnd: movementEnd,
+                settled: baseline
+            }));
             for (let frame = 0; frame < suite.stoppedFrames.length; ++frame) {
                 const stopped = compareStoppedRows(baseline, suite.stoppedFrames[frame]);
                 verify(stopped.common > 1 && stopped.markers > 0 && stopped.drift <= 1 && stopped.missing.length === 0, "Stopped frame " + frame + ": " + JSON.stringify(stopped));

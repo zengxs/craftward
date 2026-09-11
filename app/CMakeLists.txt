@@ -61,7 +61,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 find_package(Qt6 6.11 REQUIRED COMPONENTS Concurrent LinguistTools Protobuf Qml Quick QuickControls2 QuickDialogs2 Svg)
 if(BUILD_TESTING)
-    find_package(Qt6 6.11 REQUIRED COMPONENTS Test)
+    find_package(Qt6 6.11 REQUIRED COMPONENTS QuickTest Test)
 endif()
 
 qt_standard_project_setup(
@@ -125,6 +125,10 @@ add_subdirectory(qml/Craftward/Features/Legal)
 add_subdirectory(qml/Craftward/Features/Realm)
 add_subdirectory(qml/Craftward/Pages)
 add_subdirectory(qml/Craftward/App)
+
+if(BUILD_TESTING)
+    add_subdirectory(tests/qml)
+endif()
 # Assets attach resources directly to the Craftward executable.
 add_subdirectory(assets)
 

@@ -4,6 +4,7 @@
 import QtQuick
 import QtQuick.Window
 import QtTest
+import Craftward.TestSupport
 import "../../qml/Craftward/Pages" as Pages
 
 Item {
@@ -18,6 +19,7 @@ Item {
     readonly property int minimumStressRowTravel: 100
     property var viewport: null
     property var scrollViewport: null
+    property real maximumObservedFlickVelocity: 0
     property var frameReferenceAnchor
     property bool frameSampling: false
     property real maximumFrameAnchorExcursion: 0
@@ -28,9 +30,12 @@ Item {
     property int rowGeometryChangeCount: 0
     property int movingRowGeometryChangeCount: 0
     property bool finalDecelerationSampling: false
+    property bool suppressFinalDecelerationObservation: false
     property int finalDecelerationContentDirection: 1
     property int finalDecelerationChangedRowOffset: -1
     property bool finalDecelerationHeightChangeTriggered: false
+    property real finalDecelerationInjectionVelocity: 0
+    property int finalDecelerationInjectionCount: 0
     property var finalDecelerationAnchor: null
     property real finalDecelerationPreviousContentY: Number.NaN
     property real finalDecelerationPreviousOffset: Number.NaN
@@ -58,6 +63,43 @@ Item {
     property real maximumTrajectoryGeometryDrift: 0
     property int trajectoryCommonRowSampleCount: 0
     property var trajectoryGeometryTrace: []
+
+    AnimationClock {
+        id: animationClock
+    }
+
+    function startFlick(velocity, deceleration) {
+        suite.maximumObservedFlickVelocity = 0;
+        suite.viewport.flickContentForBenchmark(velocity, deceleration);
+    }
+
+    function injectFinalDecelerationHeightChange() {
+        if (suite.finalDecelerationHeightChangeTriggered)
+            return true;
+        const velocity = Math.abs(suite.viewport.verticalVelocity);
+        if (!suite.viewport.moving || velocity <= 0 || velocity > 4000)
+            return false;
+        const anchor = suite.viewport.captureVisibleAnchor();
+        const row = anchor ? suite.viewport.indexOfEntryId(anchor.entryId) : -1;
+        const candidate = suite.loadedHeightChangeCandidateBeforeAnchor(row, suite.finalDecelerationChangedRowOffset);
+        if (!anchor || !candidate || !suite.viewport.delegateForEntry(candidate.entryId))
+            return false;
+        const offset = Number(suite.viewport.anchorOffsetForBenchmark(anchor));
+        if (!Number.isFinite(offset))
+            return false;
+        suite.finalDecelerationAnchor = {
+            entryId: anchor.entryId,
+            row: row
+        };
+        suite.finalDecelerationPreviousContentY = suite.viewport.contentY;
+        suite.finalDecelerationPreviousOffset = offset;
+        suite.finalDecelerationInitialRowHeightRevision = suite.viewport.rowHeightRevision;
+        suite.finalDecelerationInjectionVelocity = velocity;
+        suite.finalDecelerationHeightChangeTriggered = true;
+        ++suite.finalDecelerationInjectionCount;
+        suite.postFlickChangedRow = Number(candidate.row);
+        return true;
+    }
 
     function loadedHeightChangeCandidateBeforeAnchor(anchorRow, preferredRowOffset, changedRowCount = 1) {
         if (!suite.viewport || anchorRow <= 0)
@@ -200,31 +242,10 @@ Item {
                 }
                 suite.previousTrajectoryContentCoordinates = currentContentCoordinates;
             }
-            if (suite.finalDecelerationSampling && suite.viewport && suite.scrollViewport) {
+            if (suite.finalDecelerationSampling && !suite.suppressFinalDecelerationObservation && suite.viewport && suite.scrollViewport) {
                 const moving = suite.scrollViewport.moving;
                 const velocity = Math.abs(Number(suite.viewport.verticalVelocity));
-                if (!suite.finalDecelerationHeightChangeTriggered && moving && velocity > 0 && velocity <= 4000) {
-                    const visibleAnchor = suite.viewport.captureVisibleAnchor();
-                    const visibleAnchorRow = visibleAnchor ? suite.viewport.indexOfEntryId(visibleAnchor.entryId) : -1;
-                    const trackedRow = visibleAnchorRow;
-                    const trackedEntryId = trackedRow >= 0 ? suite.viewport.entryIdAt(trackedRow) : "";
-                    const changedCandidate = suite.loadedHeightChangeCandidateBeforeAnchor(visibleAnchorRow, suite.finalDecelerationChangedRowOffset);
-                    const trackedOffset = trackedEntryId.length > 0 ? Number(suite.viewport.anchorOffsetForBenchmark({
-                        entryId: trackedEntryId,
-                        row: trackedRow
-                    })) : Number.NaN;
-                    if (Number.isFinite(trackedOffset) && changedCandidate && suite.viewport.delegateForEntry(changedCandidate.entryId)) {
-                        suite.finalDecelerationAnchor = {
-                            entryId: trackedEntryId,
-                            row: trackedRow
-                        };
-                        suite.finalDecelerationPreviousContentY = suite.viewport.contentY;
-                        suite.finalDecelerationPreviousOffset = trackedOffset;
-                        suite.finalDecelerationInitialRowHeightRevision = suite.viewport.rowHeightRevision;
-                        suite.postFlickChangedRow = Number(changedCandidate.row);
-                        suite.finalDecelerationHeightChangeTriggered = true;
-                    }
-                } else if (suite.finalDecelerationHeightChangeTriggered && suite.finalDecelerationAnchor) {
+                if (suite.finalDecelerationHeightChangeTriggered && suite.finalDecelerationAnchor) {
                     const offset = Number(suite.viewport.anchorOffsetForBenchmark(suite.finalDecelerationAnchor));
                     if (!Number.isFinite(offset)) {
                         ++suite.finalDecelerationMissingFrameCount;
@@ -258,6 +279,11 @@ Item {
     Connections {
         target: suite.viewport
         ignoreUnknownSignals: true
+
+        function onVerticalVelocityChanged() {
+            if (suite.viewport)
+                suite.maximumObservedFlickVelocity = Math.max(suite.maximumObservedFlickVelocity, Math.abs(suite.viewport.verticalVelocity));
+        }
 
         function onAnchorPositionCorrected(displacement) {
             if (suite.frameSampling)
@@ -592,7 +618,48 @@ Item {
         name: "CodexTimelineViewport"
         when: windowShown
 
+        function advanceFrame(milliseconds = 16) {
+            let advanced = false;
+            Qt.callLater(() => {
+                advanced = animationClock.advance(milliseconds);
+                suite.Window.window.update();
+            });
+            verify(waitForRendering(suite.viewport));
+            verify(advanced, "The controlled animation clock must be enabled");
+        }
+
+        function advanceFor(milliseconds) {
+            for (let elapsed = 0; elapsed < milliseconds; elapsed += 16)
+                advanceFrame(Math.min(16, milliseconds - elapsed));
+        }
+
+        function advanceUntil(predicate, maximumMilliseconds = 5000, message = "The controlled motion did not reach its required phase") {
+            for (let elapsed = 0; !predicate() && elapsed < maximumMilliseconds; elapsed += 16)
+                advanceFrame();
+            verify(predicate(), message + ": " + JSON.stringify({
+                contentY: suite.viewport.contentY,
+                velocity: suite.viewport.verticalVelocity,
+                peakVelocity: suite.maximumObservedFlickVelocity,
+                moving: suite.viewport.moving
+            }));
+        }
+
+        function finalDecelerationCases() {
+            return [
+                {
+                    tag: "presented-frames",
+                    suppressBeforeInjection: false
+                },
+                {
+                    tag: "no-presentation-callbacks-before-injection",
+                    suppressBeforeInjection: true
+                }
+            ];
+        }
+
         function verifyFinalDecelerationResult(traceLabel) {
+            compare(suite.finalDecelerationInjectionCount, 1);
+            verify(suite.finalDecelerationInjectionVelocity > 0 && suite.finalDecelerationInjectionVelocity <= 4000, "The height change must be injected during final deceleration");
             verify(suite.finalDecelerationTrace.length > 0);
             compare(suite.finalDecelerationMissingFrameCount, 0, traceLabel + ": " + JSON.stringify(suite.finalDecelerationTrace));
             verify(suite.viewport.rowHeightRevision > suite.finalDecelerationInitialRowHeightRevision);
@@ -615,10 +682,14 @@ Item {
             suite.rowGeometryTrace = [];
             suite.rowGeometryChangeCount = 0;
             suite.movingRowGeometryChangeCount = 0;
+            animationClock.disable();
             suite.finalDecelerationSampling = false;
+            suite.suppressFinalDecelerationObservation = false;
             suite.finalDecelerationContentDirection = 1;
             suite.finalDecelerationChangedRowOffset = -1;
             suite.finalDecelerationHeightChangeTriggered = false;
+            suite.finalDecelerationInjectionVelocity = 0;
+            suite.finalDecelerationInjectionCount = 0;
             suite.finalDecelerationAnchor = null;
             suite.finalDecelerationPreviousContentY = Number.NaN;
             suite.finalDecelerationPreviousOffset = Number.NaN;
@@ -910,9 +981,9 @@ Item {
             suite.trajectoryGeometryTrace = [];
             suite.trajectoryGeometrySampling = true;
 
-            suite.viewport.flickContentForBenchmark(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            suite.startFlick(suite.stressFlickVelocity, suite.stressFlickDeceleration);
 
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
+            tryVerify(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
             tryVerify(() => suite.scrollViewport.moving);
             tryVerify(() => !suite.scrollViewport.moving, 5000);
             suite.trajectoryGeometrySampling = false;
@@ -935,8 +1006,8 @@ Item {
             suite.viewport.positionAtContentY(suite.viewport.maximumContentY);
             wait(300);
 
-            suite.viewport.flickContentForBenchmark(-suite.stressFlickVelocity, suite.stressFlickDeceleration);
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The cold reverse flick never reached 30,000 px/s");
+            suite.startFlick(-suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            tryVerify(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The cold reverse flick never reached 30,000 px/s");
             tryVerify(() => !suite.scrollViewport.moving, 5000);
             suite.viewport.positionAtContentY(suite.viewport.maximumContentY);
             wait(300);
@@ -950,9 +1021,9 @@ Item {
             suite.trajectoryGeometryTrace = [];
             suite.trajectoryGeometrySampling = true;
 
-            suite.viewport.flickContentForBenchmark(-suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            suite.startFlick(-suite.stressFlickVelocity, suite.stressFlickDeceleration);
 
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The warm reverse flick never reached 30,000 px/s");
+            tryVerify(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The warm reverse flick never reached 30,000 px/s");
             tryVerify(() => suite.scrollViewport.moving);
             tryVerify(() => !suite.scrollViewport.moving, 5000);
             suite.trajectoryGeometrySampling = false;
@@ -1100,9 +1171,9 @@ Item {
             verify(initialAnchor !== null);
             suite.postFlickSettlementArmed = true;
 
-            suite.viewport.flickContentForBenchmark(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            suite.startFlick(suite.stressFlickVelocity, suite.stressFlickDeceleration);
 
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
+            tryVerify(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
             tryVerify(() => suite.scrollViewport.moving);
             tryVerify(() => suite.postFlickSettlementStarted, 5000);
             verify(!suite.scrollViewport.moving);
@@ -1124,7 +1195,11 @@ Item {
             }));
         }
 
-        function test_doesNotPresentReverseRowMotionWhenGeometryChangesDuringFinalDeceleration() {
+        function test_doesNotPresentReverseRowMotionWhenGeometryChangesDuringFinalDeceleration_data() {
+            return finalDecelerationCases();
+        }
+
+        function test_doesNotPresentReverseRowMotionWhenGeometryChangesDuringFinalDeceleration(data) {
             fakeTimelineModel.resetRows(1000);
             suite.viewport = createTemporaryObject(postFlickSettlingViewportComponent, suite);
             verify(suite.viewport !== null);
@@ -1137,23 +1212,40 @@ Item {
             verify(initialAnchor !== null);
             suite.finalDecelerationSampling = true;
 
-            suite.viewport.flickContentForBenchmark(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            suite.suppressFinalDecelerationObservation = data.suppressBeforeInjection;
+            animationClock.enable();
+            suite.startFlick(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            wait(0);
 
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
+            advanceUntil(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
             tryVerify(() => suite.scrollViewport.moving);
-            tryVerify(() => suite.finalDecelerationHeightChangeTriggered, 5000);
-            tryVerify(() => !suite.scrollViewport.moving, 5000);
+            advanceUntil(() => suite.injectFinalDecelerationHeightChange(), 2500, "The final-deceleration height change was not injected");
+            suite.suppressFinalDecelerationObservation = false;
+            advanceUntil(() => !suite.scrollViewport.moving, 5000);
             verify(Math.abs(suite.viewport.contentY - initialContentY) >= suite.minimumStressTravel, "The stress flick travelled only " + Math.abs(suite.viewport.contentY - initialContentY) + " px");
             verify(suite.finalDecelerationAnchor !== null);
             verify(Math.abs(suite.viewport.indexOfEntryId(suite.finalDecelerationAnchor.entryId) - suite.viewport.indexOfEntryId(initialAnchor.entryId)) >= suite.minimumStressRowTravel, "The stress flick did not cross enough rows");
 
-            wait(120);
+            advanceFor(120);
             suite.finalDecelerationSampling = false;
 
             verifyFinalDecelerationResult("Final deceleration trace");
         }
 
-        function test_geometryCorrectionDoesNotCancelAHighVelocityLongDistanceFlick() {
+        function test_geometryCorrectionDoesNotCancelAHighVelocityLongDistanceFlick_data() {
+            return [
+                {
+                    tag: "immediate-observation",
+                    observationDelay: 0
+                },
+                {
+                    tag: "delayed-observation",
+                    observationDelay: 220
+                }
+            ];
+        }
+
+        function test_geometryCorrectionDoesNotCancelAHighVelocityLongDistanceFlick(data) {
             fakeTimelineModel.resetRows(1000);
             suite.viewport = createTemporaryObject(postFlickSettlingViewportComponent, suite);
             verify(suite.viewport !== null);
@@ -1166,13 +1258,16 @@ Item {
             verify(initialAnchor !== null);
 
             suite.deferredMeasurementSampling = true;
-            suite.viewport.flickContentForBenchmark(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            animationClock.enable();
+            suite.startFlick(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            wait(0);
+            advanceFor(data.observationDelay);
 
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
-            tryVerify(() => suite.viewport.contentY - initialContentY >= 1000 && Math.abs(suite.viewport.verticalVelocity) >= 25000, 500, "The stress flick did not reach an early high-velocity geometry trigger");
+            advanceUntil(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
+            advanceUntil(() => suite.viewport.contentY - initialContentY >= 1000 && Math.abs(suite.viewport.verticalVelocity) >= 25000, 500, "The stress flick did not reach an early high-velocity geometry trigger");
             let changedCandidate = null;
             let heightChangeVelocity = Number.NaN;
-            tryVerify(() => {
+            advanceUntil(() => {
                 const currentVelocity = Math.abs(Number(suite.viewport.verticalVelocity));
                 if (!suite.scrollViewport.moving || currentVelocity < 25000)
                     return false;
@@ -1200,9 +1295,9 @@ Item {
             tryVerify(() => Number(changedSlot.pendingMeasuredHeight) > 0);
             tryVerify(() => suite.viewport.deferredRowMeasurementCount >= suite.postFlickChangedRowCount);
             compare(suite.viewport.rowHeightRevision, initialRowHeightRevision);
-            wait(100);
+            advanceFor(100);
             verify(suite.scrollViewport.moving, "The geometry correction cancelled the remaining kinetic flick");
-            tryVerify(() => !suite.scrollViewport.moving, 5000);
+            advanceUntil(() => !suite.scrollViewport.moving, 5000);
             suite.deferredMeasurementSampling = false;
             tryVerify(() => suite.viewport.rowHeightRevision > initialRowHeightRevision);
             verify(suite.rowGeometryChangeCount - initialRowGeometryChangeCount <= suite.maximumActiveRowSlotCount, "The stopped-frame flush scaled with traversed rows instead of active slots");
@@ -1213,7 +1308,11 @@ Item {
             verify(suite.maximumDeferredRowMeasurementCount <= suite.maximumActiveRowSlotCount, "Deferred measurements grew beyond the active viewport slots");
         }
 
-        function test_doesNotPresentReverseRowMotionNearTheOldBottomBoundary() {
+        function test_doesNotPresentReverseRowMotionNearTheOldBottomBoundary_data() {
+            return finalDecelerationCases();
+        }
+
+        function test_doesNotPresentReverseRowMotionNearTheOldBottomBoundary(data) {
             fakeTimelineModel.resetRows(1000);
             suite.viewport = createTemporaryObject(postFlickSettlingViewportComponent, suite);
             verify(suite.viewport !== null);
@@ -1228,21 +1327,29 @@ Item {
             suite.finalDecelerationContentDirection = 1;
             suite.finalDecelerationSampling = true;
 
-            suite.viewport.flickContentForBenchmark(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            suite.suppressFinalDecelerationObservation = data.suppressBeforeInjection;
+            animationClock.enable();
+            suite.startFlick(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            wait(0);
 
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
-            tryVerify(() => suite.finalDecelerationHeightChangeTriggered, 5000);
-            tryVerify(() => !suite.scrollViewport.moving, 5000);
+            advanceUntil(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
+            advanceUntil(() => suite.injectFinalDecelerationHeightChange(), 2500, "The final-deceleration height change was not injected");
+            suite.suppressFinalDecelerationObservation = false;
+            advanceUntil(() => !suite.scrollViewport.moving, 5000);
             verify(suite.viewport.contentY - initialContentY >= suite.minimumStressTravel, "The boundary stress flick travelled only " + (suite.viewport.contentY - initialContentY) + " px");
             verify(suite.finalDecelerationAnchor !== null);
 
-            wait(120);
+            advanceFor(120);
             suite.finalDecelerationSampling = false;
 
             verifyFinalDecelerationResult("Bottom-boundary final deceleration trace");
         }
 
-        function test_doesNotDoubleCorrectAnAnchorPreservedByListView() {
+        function test_doesNotDoubleCorrectAnAnchorPreservedByListView_data() {
+            return finalDecelerationCases();
+        }
+
+        function test_doesNotDoubleCorrectAnAnchorPreservedByListView(data) {
             fakeTimelineModel.resetRows(1000);
             suite.viewport = createTemporaryObject(postFlickSettlingViewportComponent, suite);
             verify(suite.viewport !== null);
@@ -1256,15 +1363,19 @@ Item {
             suite.finalDecelerationChangedRowOffset = -6;
             suite.finalDecelerationSampling = true;
 
-            suite.viewport.flickContentForBenchmark(-suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            suite.suppressFinalDecelerationObservation = data.suppressBeforeInjection;
+            animationClock.enable();
+            suite.startFlick(-suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            wait(0);
 
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
-            tryVerify(() => suite.finalDecelerationHeightChangeTriggered, 5000);
-            tryVerify(() => !suite.scrollViewport.moving, 5000);
+            advanceUntil(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
+            advanceUntil(() => suite.injectFinalDecelerationHeightChange(), 2500, "The final-deceleration height change was not injected");
+            suite.suppressFinalDecelerationObservation = false;
+            advanceUntil(() => !suite.scrollViewport.moving, 5000);
             verify(initialContentY - suite.viewport.contentY >= suite.minimumStressTravel, "The stress flick travelled only " + (initialContentY - suite.viewport.contentY) + " px");
             verify(suite.finalDecelerationAnchor !== null);
 
-            wait(120);
+            advanceFor(120);
             suite.finalDecelerationSampling = false;
 
             verifyFinalDecelerationResult("ListView-preserved final deceleration trace");
@@ -1286,9 +1397,9 @@ Item {
             verify(initialAnchor !== null);
 
             suite.deferredMeasurementSampling = true;
-            suite.viewport.flickContentForBenchmark(suite.stressFlickVelocity, suite.stressFlickDeceleration);
+            suite.startFlick(suite.stressFlickVelocity, suite.stressFlickDeceleration);
 
-            tryVerify(() => Math.abs(suite.viewport.verticalVelocity) >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
+            tryVerify(() => suite.maximumObservedFlickVelocity >= suite.minimumStressObservedVelocity, 200, "The stress flick never reached 30,000 px/s");
             tryVerify(() => suite.scrollViewport.moving);
             tryVerify(() => !suite.scrollViewport.moving, 5000);
             suite.deferredMeasurementSampling = false;
