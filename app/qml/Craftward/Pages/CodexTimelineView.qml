@@ -24,6 +24,7 @@ Control {
     readonly property string motionDiagnosticsText: motionDiagnostics.statisticsText
 
     signal forkRequested(string turnId)
+    signal fileLocationRequested(string file, int start, int end)
 
     function toggleTurn(turnId) {
         const anchor = timelineViewport.captureVisibleAnchor();
@@ -120,6 +121,7 @@ Control {
             font: root.font
             onToggleTurnRequested: turnId => root.toggleTurn(turnId)
             onForkRequested: turnId => root.forkRequested(turnId)
+            onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
         }
     }
 

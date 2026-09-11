@@ -3,6 +3,14 @@
 <TS version="2.1" language="en" sourcelanguage="en">
 <context>
     <name></name>
+    <message id="craftward.file.open_failed">
+        <source>Could not open this file with the default application.</source>
+        <translation>Could not open this file with the default application.</translation>
+    </message>
+    <message id="craftward.action.ok">
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
     <message id="craftward.app.name">
         <location filename="../qml/Craftward/App/MainWindow.qml" line="34"/>
         <location filename="../qml/Craftward/Pages/AboutPage.qml" line="70"/>

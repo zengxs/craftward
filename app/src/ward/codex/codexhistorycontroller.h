@@ -91,6 +91,7 @@ class CodexHistoryController : public QObject
     void setThreadStartErrorMessage(const QString& message);
     void handleConversationErrorChanged();
     void clearSelection();
+    void updateMarkupDirectory();
     bool changeSelectedThreadLifecycle(ThreadLifecycleAction action);
     void setChangingThreadLifecycle(bool changing, const QString& threadId = {});
     void setStartingThread(bool starting);

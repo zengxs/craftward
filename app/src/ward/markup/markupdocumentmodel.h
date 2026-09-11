@@ -37,6 +37,7 @@ class MarkupDocumentModel : public QAbstractListModel
     explicit MarkupDocumentModel(QObject* parent = nullptr);
     [[nodiscard]] MarkupSelection* selection() { return selection_; }
     bool reconcileSource(const QString& source, SourceFormat format, bool finalized = true);
+    void setBaseDirectory(const QString& directory);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
@@ -64,7 +65,7 @@ class MarkupDocumentModel : public QAbstractListModel
         QString error;
     };
 
-    static Result parse(quint64 generation, const QString& source, SourceFormat format);
+    static Result parse(quint64 generation, const QString& source, SourceFormat format, const QString& baseDirectory);
     void schedule();
     void dispatch();
     void applyFinished();
@@ -72,6 +73,7 @@ class MarkupDocumentModel : public QAbstractListModel
 
     MarkupSelection* selection_;
     QString source_;
+    QString baseDirectory_;
     SourceFormat format_ = SourceFormat::PlainText;
     bool finalized_ = false;
     quint64 generation_ = 0;

@@ -45,6 +45,7 @@ class MarkupTextDocument
     Q_INVOKABLE [[nodiscard]] QVariantMap endpointAt(int position) const;
     Q_INVOKABLE [[nodiscard]] QVariantMap wordAt(int position) const;
     Q_INVOKABLE [[nodiscard]] int documentPosition(int surfacePosition) const;
+    Q_INVOKABLE [[nodiscard]] qreal firstLineAscent() const;
     void classBegin() override;
     void componentComplete() override;
 

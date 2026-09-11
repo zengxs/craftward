@@ -238,6 +238,7 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
 
     const QByteArray encodedThreadId = threadId.toUtf8();
     conversationController_.beginLoadingThread(threadId, title);
+    updateMarkupDirectory();
 
     if (historyObserver_ == nullptr) {
         conversationController_.finishLoading(/*% "The Codex history observer is unavailable." */ qtTrId(
@@ -253,6 +254,20 @@ CodexHistoryController::selectThread(const QString& threadId, const QString& tit
               "craftward.codex.error.conversation_observe");
         conversationController_.finishLoading(message);
     }
+}
+
+void
+CodexHistoryController::updateMarkupDirectory()
+{
+    QString directory;
+    for (int row = 0; row < threadModel_.rowCount(); ++row) {
+        const auto index = threadModel_.index(row, 0);
+        if (threadModel_.data(index, CodexThreadModel::ThreadIdRole) == conversationController_.threadId()) {
+            directory = threadModel_.data(index, CodexThreadModel::WorkingDirectoryRole).toString();
+            break;
+        }
+    }
+    conversationController_.timeline()->setBaseDirectory(directory);
 }
 
 bool

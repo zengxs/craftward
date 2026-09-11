@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "components/applicationfiles.h"
 #include "ward/markup/markupdocumentmodel.h"
 #include "ward/markup/markupselection.h"
 #include "ward/markup/markuptextdocument.h"
@@ -13,6 +14,10 @@
 #include <QAbstractTextDocumentLayout>
 #include <QByteArrayView>
 #include <QClipboard>
+#include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QPainterPath>
@@ -25,6 +30,7 @@
 #include <QRawFont>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextFrame>
@@ -146,6 +152,7 @@ class SelectionScene
                 id: scene
                 width: 520
                 height: 520
+                signal fileLocationRequested(string file, int start, int end)
                 ListView {
                     id: timeline
                     objectName: "selectionTimeline"
@@ -165,6 +172,7 @@ class SelectionScene
                         selectionHost: host
                         font { family: "Helvetica Neue"; pixelSize: 16 }
                         codeFont { family: "Menlo"; pixelSize: 16 }
+                        onFileLocationRequested: (file, start, end) => scene.fileLocationRequested(file, start, end)
                     }
                 }
                 Loader {
@@ -200,7 +208,10 @@ class SelectionScene
     QList<QQuickItem*> editors() const
     {
         return visualItems(view.get(), QStringLiteral("markupProseText")) +
-               visualItems(view.get(), QStringLiteral("markupCodeText"));
+               visualItems(view.get(), QStringLiteral("markupCodeText")) +
+               visualItems(view.get(), QStringLiteral("markupCommentTitle")) +
+               visualItems(view.get(), QStringLiteral("markupCommentPriority")) +
+               visualItems(view.get(), QStringLiteral("markupCommentLocation"));
     }
 
     QQuickItem* editorContaining(const QString& text) const
@@ -228,12 +239,27 @@ class SelectionScene
 
 }
 
+class FileUrlReceiver : public QObject
+{
+    Q_OBJECT
+  public:
+    QUrl url;
+  public slots:
+    void open(const QUrl& value) { url = value; }
+};
+
 class MarkupSemanticTest : public QObject
 {
     Q_OBJECT
 
   private slots:
     void decodesSemanticSnapshotFromRust();
+    void projectsCodeCommentsAndPreservesSelection();
+    void resolvesCodeCommentFileReferences_data();
+    void resolvesCodeCommentFileReferences();
+    void opensCodeCommentFilesThroughSymlinkParents();
+    void laysOutAndSelectsCodeCommentFields();
+    void opensLocalFilesWithEncodedUrls();
     void reconcilesOnlyChangedSegments();
     void resolvesReferencesAcrossTheCompleteSnapshot();
     void rendersInlineFormatsAndNativeLinkHits();
@@ -357,6 +383,264 @@ MarkupSemanticTest::decodesSemanticSnapshotFromRust()
         }
     }
     QVERIFY(annotation && link && uncheckedTask && bodyRow && zeroStart && entity);
+}
+
+void
+MarkupSemanticTest::projectsCodeCommentsAndPreservesSelection()
+{
+    MarkupDocumentModel document;
+    document.setBaseDirectory(QStringLiteral("/project"));
+    const QString source = QString::fromUtf8(R"md(Before.
+
+::code-comment{title="[P2] 表格间距" body="Use **bold** and `code`.\n\n| A | B |\n|---|---|\n| value | text |" file="src/file.cpp" start=122 end=125 priority=2}
+
+After.)md");
+    document.reconcileSource(source, Format::Markdown);
+    QTRY_COMPARE(document.rowCount(), 3);
+    auto part = payload(&document, 1).toList().first().toMap();
+    QCOMPARE(part.value(QStringLiteral("kind")), QStringLiteral("codeComment"));
+    QCOMPARE(part.value(QStringLiteral("priority")).toInt(), 2);
+    QCOMPARE(part.value(QStringLiteral("file")), QStringLiteral("/project/src/file.cpp"));
+    QCOMPARE(part.value(QStringLiteral("start")).toInt(), 122);
+    QCOMPARE(part.value(QStringLiteral("end")).toInt(), 125);
+    const auto surfaces = markupSurfaces(payload(&document, 1).toList());
+    QCOMPARE(surfaces.at(0).blocks.first().runs.first().text, QStringLiteral("P2"));
+    QCOMPARE(surfaces.at(1).blocks.first().runs.first().text, QString::fromUtf8("表格间距"));
+    QCOMPARE(surfaces.at(2).blocks.first().runs.first().text, QStringLiteral("src/file.cpp:122–125"));
+    QCOMPARE(part.value(QStringLiteral("body")).toList().last().toMap().value(QStringLiteral("kind")),
+             QStringLiteral("table"));
+    document.selection()->selectAll();
+    const auto selected = document.selection()->text();
+    QVERIFY(
+      selected.startsWith(QString::fromUtf8("Before.\n\nP2 表格间距\nsrc/file.cpp:122–125\n\nUse bold and code.")));
+    QVERIFY(selected.contains(QStringLiteral("A\tB\nvalue\ttext")));
+    QVERIFY(selected.endsWith(QStringLiteral("After.")));
+    QVERIFY(!selected.contains(QStringLiteral("::code-comment")));
+    document.reconcileSource(source + QStringLiteral(" More."), Format::Markdown);
+    QTRY_VERIFY(document.data(document.index(2), MarkupDocumentModel::SegmentTextRole)
+                  .toString()
+                  .endsWith(QStringLiteral("More.")));
+    QCOMPARE(payload(&document, 1).toList().first().toMap(), part);
+    QCOMPARE(document.selection()->text(), selected);
+
+    document.setBaseDirectory(QStringLiteral("/other"));
+    QTRY_COMPARE(payload(&document, 1).toList().first().toMap().value(QStringLiteral("file")),
+                 QStringLiteral("/other/src/file.cpp"));
+    document.setBaseDirectory({});
+    QTRY_COMPARE(payload(&document, 1).toList().first().toMap().value(QStringLiteral("file")),
+                 QStringLiteral("src/file.cpp"));
+
+    // Absence of structured priority keeps the title intact and creates no badge.
+    document.reconcileSource(
+      QStringLiteral(R"(::code-comment{title="[P1] Keep prefix" body="Body" file="/file.cpp" start=7})"),
+      Format::Markdown);
+    QTRY_COMPARE(document.rowCount(), 1);
+    part = payload(&document, 0).toList().first().toMap();
+    QVERIFY(!part.contains(QStringLiteral("badge")));
+    QCOMPARE(part.value(QStringLiteral("priority")).toInt(), -1);
+    QCOMPARE(part.value(QStringLiteral("end")).toInt(), 7);
+    document.selection()->selectAll();
+    QCOMPARE(document.selection()->text(), QStringLiteral("[P1] Keep prefix\n/file.cpp:7\n\nBody"));
+
+    document.reconcileSource(
+      QStringLiteral(R"(::code-comment{title="[P3] Keep mismatch" body="Body" file="/file.cpp" priority=0})"),
+      Format::Markdown);
+    QTRY_COMPARE(payload(&document, 0).toList().first().toMap().value(QStringLiteral("priority")).toInt(), 0);
+    document.selection()->selectAll();
+    QCOMPARE(document.selection()->text(), QStringLiteral("P0 [P3] Keep mismatch\n/file.cpp\n\nBody"));
+}
+
+void
+MarkupSemanticTest::resolvesCodeCommentFileReferences_data()
+{
+    QTest::addColumn<QString>("directory");
+    QTest::addColumn<QString>("input");
+    QTest::addColumn<QString>("target");
+    QTest::addColumn<QString>("label");
+    const QString directory = QStringLiteral("/projects/Craftward");
+    QTest::newRow("absolute") << directory << directory + "/app/file.cpp" << directory + "/app/file.cpp"
+                              << QStringLiteral("app/file.cpp");
+    QTest::newRow("relative") << directory << QStringLiteral("app/file.cpp") << directory + "/app/file.cpp"
+                              << QStringLiteral("app/file.cpp");
+    QTest::newRow("workspace-qualified") << directory << QStringLiteral("Craftward/app/file.cpp")
+                                         << directory + "/app/file.cpp" << QStringLiteral("app/file.cpp");
+    QTest::newRow("trailing-directory-separator") << directory + "/" << QStringLiteral("Craftward/app/file.cpp")
+                                                  << directory + "/app/file.cpp" << QStringLiteral("app/file.cpp");
+    QTest::newRow("complete-segment") << directory << QStringLiteral("Craftward-tools/file.cpp")
+                                      << directory + "/Craftward-tools/file.cpp"
+                                      << QStringLiteral("Craftward-tools/file.cpp");
+    QTest::newRow("explicit-same-name-subdirectory")
+      << directory << QStringLiteral("./Craftward/file.cpp") << directory + "/./Craftward/file.cpp"
+      << QStringLiteral("./Craftward/file.cpp");
+    QTest::newRow("parent-segments") << directory << QStringLiteral("Craftward/link/../file.cpp")
+                                     << directory + "/link/../file.cpp" << QStringLiteral("link/../file.cpp");
+    QTest::newRow("absolute-parent-segments") << directory << directory + "/link/../file.cpp"
+                                              << directory + "/link/../file.cpp" << QStringLiteral("link/../file.cpp");
+    QTest::newRow("external") << directory << QStringLiteral("/shared/link/../file.cpp")
+                              << QStringLiteral("/shared/link/../file.cpp")
+                              << QStringLiteral("/shared/link/../file.cpp");
+    QTest::newRow("directory-boundary") << directory << QStringLiteral("/projects/Craftward-other/file.cpp")
+                                        << QStringLiteral("/projects/Craftward-other/file.cpp")
+                                        << QStringLiteral("/projects/Craftward-other/file.cpp");
+    QTest::newRow("unknown-directory") << QString() << QStringLiteral("Craftward/app/file.cpp")
+                                       << QStringLiteral("Craftward/app/file.cpp")
+                                       << QStringLiteral("Craftward/app/file.cpp");
+    QTest::newRow("relative-directory") << QStringLiteral("projects/Craftward")
+                                        << QStringLiteral("Craftward/app/file.cpp")
+                                        << QStringLiteral("Craftward/app/file.cpp")
+                                        << QStringLiteral("Craftward/app/file.cpp");
+    QTest::newRow("root-directory") << QStringLiteral("/") << QStringLiteral("app/file.cpp")
+                                    << QStringLiteral("/app/file.cpp") << QStringLiteral("app/file.cpp");
+}
+
+void
+MarkupSemanticTest::resolvesCodeCommentFileReferences()
+{
+    QFETCH(QString, directory);
+    QFETCH(QString, input);
+    QFETCH(QString, target);
+    QFETCH(QString, label);
+    MarkupDocumentModel document;
+    document.setBaseDirectory(directory);
+    document.reconcileSource(
+      QStringLiteral(R"(::code-comment{title="Review" body="Body" file="%1" start=7 end=9})").arg(input),
+      Format::Markdown);
+    QTRY_COMPARE(document.rowCount(), 1);
+    const auto part = payload(&document, 0).toList().first().toMap();
+    QCOMPARE(part.value(QStringLiteral("file")).toString(), target);
+    document.selection()->selectAll();
+    QCOMPARE(document.selection()->text(), QStringLiteral("Review\n") + label + QStringLiteral(":7–9\n\nBody"));
+}
+
+void
+MarkupSemanticTest::opensCodeCommentFilesThroughSymlinkParents()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto project = directory.filePath(QStringLiteral("Project"));
+    const auto actual = directory.filePath(QStringLiteral("actual"));
+    QVERIFY(QDir().mkpath(project));
+    QVERIFY(QDir().mkpath(actual + QStringLiteral("/nested")));
+    QVERIFY(QFile::link(actual + QStringLiteral("/nested"), project + QStringLiteral("/link")));
+    QVERIFY(QFileInfo(project + QStringLiteral("/link")).isSymLink());
+    const QByteArray expected = "reviewed source file";
+    QFile reviewed(actual + QStringLiteral("/file.cpp"));
+    QVERIFY(reviewed.open(QIODevice::WriteOnly));
+    QCOMPARE(reviewed.write(expected), expected.size());
+    reviewed.close();
+    QFile unrelated(project + QStringLiteral("/file.cpp"));
+    QVERIFY(unrelated.open(QIODevice::WriteOnly));
+    QVERIFY(unrelated.write("unrelated project file") > 0);
+    unrelated.close();
+
+    FileUrlReceiver receiver;
+    QDesktopServices::setUrlHandler(QStringLiteral("file"), &receiver, "open");
+    const auto cleanup = qScopeGuard([] { QDesktopServices::unsetUrlHandler(QStringLiteral("file")); });
+    ApplicationFiles files;
+    const QString suffix = QStringLiteral("link/../file.cpp");
+    for (const auto& input : { project + QLatin1Char('/') + suffix, suffix, QStringLiteral("Project/") + suffix }) {
+        MarkupDocumentModel document;
+        document.setBaseDirectory(project);
+        document.reconcileSource(QStringLiteral(R"(::code-comment{title="Review" body="Body" file="%1"})").arg(input),
+                                 Format::Markdown);
+        QTRY_COMPARE(document.rowCount(), 1);
+        const auto part = payload(&document, 0).toList().first().toMap();
+        document.selection()->selectAll();
+        QCOMPARE(document.selection()->text(), QStringLiteral("Review\nlink/../file.cpp\n\nBody"));
+        receiver.url.clear();
+        QVERIFY(files.openLocalFile(part.value(QStringLiteral("file")).toString()));
+        QVERIFY(!receiver.url.isEmpty());
+        QCOMPARE(receiver.url.toLocalFile(), QFileInfo(reviewed.fileName()).canonicalFilePath());
+        QFile opened(receiver.url.toLocalFile());
+        QVERIFY(opened.open(QIODevice::ReadOnly));
+        QCOMPARE(opened.readAll(), expected);
+    }
+}
+
+void
+MarkupSemanticTest::laysOutAndSelectsCodeCommentFields()
+{
+    MarkupDocumentModel document;
+    const QString source = QString::fromUtf8(
+      R"(::code-comment{title="[P2] 表格后的普通块间距需要保留，标题换行仍应对齐第一行文字" body="Need **real** text and `code`.\n\n- First\n- Second" file="/project/file.cpp" start=122 end=125 priority=2})");
+    document.reconcileSource(source, Format::Markdown);
+    QTRY_COMPARE(document.rowCount(), 1);
+    SelectionScene scene(&document);
+    QVERIFY2(scene.view, qPrintable(scene.component.errorString()));
+    scene.window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&scene.window));
+    QTRY_COMPARE(visualItems(scene.view.get(), QStringLiteral("markupCodeComment")).size(), 1);
+    auto* card = visualItems(scene.view.get(), QStringLiteral("markupCodeComment")).first();
+    auto* title = scene.editorContaining(QString::fromUtf8("表格后的"));
+    auto* badge = scene.editorContaining(QStringLiteral("P2"));
+    auto* location = scene.editorContaining(QStringLiteral("/project/file.cpp"));
+    auto* body = scene.editorContaining(QStringLiteral("Need real"));
+    QVERIFY(title && badge && location && body);
+    for (auto* editor : scene.editors())
+        QVERIFY(editor->setProperty("renderType", 1)); // TextEdit.NativeRendering, as in the application.
+    const auto baseline = [](QQuickItem* editor) {
+        QRectF rectangle;
+        QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, rectangle), Q_ARG(int, 0));
+        auto* text = editor->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+        return editor->mapToScene(QPointF(0, rectangle.y() + text->firstBlock().layout()->lineAt(0).ascent())).y();
+    };
+    QTRY_VERIFY(std::abs(baseline(title) - baseline(badge)) < 0.1);
+    QVERIFY(
+      title->property("textDocument").value<QQuickTextDocument*>()->textDocument()->firstBlock().layout()->lineCount() >
+      1);
+    QCOMPARE(body->property("font").value<QFont>().pixelSize(), 15);
+    QCOMPARE(title->property("font").value<QFont>().pixelSize(), 17);
+    QCOMPARE(body->mapToScene(QPointF()).x(), card->mapToScene(QPointF(18, 0)).x());
+    QVERIFY(title->mapToScene(QPointF()).x() > body->mapToScene(QPointF()).x());
+    const auto artifactDirectory = qEnvironmentVariable("CRAFTWARD_TEST_ARTIFACT_DIR");
+    if (!artifactDirectory.isEmpty())
+        QVERIFY(scene.window.grabWindow().save(artifactDirectory + QStringLiteral("/code-comment.png")));
+    document.selection()->selectAll();
+    QTRY_VERIFY(!title->property("selectedText").toString().isEmpty());
+    QTRY_COMPARE(badge->property("selectedText").toString(), QStringLiteral("P2"));
+    QTRY_VERIFY(body->property("selectedText").toString().contains(QStringLiteral("Need real")));
+    document.selection()->clear();
+    QSignalSpy requested(scene.view.get(), SIGNAL(fileLocationRequested(QString, int, int)));
+    QVERIFY(requested.isValid());
+    QTest::mouseClick(&scene.window, Qt::LeftButton, Qt::NoModifier, SelectionScene::pointAt(location, 2));
+    QTRY_COMPARE(requested.size(), 1);
+    QCOMPARE(requested.first(), QVariantList({ QStringLiteral("/project/file.cpp"), 122, 125 }));
+    QTest::mousePress(&scene.window, Qt::LeftButton, Qt::NoModifier, SelectionScene::pointAt(title, 0));
+    QTest::mouseMove(&scene.window, SelectionScene::pointAt(body, 9));
+    QTest::mouseRelease(&scene.window, Qt::LeftButton, Qt::NoModifier, SelectionScene::pointAt(body, 9));
+    QVERIFY(document.selection()->text().contains(QStringLiteral("/project/file.cpp:122–125\n\nNeed real")));
+    QCOMPARE(requested.size(), 1);
+
+    scene.view->setWidth(360);
+    QTRY_VERIFY(std::abs(baseline(title) - baseline(badge)) < 0.1);
+    QVERIFY(body->width() > 0);
+    if (!artifactDirectory.isEmpty()) {
+        document.selection()->clear();
+        QCoreApplication::processEvents();
+        QVERIFY(scene.window.grabWindow().save(artifactDirectory + QStringLiteral("/code-comment-narrow.png")));
+    }
+}
+
+void
+MarkupSemanticTest::opensLocalFilesWithEncodedUrls()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QString::fromUtf8("源文件 #1.cpp"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+    FileUrlReceiver receiver;
+    QDesktopServices::setUrlHandler(QStringLiteral("file"), &receiver, "open");
+    const auto cleanup = qScopeGuard([] { QDesktopServices::unsetUrlHandler(QStringLiteral("file")); });
+    ApplicationFiles files;
+    QVERIFY(!files.openLocalFile(QStringLiteral("relative.cpp")));
+    QVERIFY(!files.openLocalFile(directory.path()));
+    QVERIFY(!files.openLocalFile(directory.filePath(QStringLiteral("missing.cpp"))));
+    QVERIFY(receiver.url.isEmpty());
+    QVERIFY(files.openLocalFile(path));
+    QCOMPARE(receiver.url.toLocalFile(), path);
+    QVERIFY(receiver.url.fragment().isEmpty());
 }
 
 void

@@ -3,10 +3,11 @@
 
 use pulldown_cmark::{CodeBlockKind, Options};
 
+mod code_comment;
 mod semantic;
 pub use semantic::{
-    Alignment, ContainerKind, MappedText, NodeContent, SemanticBlock, SemanticDocument,
-    SemanticNode, TextKind, TextMapping, parse_semantic,
+    Alignment, CodeComment, ContainerKind, MappedText, NodeContent, SemanticBlock,
+    SemanticDocument, SemanticNode, TextKind, TextMapping, parse_semantic,
 };
 
 /// The source syntax interpreted by the markup parser.

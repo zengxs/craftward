@@ -48,6 +48,9 @@ decodedText(const SemanticBlock& block)
             text += node.text().value().text();
         else if (node.hasAnnotation())
             text += node.annotation().label().text();
+        else if (node.hasCodeComment())
+            text += node.codeComment().title().text() + QLatin1Char('\n') + node.codeComment().file().text() +
+                    QStringLiteral("\n\n");
     }
     return text;
 }
@@ -166,6 +169,16 @@ MarkupDocumentModel::reconcileSource(const QString& source, MarkupDocumentModel:
 }
 
 void
+MarkupDocumentModel::setBaseDirectory(const QString& directory)
+{
+    if (baseDirectory_ == directory)
+        return;
+    baseDirectory_ = directory;
+    ++generation_;
+    schedule();
+}
+
+void
 MarkupDocumentModel::schedule()
 {
     if (!timer_.isActive() && !watcher_.isRunning() && appliedGeneration_ != generation_)
@@ -176,12 +189,17 @@ void
 MarkupDocumentModel::dispatch()
 {
     // Workers own value snapshots only; document teardown never waits for them.
-    watcher_.setFuture(QtConcurrent::run(
-      [generation = generation_, source = source_, format = format_] { return parse(generation, source, format); }));
+    watcher_.setFuture(
+      QtConcurrent::run([generation = generation_, source = source_, format = format_, directory = baseDirectory_] {
+          return parse(generation, source, format, directory);
+      }));
 }
 
 MarkupDocumentModel::Result
-MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocumentModel::SourceFormat format)
+MarkupDocumentModel::parse(quint64 generation,
+                           const QString& source,
+                           MarkupDocumentModel::SourceFormat format,
+                           const QString& baseDirectory)
 {
     Result result{ .generation = generation };
     const QByteArray encoded = source.toUtf8();
@@ -239,7 +257,7 @@ MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocu
         result.segments.append(Segment{ .id = id,
                                         .text = text,
                                         .semantic = QVariant::fromValue(payload),
-                                        .parts = markupRenderParts(payload, listContexts) });
+                                        .parts = markupRenderParts(payload, listContexts, baseDirectory) });
         group.clear();
     };
     for (const auto& block : document.blocks()) {
@@ -256,7 +274,7 @@ MarkupDocumentModel::parse(quint64 generation, const QString& source, MarkupDocu
                     segment.text.chop(1);
                 segment.language = root.codeBlock().hasLanguage() ? root.codeBlock().language() : QString();
             } else if (supported(part)) {
-                const bool structuredGroup = root.hasTable() || root.hasList();
+                const bool structuredGroup = root.hasTable() || root.hasList() || root.hasCodeComment();
                 if (structuredGroup || group.size() >= MAX_GROUP_BLOCKS ||
                     (!group.isEmpty() && part.source().end() - groupStart > TARGET_GROUP_BYTES))
                     flushGroup();

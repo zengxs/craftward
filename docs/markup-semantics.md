@@ -64,6 +64,64 @@ unknown attributes, zero/overflowing indices, and incomplete syntax also remain
 text. A colon produced by an entity is not reinterpreted as directive syntax.
 Recognition is deliberately limited to this known extension.
 
+## Code Comments
+
+A standalone top-level paragraph can contain one complete review directive:
+
+```text
+::code-comment{title="[P2] Preserve block spacing" body="Keep the **ordinary** gap after the table." file="app/src/example.cpp" start=122 end=125 priority=2}
+```
+
+`title`, `body`, and `file` are required, nonempty, double-quoted strings.
+`start` and `end` are optional positive line numbers within Qt's signed integer
+range; `end` requires `start` and cannot precede it. An omitted end means the
+start line alone. Optional `priority` accepts 0 through 3, including an explicitly
+present zero. Numeric attributes may be bare or double quoted. Unknown or
+duplicate attributes and invalid ranges keep the entire paragraph literal.
+
+Quoted attributes decode `\"`, `\\`, `\n`, `\r`, and `\t`; other backslash escapes
+remain available to the embedded Markdown parser. The decoded body is parsed as
+a complete Markdown document with its own reference definitions. Its ordinary
+flat nodes become children of the typed comment node. Their byte provenance maps
+back through attribute escapes to the original message. Title and file metadata
+also retain decoded text and source mappings.
+
+Recognition happens before Markdown tokenizes attribute contents. Incomplete
+streaming directives remain literal until complete, and completed comments retain
+their identities and payloads when following blocks are appended. Separate cards
+require separate paragraphs. Use escaped newlines inside the body for paragraph
+breaks. Directives inside lists, quotes, code, HTML, link/image labels, or another
+comment body remain inert; nested review cards are not supported.
+
+The native card shows an optional priority badge beside the title, followed by
+the file location and an expanded Markdown body. It removes a leading `[P2] `
+from the title only when it matches the explicit priority and leaves a nonempty
+title; it never infers priority from the title. At a 14 px base font, the title uses 15 px bold text,
+the body 13 px text, and metadata 11 px text. Only the title reserves badge width;
+the location and body use the full padded content width. Badge and title text
+share the actual first-line baseline from TextEdit cursor geometry and the
+existing QTextLayout ascent, including when the title wraps.
+`MarkupPartsView` renders ordinary text and table parts for both the surrounding
+message and the embedded body, without a recursive card/component dependency.
+
+File paths resolve against the selected conversation's known working directory,
+and locations within that directory display a relative path with any line range.
+A leading workspace directory name is accepted as a qualifier: for a directory
+ending in `Craftward`, `Craftward/app/file.cpp` addresses `app/file.cpp` in that
+directory. Matching uses a complete path segment. A leading `./` explicitly
+addresses an ordinary relative path, including a nested directory with the same
+name as the workspace. Absolute paths outside the directory remain absolute in
+the label. Navigation and display preserve symlinks and parent-directory segments;
+they do not lexically collapse `link/..` before the filesystem resolves it.
+Changing the directory reprojects existing message models. Without directory
+metadata, relative paths remain unresolved rather than inheriting the application
+process directory. The location tooltip retains the full path. File clicks emit a typed
+path/start/end navigation request. The current window handler opens an existing
+absolute local file with the system default application. It resolves the target
+through the filesystem at click time before passing a canonical file URL to the
+operating system. It reports failure and does not jump to a line. The line range
+remains available for a future editor.
+
 ## Identity and Text Positions
 
 Block IDs combine the root kind and its starting source byte position. Node IDs
@@ -118,8 +176,10 @@ document and QML row for every short paragraph or list item.
 
 The `semanticSegment` role retains the group's typed semantic document, including
 original block IDs, node IDs, and decoded-text mappings. The `renderParts` role
-carries a value-only projection produced by the same worker. A part is either a
-text surface or a table with rows of independent text surfaces. The projection
+carries a value-only projection produced by the same worker. A part is a text
+surface, a table with rows of independent text surfaces, or a code-comment card
+with metadata surfaces and body parts. Cards occupy their own segments and keep
+the embedded body together as an indivisible structure. The projection
 contains text runs and formatting values, never a text document or measured
 geometry. Split outer list/table containers describe the selected child range;
 their ordered-list start is adjusted while child identities remain unchanged.
@@ -209,7 +269,12 @@ endpoints; replacing an endpoint's semantic node clears the selection.
 The selection index and native renderer consume the same text projection. Plain
 text copy uses newlines between blocks and table rows, tabs between cells, and
 preserves internal code whitespace. Lists copy their text without generated
-markers. Annotation labels copy their visible text. Copy does not materialize
+markers. Annotation labels copy their visible text. Review cards copy the badge
+and title on one line, the displayed file location on the next, and the decoded
+body after a blank line. These fields participate in the same message selection
+as surrounding prose and tables. Internal file links use the typed navigation
+request rather than passing an internal URL scheme to the operating system.
+Copy does not materialize
 offscreen documents and does not include another message.
 
 The native adapter maps between semantic UTF-16 offsets and document positions
@@ -242,6 +307,8 @@ segment positions throughout the update.
 Images, footnotes, admonitions, opaque unsupported nodes, and ordered starts that
 Qt cannot represent use a literal source fallback for their group. This preserves
 content without claiming complete visual support for those structures.
+Unsupported content inside a review body preserves the complete directive as
+literal source, following the same group fallback rule.
 Annotation labels are styled text; resolving their index, activating references,
 attaching controls, and displaying tooltips/popovers remain separate work.
 
@@ -288,6 +355,10 @@ horizontal scrolling and clipping, streaming append, and deselection.
 Complete and partial selections also retain bold, italic, and underlined syntax
 in both font rendering modes, allowing one 8-bit color step of compositing
 roundoff where underlines intersect glyphs.
+Review-card regressions cover attribute decoding and source provenance, optional
+priority, title deduplication, embedded Markdown, streaming, directory changes,
+native baseline alignment, full-width body layout, selection across fields,
+typed file-click routing, and local file URLs containing spaces and `#`.
 
 The next submission can add real inline controls and reference interactions.
 It must retain viewport materialization limits, stable identities, local model

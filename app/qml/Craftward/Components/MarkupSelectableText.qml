@@ -25,6 +25,8 @@ TextEdit {
     property real codeRadius: 4
     property var registeredHost: null
     readonly property alias bridge: adapter
+    property real firstLineBaseline: baselineOffset
+    property var linkHandler: null
 
     objectName: "markupProseText"
     readOnly: true
@@ -56,8 +58,17 @@ TextEdit {
         select(adapter.documentPosition(range.start), adapter.documentPosition(range.end));
     }
 
+    function activateLink(target) {
+        if (linkHandler)
+            linkHandler(target);
+        else
+            Qt.openUrlExternally(target);
+    }
+
     onSelectionHostChanged: registerHost()
     onCoordinatorChanged: selectionRefresh.restart()
+    onContentHeightChanged: selectionRefresh.restart()
+    onWidthChanged: selectionRefresh.restart()
     Component.onCompleted: {
         registerHost();
         selectionRefresh.restart();
@@ -139,6 +150,9 @@ TextEdit {
     Timer {
         id: selectionRefresh
         interval: 0
-        onTriggered: root.applySelection()
+        onTriggered: {
+            root.applySelection();
+            root.firstLineBaseline = root.positionToRectangle(0).y + adapter.firstLineAscent();
+        }
     }
 }

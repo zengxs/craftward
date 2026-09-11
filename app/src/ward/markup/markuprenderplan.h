@@ -53,7 +53,8 @@ struct MarkupListContext
 markupListContext(const ward::markup::v1::SemanticBlock& block);
 [[nodiscard]] QVariantList
 markupRenderParts(const ward::markup::v1::SemanticDocument& document,
-                  const QHash<QString, MarkupListContext>& listContexts = {});
+                  const QHash<QString, MarkupListContext>& listContexts = {},
+                  const QString& baseDirectory = {});
 [[nodiscard]] int
 markupListNumberDigits(const ward::markup::v1::SemanticBlock& block);
 [[nodiscard]] qreal

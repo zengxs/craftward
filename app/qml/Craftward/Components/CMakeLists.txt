@@ -4,6 +4,8 @@ qt_add_qml_module(CraftwardComponents
     SOURCES
         "${PROJECT_SOURCE_DIR}/src/components/applicationclipboard.cpp"
         "${PROJECT_SOURCE_DIR}/src/components/applicationclipboard.h"
+        "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.cpp"
+        "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.h"
         "${PROJECT_SOURCE_DIR}/src/components/macos/typography.mm"
         "${PROJECT_SOURCE_DIR}/src/components/macos/windowmovehelper.mm"
         "${PROJECT_SOURCE_DIR}/src/components/typography.h"
@@ -16,7 +18,9 @@ qt_add_qml_module(CraftwardComponents
         FrameTimingOverlay.qml
         IconButton.qml
         MenuComboBox.qml
+        MarkupPartsView.qml
         MarkupSegmentView.qml
+        MarkupCodeComment.qml
         MarkupSelectableText.qml
         MarkupSelectionHost.qml
         MarkupTable.qml

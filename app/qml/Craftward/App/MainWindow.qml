@@ -132,6 +132,23 @@ ApplicationWindow {
         timelineMotionDiagnosticsEnabled: window.frameTimingOverlayEnabled
         timelineRenderBenchmarkEnabled: window.timelineRenderBenchmarkEnabled
         timelineRenderBenchmarkThreadId: window.timelineRenderBenchmarkThreadId
+        onFileLocationRequested: (file, start, end) => {
+            // Keep the line range at the navigation boundary for the future editor.
+            // The system default application currently receives only the file URL.
+            if (!ApplicationFiles.openLocalFile(file)) {
+                fileOpenError.message = file;
+                fileOpenError.open();
+            }
+        }
+    }
+
+    ConfirmationDialog {
+        id: fileOpenError
+
+        title: /*% "Could not open this file with the default application." */ qsTrId("craftward.file.open_failed")
+        message: ""
+        acceptText: /*% "OK" */ qsTrId("craftward.action.ok")
+        rejectText: ""
     }
 
     FrameTimingOverlay {

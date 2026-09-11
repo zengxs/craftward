@@ -66,6 +66,7 @@ class CodexTimelineModel : public QAbstractListModel
                            const QList<CodexTurnTiming>& turnTimings = {});
     void clear();
     void retranslate();
+    void setBaseDirectory(const QString& directory);
 
   private:
     enum class ActivityPresentationKind
@@ -124,5 +125,6 @@ class CodexTimelineModel : public QAbstractListModel
     [[nodiscard]] MarkupDocumentModel* ensureMarkupDocument(const TimelineRow& row) const;
     void replaceRows(QList<TimelineRow> rows);
 
+    QString baseDirectory_;
     QList<TimelineRow> rows_;
 };

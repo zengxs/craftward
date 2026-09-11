@@ -21,4 +21,8 @@ QtObject {
     function documentPosition(surfacePosition) {
         return surfacePosition;
     }
+
+    function firstLineAscent() {
+        return 0;
+    }
 }

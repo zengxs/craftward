@@ -65,6 +65,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
               conversationController_.threadId().isEmpty() || containsThread(conversationController_.threadId());
             const bool lifecycleTargetRemains = !changingThreadLifecycle_ || containsThread(pendingLifecycleThreadId_);
             threadModel_.reconcileThreads(std::move(threads));
+            updateMarkupDirectory();
             setThreadErrorMessage({});
             if (!selectedThreadRemains)
                 clearSelection();
@@ -114,6 +115,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 break;
             }
             conversationController_.adoptConversation(threadId, event.conversation());
+            updateMarkupDirectory();
             setThreadStartErrorMessage({});
             setStartingThread(false);
             break;
@@ -136,6 +138,7 @@ CodexHistoryController::applyHistoryEvent(ward::codex::v1::HistoryEvent event, c
                 break;
             }
             conversationController_.adoptConversation(threadId, event.conversation());
+            updateMarkupDirectory();
             setForkingThread(false);
             break;
         case HistoryEventKind::HISTORY_EVENT_KIND_THREAD_FORK_ERROR: {

@@ -20,10 +20,10 @@ Control {
     property color textColor: palette.text
     property font codeFont: font
     property var renderParts: null
-    readonly property real listIndentWidth: MarkupListMetrics.indentWidth(renderParts, font)
     property var selectionCoordinator: null
     property var selectionHost: null
     readonly property var activeSelectionHost: selectionHost || localSelectionHost
+    signal fileLocationRequested(string file, int start, int end)
 
     padding: 0
     implicitWidth: 0
@@ -43,61 +43,39 @@ Control {
     contentItem: Loader {
         id: segmentLoader
 
-        sourceComponent: root.codeBlock ? codeSegment : (root.renderParts ? semanticProseSegment : proseSegment)
+        sourceComponent: {
+            if (root.codeBlock)
+                return codeSegment;
+            if (!root.renderParts)
+                return proseSegment;
+            return root.renderParts[0]?.kind === "codeComment" ? commentSegment : semanticProseSegment;
+        }
     }
 
     Component {
         id: semanticProseSegment
+        MarkupPartsView {
+            renderParts: root.renderParts
+            selectionCoordinator: root.selectionCoordinator
+            selectionHost: root.activeSelectionHost
+            font: root.font
+            codeFont: root.codeFont
+            textColor: root.textColor
+            linkColor: root.palette.link
+        }
+    }
 
-        Column {
-            id: parts
-            Repeater {
-                id: partRepeater
-                model: root.renderParts || []
-                delegate: Item {
-                    id: partItem
-                    required property var modelData
-                    required property int index
-                    width: parts.width
-                    implicitHeight: partLoader.implicitHeight + (index + 1 < partRepeater.count ? (modelData.spacingAfter ?? 8) : 0)
-                    Loader {
-                        id: partLoader
-                        width: parent.width
-                        sourceComponent: partItem.modelData.kind === "table" ? tablePart : textPart
-                        Component {
-                            id: textPart
-                            MarkupSelectableText {
-                                surface: partItem.modelData.surface
-                                coordinator: root.selectionCoordinator
-                                selectionHost: root.activeSelectionHost
-                                color: root.textColor
-                                font: root.font
-                                codeFont: root.codeFont
-                                listIndentWidth: root.listIndentWidth
-                                linkColor: root.palette.link
-                            }
-                        }
-                        Component {
-                            id: tablePart
-                            Item {
-                                implicitHeight: table.implicitHeight
-                                MarkupTable {
-                                    id: table
-                                    x: partItem.modelData.quoteIndent + partItem.modelData.listDepth * root.listIndentWidth
-                                    width: Math.max(1, parent.width - x)
-                                    part: partItem.modelData
-                                    coordinator: root.selectionCoordinator
-                                    selectionHost: root.activeSelectionHost
-                                    textColor: root.textColor
-                                    font: root.font
-                                    codeFont: root.codeFont
-                                    linkColor: root.palette.link
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    Component {
+        id: commentSegment
+        MarkupCodeComment {
+            part: root.renderParts[0]
+            coordinator: root.selectionCoordinator
+            selectionHost: root.activeSelectionHost
+            font: root.font
+            codeFont: root.codeFont
+            textColor: root.textColor
+            linkColor: root.palette.link
+            onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
         }
     }
 

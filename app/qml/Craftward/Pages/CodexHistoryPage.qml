@@ -15,6 +15,7 @@ Page {
     id: root
 
     required property CodexHistoryController controller
+    signal fileLocationRequested(string file, int start, int end)
     property bool timelineMotionDiagnosticsEnabled: false
     property bool timelineRenderBenchmarkEnabled: false
     property string timelineRenderBenchmarkThreadId: ""
@@ -449,6 +450,7 @@ Page {
                         timelineRenderBenchmarkEnabled: root.timelineRenderBenchmarkEnabled
                         timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
                         onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
+                        onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
                     }
 
                     CodexComposer {

@@ -525,10 +525,22 @@ CodexTimelineModel::ensureMarkupDocument(const TimelineRow& row) const
         return nullptr;
     if (!row.markupDocument) {
         row.markupDocument = std::make_shared<MarkupDocumentModel>(const_cast<CodexTimelineModel*>(this));
+        row.markupDocument->setBaseDirectory(baseDirectory_);
         row.markupDocument->reconcileSource(
           displayMessageText(row.message), messageSourceFormat(row.message), row.markupFinalized);
     }
     return row.markupDocument.get();
+}
+
+void
+CodexTimelineModel::setBaseDirectory(const QString& directory)
+{
+    if (baseDirectory_ == directory)
+        return;
+    baseDirectory_ = directory;
+    for (const auto& row : rows_)
+        if (row.markupDocument)
+            row.markupDocument->setBaseDirectory(directory);
 }
 
 void

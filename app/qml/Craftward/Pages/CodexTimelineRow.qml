@@ -51,6 +51,7 @@ Control {
 
     signal toggleTurnRequested(string turnId)
     signal forkRequested(string turnId)
+    signal fileLocationRequested(string file, int start, int end)
 
     function prepareItemForLayout(item) {
         if (!item)
@@ -293,6 +294,7 @@ Control {
             textColor: root.palette.text
             font: root.font
             codeFont: Typography.codeFont
+            onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
         }
     }
 

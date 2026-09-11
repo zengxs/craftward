@@ -94,6 +94,13 @@ fn node_to_wire(node: ward_markup::SemanticNode) -> wire::SemanticNode {
             index,
             label: Some(mapped_text(label)),
         }),
+        NodeContent::CodeComment(comment) => Body::CodeComment(wire::SemanticCodeComment {
+            title: Some(mapped_text(comment.title)),
+            file: Some(mapped_text(comment.file)),
+            start: comment.start,
+            end: comment.end,
+            priority: comment.priority,
+        }),
         NodeContent::TaskMarker { checked } => Body::TaskChecked(checked),
         NodeContent::Rule => Body::Rule(true),
         NodeContent::FootnoteDefinition { label } => Body::FootnoteDefinition(label),

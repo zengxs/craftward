@@ -293,3 +293,149 @@ fn structure_and_ranges_cover_empty_cells_footnotes_breaks_and_admonitions() {
         assert_eq!(texts(&document), "body");
     }
 }
+
+#[test]
+fn review_directives_preserve_metadata_and_parse_the_complete_markdown_body() {
+    let source = r#"::code-comment{priority=0 end=12 file="/work/你好.rs" body="**Bold** `a()` [guide](/guide \"Title\") &amp; 👩‍💻" title="[P0] Fix the range" start=10}"#;
+    let document = markdown(source);
+    assert_eq!(document.blocks.len(), 1);
+    let nodes = &document.blocks[0].nodes;
+    let NodeContent::CodeComment(comment) = &nodes[0].content else {
+        panic!("expected a review comment");
+    };
+    assert_eq!(comment.priority, Some(0));
+    assert_eq!(comment.start, Some(10));
+    assert_eq!(comment.end, Some(12));
+    assert_eq!(comment.title.text, "[P0] Fix the range");
+    assert_eq!(comment.file.text, "/work/你好.rs");
+    assert_eq!(texts(&document), "Bold a() guide & 👩‍💻");
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.content == NodeContent::Container(ContainerKind::Strong))
+    );
+    assert!(nodes.iter().any(|node| node.content
+        == NodeContent::Link {
+            target: "/guide".into(),
+            title: "Title".into()
+        }));
+    for node in nodes {
+        if let NodeContent::Text { value, .. } = &node.content {
+            let mapping = &value.mappings[0];
+            assert_eq!(mapping.utf16_range, 0..value.text.encode_utf16().count());
+            if mapping.verbatim {
+                assert_eq!(&source[mapping.source_range.clone()], value.text);
+            }
+        }
+    }
+}
+
+#[test]
+fn review_attribute_escapes_retain_original_source_provenance() {
+    let source = r#"::code-comment{title="Fix \"quoted\" text" body="First\n\n- **你好**\n- \\*literal\\* and `c:\\path`\n\n[ref][r]\n\n[r]: /resolved" file="src/a file.rs" start="42"}"#;
+    let document = markdown(source);
+    let NodeContent::CodeComment(comment) = &document.blocks[0].nodes[0].content else {
+        panic!()
+    };
+    assert_eq!(comment.title.text, "Fix \"quoted\" text");
+    assert!(!comment.title.mappings[0].verbatim);
+    assert_eq!(comment.start, Some(42));
+    assert_eq!(comment.end, None);
+    assert_eq!(comment.priority, None);
+    assert!(texts(&document).contains("*literal* and c:\\path"));
+    assert!(document.blocks[0].nodes.iter().any(
+        |node| matches!(&node.content, NodeContent::Link {target, ..} if target == "/resolved")
+    ));
+    let code = document.blocks[0]
+        .nodes
+        .iter()
+        .find(|node| {
+            matches!(
+                &node.content,
+                NodeContent::Text {
+                    kind: TextKind::InlineCode,
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    assert_eq!(&source[code.source_range.clone()], r"`c:\\path`");
+}
+
+#[test]
+fn review_directives_require_a_standalone_non_code_paragraph() {
+    let directive = r#"::code-comment{title="Title" body="Body" file="src/a.cpp"}"#;
+    for source in [
+        format!("`{directive}`"),
+        format!("```md\n{directive}\n```"),
+        format!("    {directive}"),
+        format!("\\{directive}"),
+        format!("**{directive}**"),
+        format!("[{directive}](/example)"),
+        format!("![{directive}](/example)"),
+        format!("> {directive}"),
+        format!("- {directive}"),
+        format!("<div>\n{directive}\n</div>"),
+        format!("Before {directive}"),
+        format!("{directive} after"),
+    ] {
+        assert!(
+            !markdown(&source)
+                .blocks
+                .iter()
+                .flat_map(|block| &block.nodes)
+                .any(|node| matches!(node.content, NodeContent::CodeComment(_))),
+            "unexpected review card: {source}"
+        );
+    }
+    assert_eq!(
+        texts(&parse_semantic(directive, SourceFormat::PlainText)),
+        directive
+    );
+    let nested = directive.replace("Body", &directive.replace('"', "\\\""));
+    assert_eq!(
+        markdown(&nested).blocks[0]
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.content, NodeContent::CodeComment(_)))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn malformed_or_streaming_review_directives_remain_literal() {
+    let directive = r#"::code-comment{title="Title" body="**Body** with a } brace" file="src/a.cpp" start=8 end=9 priority=2}"#;
+    for (end, _) in directive
+        .char_indices()
+        .filter(|(index, _)| *index >= "::code-comment{".len())
+    {
+        let prefix = &directive[..end];
+        let document = markdown(prefix);
+        assert_eq!(texts(&document), prefix);
+        assert!(
+            !document.blocks[0]
+                .nodes
+                .iter()
+                .any(|node| matches!(node.content, NodeContent::CodeComment(_)))
+        );
+    }
+    for source in [
+        directive.replace("priority=2", "priority=4"),
+        directive.replace("priority=2", "priority=-1"),
+        directive.replace("start=8", "start=0"),
+        directive.replace("start=8", "start=2147483648"),
+        directive.replace("start=8", "start=4294967296"),
+        directive.replace("start=8 ", ""),
+        directive.replace("end=9", "end=7"),
+        directive.replace("priority=2", "priority=2 priority=1"),
+        directive.replace("priority=2", "unknown=2"),
+        directive.replace("title=\"Title\"", "title=\"\""),
+        directive.replace("file=\"src/a.cpp\"", "file=\"\""),
+    ] {
+        assert_eq!(texts(&markdown(&source)), source);
+    }
+    let before = markdown(&format!("Stable.\n\n{directive}"));
+    let after = markdown(&format!("Stable.\n\n{directive}\n\nTail"));
+    assert_eq!(before.blocks, after.blocks[..2]);
+}

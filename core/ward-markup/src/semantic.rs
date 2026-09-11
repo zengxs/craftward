@@ -65,6 +65,16 @@ pub enum Alignment {
     Right,
 }
 
+/// Review metadata. Markdown body nodes are ordinary children of this node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodeComment {
+    pub title: MappedText,
+    pub file: MappedText,
+    pub start: Option<u32>,
+    pub end: Option<u32>,
+    pub priority: Option<u32>,
+}
+
 /// Only the active variant's metadata applies to this node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NodeContent {
@@ -78,6 +88,7 @@ pub enum NodeContent {
     Image { target: String, title: String },
     Text { kind: TextKind, value: MappedText },
     Annotation { index: u32, label: MappedText },
+    CodeComment(CodeComment),
     TaskMarker { checked: bool },
     Rule,
     FootnoteDefinition { label: String },
@@ -113,6 +124,7 @@ impl NodeContent {
                 TextKind::Unsupported => "unsupported",
             },
             Self::Annotation { .. } => "annotation",
+            Self::CodeComment(_) => "code-comment",
             Self::TaskMarker { .. } => "task",
             Self::Rule => "rule",
             Self::FootnoteDefinition { .. } => "footnote-definition",
@@ -140,7 +152,7 @@ pub struct TextMapping {
 }
 
 impl MappedText {
-    fn new(source: &str, source_range: Range<usize>, text: String) -> Self {
+    pub(crate) fn new(source: &str, source_range: Range<usize>, text: String) -> Self {
         let verbatim = source[source_range.clone()] == text;
         let utf16_length = text.encode_utf16().count();
         Self {
@@ -154,11 +166,15 @@ impl MappedText {
     }
 }
 
-/// Parses the complete message snapshot, including inline structure and Codex
-/// annotations. This does not replace the legacy bounded-block parse interface.
+/// Parses the complete message snapshot, including inline structure, Codex
+/// annotations, and standalone review comments.
 /// Unchanged node kinds and starts retain IDs on append; syntax reinterpretation
 /// can replace nodes. Arbitrary edits require caller-owned reconciliation.
 pub fn parse_semantic(source: &str, format: SourceFormat) -> SemanticDocument {
+    parse_snapshot(source, format, true)
+}
+
+fn parse_snapshot(source: &str, format: SourceFormat, code_comments: bool) -> SemanticDocument {
     let mut builder = Builder::new(source);
     if format == SourceFormat::PlainText {
         if !source.is_empty() {
@@ -187,6 +203,24 @@ pub fn parse_semantic(source: &str, format: SourceFormat) -> SemanticDocument {
             }
             match event {
                 Event::Start(tag) => {
+                    if code_comments
+                        && builder.parents.is_empty()
+                        && tag == Tag::Paragraph
+                        && source[range.clone()].starts_with("::code-comment{")
+                    {
+                        if let Some(comment) = crate::code_comment::parse(source, range.clone()) {
+                            let end = range.start + source[range.clone()].trim_end().len();
+                            builder.code_comment(comment, range.start..end);
+                        } else {
+                            builder.text(
+                                TextKind::Literal,
+                                source[range.clone()].trim_end_matches(['\r', '\n']),
+                                range,
+                            );
+                        }
+                        opaque_depth = 1;
+                        continue;
+                    }
                     let content = container(tag);
                     if let Some(content) = content {
                         let index = builder.push(content, range);
@@ -380,6 +414,32 @@ impl<'a> Builder<'a> {
             &text[copied..],
             range.start + copied..range.end,
         );
+    }
+
+    fn code_comment(&mut self, parsed: crate::code_comment::ParsedComment, range: Range<usize>) {
+        let parent = self.push(NodeContent::CodeComment(parsed.comment), range);
+        // The body is a complete embedded Markdown document, with its own references.
+        // Nested directive examples remain inert to avoid recursive review cards.
+        let body = parse_snapshot(&parsed.body.value.text, SourceFormat::Markdown, false);
+        for block in body.blocks {
+            let offset = self.nodes.len();
+            for mut node in block.nodes {
+                node.parent = Some(node.parent.map_or(parent, |index| index + offset));
+                node.source_range = parsed.body.source_range(node.source_range);
+                match &mut node.content {
+                    NodeContent::Text { value, .. }
+                    | NodeContent::Annotation { label: value, .. } => {
+                        *value = MappedText::new(
+                            self.source,
+                            node.source_range.clone(),
+                            std::mem::take(&mut value.text),
+                        );
+                    }
+                    _ => {}
+                }
+                self.nodes.push(node);
+            }
+        }
     }
 
     fn finish_block(&mut self) {

@@ -158,6 +158,67 @@ mod tests {
     }
 
     #[test]
+    fn serializes_code_comment_metadata_and_markdown_children() {
+        let source = r#"::code-comment{title="[P0] 修复" body="Use **bold** and `code`.\n\nSecond paragraph." file="/project/file.cpp" start=2 end=4 priority=0}"#;
+        let mut error = std::ptr::null_mut();
+        // SAFETY: Source and error output are valid until the call returns.
+        let buffer = unsafe {
+            ward_core_markup_parse_semantic(
+                WardMarkupSourceFormat::Markdown,
+                source.as_ptr(),
+                source.len(),
+                &raw mut error,
+            )
+        };
+        assert!(!buffer.is_null());
+        assert!(error.is_null());
+        // SAFETY: The owned buffer remains live while it is decoded.
+        let document = unsafe {
+            wire::SemanticDocument::decode(std::slice::from_raw_parts(
+                ward_core_owned_buffer_data(buffer),
+                ward_core_owned_buffer_size(buffer),
+            ))
+        }
+        .unwrap();
+        // SAFETY: Decoding owns its data; release the buffer exactly once.
+        unsafe { ward_core_owned_buffer_destroy(buffer) };
+        assert_eq!(document.blocks.len(), 1);
+        let nodes = &document.blocks[0].nodes;
+        use wire::semantic_node::Body;
+        let Some(Body::CodeComment(comment)) = &nodes[0].body else {
+            panic!("expected a code comment");
+        };
+        assert_eq!(comment.title.as_ref().unwrap().text, "[P0] 修复");
+        assert_eq!(comment.file.as_ref().unwrap().text, "/project/file.cpp");
+        assert_eq!(
+            (comment.start, comment.end, comment.priority),
+            (Some(2), Some(4), Some(0))
+        );
+        assert_eq!(
+            nodes
+                .iter()
+                .filter(|node| node.parent_index == Some(0))
+                .count(),
+            2
+        );
+        assert!(nodes.iter().any(|node| matches!(node.body, Some(Body::Container(kind)) if kind == wire::ContainerKind::Strong as i32)));
+        let code = nodes
+            .iter()
+            .find_map(|node| match &node.body {
+                Some(Body::Text(text)) if text.kind == wire::TextKind::InlineCode as i32 => {
+                    Some(text.value.as_ref().unwrap())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(code.text, "code");
+        let mapping = &code.mappings[0];
+        let range = mapping.source.as_ref().unwrap();
+        assert_eq!(&source[range.start as usize..range.end as usize], "`code`");
+        assert!(!mapping.verbatim);
+    }
+
+    #[test]
     fn semantic_interface_accepts_empty_input_and_rejects_invalid_input() {
         let mut error = std::ptr::null_mut();
         // SAFETY: A zero-length input may have a null source pointer.

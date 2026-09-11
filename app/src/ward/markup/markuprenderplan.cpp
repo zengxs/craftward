@@ -3,8 +3,11 @@
 
 #include "markuprenderplan.h"
 
+#include <QDir>
+
 #include <algorithm>
 #include <array>
+#include <utility>
 
 namespace {
 using namespace ward::markup::v1;
@@ -12,11 +15,40 @@ using ContainerKind = ContainerKindGadget::ContainerKind;
 using TextKind = TextKindGadget::TextKind;
 using ColumnAlignment = ColumnAlignmentGadget::ColumnAlignment;
 
+struct CommentFileLocation
+{
+    QString path;
+    QString displayPath;
+};
+
+CommentFileLocation
+commentFileLocation(const QString& file, const QString& baseDirectory)
+{
+    if (baseDirectory.isEmpty() || !QDir::isAbsolutePath(baseDirectory))
+        return { file, file };
+
+    const QString basePrefix =
+      baseDirectory.endsWith(QLatin1Char('/')) ? baseDirectory : baseDirectory + QLatin1Char('/');
+    if (QDir::isAbsolutePath(file))
+        return { file, file.startsWith(basePrefix) ? file.mid(basePrefix.size()) : file };
+
+    QString relative = file;
+    const QString workspacePrefix = QDir(baseDirectory).dirName() + QLatin1Char('/');
+    if (relative.startsWith(workspacePrefix))
+        relative.remove(0, workspacePrefix.size());
+    // Concatenate without lexical cleanup: link/.. must be resolved by the filesystem.
+    // A leading ./ explicitly addresses a relative directory with the workspace's name.
+    return { basePrefix + relative, relative };
+}
+
 class Projector
 {
   public:
-    QVariantList project(const SemanticDocument& document, const QHash<QString, MarkupListContext>& listContexts)
+    QVariantList project(const SemanticDocument& document,
+                         const QHash<QString, MarkupListContext>& listContexts,
+                         const QString& baseDirectory)
     {
+        baseDirectory_ = baseDirectory;
         for (const auto& block : document.blocks()) {
             blockId_ = block.blockId();
             const auto context = listContexts.constFind(blockId_);
@@ -141,6 +173,57 @@ class Projector
         }
     }
 
+    void codeComment(qsizetype index)
+    {
+        flush();
+        auto surrounding = std::exchange(parts_, {});
+        children(index, {}, 0, 0);
+        flush();
+        const auto body = std::exchange(parts_, std::move(surrounding));
+        const auto comment = nodes_[index].codeComment();
+        const QString prefix = key(index);
+        const auto text = [&](const QString& field, const QString& value, const QString& separator, bool link = false) {
+            MarkupTextSurface surface;
+            surface.separator = separator;
+            MarkupTextRun run{ .key = prefix + QLatin1Char('/') + field, .text = value };
+            if (link) {
+                run.format.setAnchor(true);
+                run.format.setAnchorHref(QStringLiteral("code-comment:location"));
+                run.format.setFontUnderline(true);
+            }
+            surface.blocks.append({ .key = run.key, .runs = { run } });
+            return QVariant::fromValue(surface);
+        };
+        const QString priority = comment.hasPriority() ? QStringLiteral("P%1").arg(comment.priority()) : QString();
+        QString title = comment.title().text();
+        if (!priority.isEmpty() && title.startsWith(QLatin1Char('[') + priority + QStringLiteral("] ")) &&
+            !title.mid(priority.size() + 3).trimmed().isEmpty())
+            title.remove(0, priority.size() + 3);
+        const auto file = commentFileLocation(comment.file().text(), baseDirectory_);
+        QString location = file.displayPath;
+        if (comment.hasStart()) {
+            location += QLatin1Char(':') + QString::number(comment.start());
+            if (comment.hasEnd() && comment.end() != comment.start())
+                location += QChar(0x2013) + QString::number(comment.end());
+        }
+        QVariantMap part{
+            { QStringLiteral("kind"), QStringLiteral("codeComment") },
+            { QStringLiteral("priority"), comment.hasPriority() ? int(comment.priority()) : -1 },
+            { QStringLiteral("title"),
+              text(QStringLiteral("title"), title, priority.isEmpty() ? QStringLiteral("\n\n") : QStringLiteral(" ")) },
+            { QStringLiteral("location"), text(QStringLiteral("location"), location, QStringLiteral("\n"), true) },
+            { QStringLiteral("file"), file.path },
+            { QStringLiteral("start"), comment.hasStart() ? int(comment.start()) : 0 },
+            { QStringLiteral("end"),
+              comment.hasEnd() ? int(comment.end()) : (comment.hasStart() ? int(comment.start()) : 0) },
+            { QStringLiteral("body"), body },
+            { QStringLiteral("spacingAfter"), 12 }
+        };
+        if (!priority.isEmpty())
+            part.insert(QStringLiteral("badge"), text(QStringLiteral("priority"), priority, QStringLiteral("\n\n")));
+        parts_.append(part);
+    }
+
     void node(qsizetype index, MarkupTextRun style, int quote, int indent)
     {
         const auto& value = nodes_[index];
@@ -172,6 +255,8 @@ class Projector
             list(index, style, quote, indent);
         } else if (value.hasTable()) {
             table(index, style, quote, indent);
+        } else if (value.hasCodeComment()) {
+            codeComment(index);
         } else if (value.hasTaskChecked()) {
             if (!surface_.blocks.isEmpty())
                 surface_.blocks.last().format.setMarker(value.taskChecked() ? QTextBlockFormat::MarkerType::Checked
@@ -221,6 +306,7 @@ class Projector
     }
 
     QString blockId_;
+    QString baseDirectory_;
     MarkupListContext listContext_;
     QList<SemanticNode> nodes_;
     QList<QList<qsizetype>> children_;
@@ -255,9 +341,10 @@ MarkupTextSurface::text() const
 
 QVariantList
 markupRenderParts(const ward::markup::v1::SemanticDocument& document,
-                  const QHash<QString, MarkupListContext>& listContexts)
+                  const QHash<QString, MarkupListContext>& listContexts,
+                  const QString& baseDirectory)
 {
-    return Projector().project(document, listContexts);
+    return Projector().project(document, listContexts, baseDirectory);
 }
 
 MarkupListContext
@@ -316,6 +403,14 @@ markupSurfaces(const QVariantList& parts)
         const auto part = partValue.toMap();
         if (part.contains(QStringLiteral("surface"))) {
             result.append(part.value(QStringLiteral("surface")).value<MarkupTextSurface>());
+        } else if (part.value(QStringLiteral("kind")) == QStringLiteral("codeComment")) {
+            for (const auto& field : { QStringLiteral("badge"), QStringLiteral("title"), QStringLiteral("location") })
+                if (part.contains(field))
+                    result.append(part.value(field).value<MarkupTextSurface>());
+            auto body = markupSurfaces(part.value(QStringLiteral("body")).toList());
+            if (!body.isEmpty())
+                body.first().separator = QStringLiteral("\n\n");
+            result.append(body);
         } else {
             for (const auto& row : part.value(QStringLiteral("rows")).toList()) {
                 for (const auto& cell : row.toMap().value(QStringLiteral("cells")).toList())

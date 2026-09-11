@@ -6,6 +6,7 @@
 #include "markuplistmetrics.h"
 #include "markuprenderplan.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QFontInfo>
 #include <QTextBlock>
 #include <QTextBoundaryFinder>
@@ -78,6 +79,17 @@ MarkupTextDocument::hasInlineCode() const
             if (run.code && !run.text.isEmpty())
                 return true;
     return false;
+}
+
+qreal
+MarkupTextDocument::firstLineAscent() const
+{
+    auto* document = document_ ? document_->textDocument() : nullptr;
+    if (!document)
+        return 0;
+    document->documentLayout()->documentSize();
+    const auto* layout = document->firstBlock().layout();
+    return layout && layout->lineCount() ? layout->lineAt(0).ascent() : 0;
 }
 
 void

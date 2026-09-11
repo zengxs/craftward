@@ -223,6 +223,7 @@ class CodexHistoryControllerTest : public QObject
     void initTestCase();
     void cleanupTestCase();
     void updatesPollingVisibilityState();
+    void scopesCodeCommentPathsToTheSelectedThread();
     void retranslatesTimelinePresentationWhenRequested();
     void classifiesContextCompactionAsStandaloneActivity();
     void exposesStableActivityPresentationKinds();
@@ -268,6 +269,56 @@ void
 CodexHistoryControllerTest::cleanupTestCase()
 {
     QVERIFY(QCoreApplication::removeTranslator(&englishTranslator_));
+}
+
+void
+CodexHistoryControllerTest::scopesCodeCommentPathsToTheSelectedThread()
+{
+    CodexHistoryController controller(nullptr, nullptr);
+    auto page = threadPageEvent(QStringLiteral("Project review"));
+    auto summary = page.threadPage().threads().first();
+    summary.setWorkingDirectory(QStringLiteral("/project-one"));
+    auto threads = page.threadPage();
+    threads.setThreads({ summary });
+    page.setThreadPage(threads);
+    controller.applyHistoryEvent(page, {});
+    const auto content =
+      messageItem(QStringLiteral("turn-1"),
+                  QStringLiteral("review"),
+                  MessageRole::MESSAGE_ROLE_AGENT,
+                  MessagePhase::MESSAGE_PHASE_FINAL_ANSWER,
+                  QStringLiteral(R"(::code-comment{title="Review" body="Body" file="src/file.cpp" start=2})"));
+    controller.selectThread(QStringLiteral("thread-new"), QStringLiteral("Project review"));
+    controller.applyHistoryEvent(
+      conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_CONVERSATION_UPDATED, { content }), {});
+    auto* timeline = controller.conversation()->timeline();
+    const auto documentForRow = [timeline] {
+        return qobject_cast<MarkupDocumentModel*>(
+          timeline->data(timeline->index(0), CodexTimelineModel::MarkupDocumentRole).value<QObject*>());
+    };
+    auto* document = documentForRow();
+    QVERIFY(document);
+    QTRY_COMPARE(document->rowCount(), 1);
+    const auto file = [](MarkupDocumentModel* model) {
+        const auto parts = model->data(model->index(0), MarkupDocumentModel::RenderPartsRole).toList();
+        return parts.isEmpty() ? QString() : parts.first().toMap().value(QStringLiteral("file")).toString();
+    };
+    QCOMPARE(file(document), QStringLiteral("/project-one/src/file.cpp"));
+    summary.setWorkingDirectory(QStringLiteral("/project-two"));
+    threads.setThreads({ summary });
+    page.setThreadPage(threads);
+    controller.applyHistoryEvent(page, {});
+    QTRY_COMPARE(file(document), QStringLiteral("/project-two/src/file.cpp"));
+    QCOMPARE(documentForRow(), document);
+
+    // An adopted thread without a known directory cannot inherit the previous one.
+    auto next = conversationEvent(HistoryEventKind::HISTORY_EVENT_KIND_THREAD_STARTED, { content });
+    next.setThreadId(QStringLiteral("thread-other"));
+    controller.applyHistoryEvent(next, {});
+    document = documentForRow();
+    QVERIFY(document);
+    QTRY_COMPARE(document->rowCount(), 1);
+    QTRY_COMPARE(file(document), QStringLiteral("src/file.cpp"));
 }
 
 void

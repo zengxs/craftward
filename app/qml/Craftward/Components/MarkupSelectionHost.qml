@@ -136,8 +136,12 @@ Item {
                 root.extendAt(mouse.x, mouse.y);
             if (!moved && root.coordinator && !root.coordinator.hasSelection && !(mouse.modifiers & Qt.ShiftModifier)) {
                 const hit = root.hitAt(mouse.x, mouse.y, false);
-                if (hit && pressLink && hit.surface.linkAt(hit.x, hit.y) === pressLink)
-                    Qt.openUrlExternally(pressLink);
+                if (hit && pressLink && hit.surface.linkAt(hit.x, hit.y) === pressLink) {
+                    if (typeof hit.surface.activateLink === "function")
+                        hit.surface.activateLink(pressLink);
+                    else
+                        Qt.openUrlExternally(pressLink);
+                }
             }
             root.dragging = false;
         }

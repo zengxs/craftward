@@ -89,6 +89,17 @@ message SemanticAnnotation {
   MappedText label = 2;
 }
 
+// A standalone review directive. Its Markdown body uses ordinary child nodes.
+message SemanticCodeComment {
+  MappedText title = 1;
+  MappedText file = 2;
+  // One-based source lines; an absent end denotes the start line only.
+  optional uint32 start = 3;
+  optional uint32 end = 4;
+  // Zero is P0. Absence does not imply a priority.
+  optional uint32 priority = 5;
+}
+
 // Nodes are stored in preorder, with the parent preceding its children.
 // node_id is block-scoped identity; parent_index is only a snapshot-local
 // index.
@@ -113,6 +124,7 @@ message SemanticNode {
     string footnote_definition = 16;
     string footnote_reference = 17;
     string admonition_kind = 18;
+    SemanticCodeComment code_comment = 19;
   }
 }
 
