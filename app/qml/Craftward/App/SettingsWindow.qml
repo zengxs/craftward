@@ -8,6 +8,7 @@ import Craftward.Design
 import Craftward.Features.Legal
 import Craftward.Localization
 import Craftward.Pages
+import Craftward.Terminal
 
 ApplicationWindow {
     id: root
@@ -17,6 +18,7 @@ ApplicationWindow {
     property string commitHash
     property int currentPage: 0
     required property LocalizationController localizationController
+    required property TerminalController terminalController
     readonly property real titleBarInset: SafeArea.margins.top
 
     function present(pageIndex) {
@@ -160,6 +162,7 @@ ApplicationWindow {
 
                 SettingsGeneralPage {
                     localizationController: root.localizationController
+                    terminalController: root.terminalController
                 }
 
                 AboutPage {

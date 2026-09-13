@@ -92,7 +92,7 @@ Item {
         function test_exposesForkOnlyWhenRequested() {
             const forkButton = findChild(suite.actions, "codexMessageForkButton");
             verify(forkButton !== null);
-            compare(forkButton.contentItem.rotation, -90);
+            compare(forkButton.contentItem.rotation, 90);
 
             mouseClick(forkButton);
             compare(forkSpy.count, 1);

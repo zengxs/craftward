@@ -31,6 +31,7 @@ qt_add_qml_module(CraftwardPages
         CodexTimelineViewport.qml
         CodexTurnControlState.qml
         SettingsGeneralPage.qml
+        TerminalPanel.qml
         TimelineMotionDiagnostics.qml
         TimelineRenderBenchmark.qml
         TimelineRenderMetrics.qml
@@ -42,6 +43,7 @@ target_link_libraries(CraftwardPages
         CraftwardCodexplugin
         CraftwardDesign
         CraftwardLocalizationplugin
+        CraftwardTerminalplugin
         Qt6::Quick
         Qt6::QuickControls2
         Qt6::QuickDialogs2

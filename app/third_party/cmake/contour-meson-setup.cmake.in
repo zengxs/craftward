@@ -1,0 +1,23 @@
+# Reconfigure local source edits; discard incompatible Meson configuration caches.
+set(meson_mode)
+execute_process(COMMAND "@contour_meson@" --version
+    OUTPUT_VARIABLE current_version OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+if(EXISTS "@meson_build@/meson-private/coredata.dat")
+    file(READ "@meson_build@/meson-info/meson-info.json" info)
+    string(JSON previous_version GET "${info}" meson_version full)
+    string(JSON previous_source GET "${info}" directories source)
+    if(previous_version STREQUAL current_version AND previous_source STREQUAL "@meson_source@"
+            AND NOT "@machine_file@" IS_NEWER_THAN "@meson_build@/meson-private/coredata.dat")
+        set(meson_mode --reconfigure --clearcache)
+    else()
+        set(meson_mode --wipe)
+    endif()
+endif()
+execute_process(
+    COMMAND "@contour_meson@" setup ${meson_mode}
+        "@meson_build@" "@meson_source@"
+        --cross-file "@machine_file@" --prefix "@meson_prefix@" --libdir lib
+        --buildtype release --default-library static --wrap-mode nodownload
+        @meson_options@
+    COMMAND_ERROR_IS_FATAL ANY
+)

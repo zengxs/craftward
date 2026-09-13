@@ -10,11 +10,13 @@ import QtQuick.Layouts
 import Craftward.Codex
 import Craftward.Components
 import Craftward.Design
+import Craftward.Terminal
 
 Page {
     id: root
 
     required property CodexHistoryController controller
+    property TerminalController terminalController: null
     signal fileLocationRequested(string file, int start, int end)
     property bool timelineMotionDiagnosticsEnabled: false
     property bool timelineRenderBenchmarkEnabled: false
@@ -292,184 +294,228 @@ Page {
             SplitView.minimumWidth: 360
             SplitView.fillWidth: true
 
-            ColumnLayout {
-                anchors {
-                    fill: parent
-                    topMargin: root.titleBarHeight + 14
-                    leftMargin: 22
-                    rightMargin: Math.max(22, root.SafeArea.margins.right)
-                }
-                spacing: 12
-
-                RowLayout {
-                    Layout.fillWidth: true
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.conversation.title || /*% "Conversation" */ qsTrId("craftward.codex.history.conversation.title")
-                        font.pixelSize: 24
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
-                    }
-
-                    Button {
-                        text: /*% "Rename…" */ qsTrId("craftward.action.rename_ellipsis")
-                        visible: root.conversation.threadId.length > 0 && !root.controller.showingArchived
-                        enabled: renameDialog.renameAllowed
-                        onClicked: renameDialog.begin()
-                    }
-
-                    Button {
-                        text: root.controller.showingArchived ? /*% "Restore" */ qsTrId("craftward.action.restore") : /*% "Archive…" */ qsTrId("craftward.action.archive_ellipsis")
-                        visible: root.conversation.threadId.length > 0
-                        enabled: root.controller.showingArchived ? historyActionState.canRestore : historyActionState.canArchive
-                        onClicked: {
-                            if (root.controller.showingArchived)
-                                root.controller.restoreSelectedThread();
-                            else
-                                archiveDialog.open();
-                        }
-                    }
-
-                    Rectangle {
-                        implicitWidth: runtimeStateLayout.implicitWidth + 16
-                        implicitHeight: runtimeStateLayout.implicitHeight + 8
-                        radius: height / 2
-                        color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerSurface : root.palette.alternateBase
-                        border.color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerBorder : root.palette.mid
-                        visible: root.conversation.threadId.length > 0
-
-                        RowLayout {
-                            id: runtimeStateLayout
-
-                            anchors.centerIn: parent
-                            spacing: 6
-
-                            Rectangle {
-                                Layout.preferredWidth: 7
-                                Layout.preferredHeight: 7
-                                radius: width / 2
-                                color: root.runtimeIndicatorColor
-                            }
-
-                            Label {
-                                text: root.runtimeStatusText
-                                color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerForeground : root.palette.placeholderText
-                                font.pixelSize: 11
-                            }
-                        }
-                    }
-
-                    BusyIndicator {
-                        Layout.preferredWidth: 22
-                        Layout.preferredHeight: 22
-                        running: root.conversation.loading || root.controller.startingThread || root.controller.forkingThread || root.conversation.turnInFlight || root.controller.changingThreadLifecycle
-                        visible: running
+            SplitView {
+                id: conversationSplit
+                anchors.fill: parent
+                orientation: Qt.Vertical
+                handle: Rectangle {
+                    id: terminalDivider
+                    implicitHeight: 1
+                    color: SplitHandle.pressed ? TailwindColors.zinc400 : SplitHandle.hovered ? TailwindColors.zinc300 : TailwindColors.zinc200
+                    containmentMask: Item {
+                        y: (terminalDivider.height - height) / 2
+                        width: terminalDivider.width
+                        height: 8
                     }
                 }
-
-                ListView {
-                    id: interactionList
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(contentHeight, 360)
-                    Layout.maximumHeight: 360
-                    clip: true
-                    spacing: 8
-                    model: root.conversation.interactions
-                    enabled: !root.controller.startingThread
-                    visible: count > 0 && !root.controller.showingArchived
-                    ScrollBar.vertical: OverlayScrollBar {}
-
-                    delegate: CodexInteractionCard {
-                        id: interactionCard
-
-                        width: ListView.view.width
-                        onApprovalSubmitted: decision => root.conversation.respondToApproval(interactionId, decision)
-                        onUserInputSubmitted: answers => root.conversation.respondToUserInput(interactionId, answers)
-                    }
+                onResizingChanged: {
+                    if (!resizing && root.terminalController && terminalPanel.visible)
+                        root.terminalController.panelHeight = Math.round(terminalPanel.height);
                 }
+                Item {
+                    SplitView.minimumHeight: 160
+                    SplitView.fillHeight: true
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: errorLayout.implicitHeight + 20
-                    radius: 9
-                    color: Theme.dangerSurface
-                    border.color: Theme.dangerBorder
-                    visible: root.controller.errorMessage.length > 0
-
-                    RowLayout {
-                        id: errorLayout
-
+                    ColumnLayout {
                         anchors {
                             fill: parent
-                            margins: 10
+                            topMargin: root.titleBarHeight + 14
+                            leftMargin: 22
+                            rightMargin: Math.max(22, root.SafeArea.margins.right)
+                        }
+                        spacing: 12
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.conversation.title || /*% "Conversation" */ qsTrId("craftward.codex.history.conversation.title")
+                                font.pixelSize: 24
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+
+                            IconButton {
+                                objectName: "toggleTerminalButton"
+                                icon.source: "qrc:///icons/hugeicons/square-terminal.svg"
+                                checkable: true
+                                checked: root.terminalController ? root.terminalController.panelVisible : false
+                                enabled: root.terminalController ? root.terminalController.available || root.terminalController.tabs !== null : false
+                                toolTipText: /*% "Terminal" */ qsTrId("craftward.terminal.title") + " (⌘J)"
+                                onClicked: root.terminalController.togglePanel()
+                            }
+
+                            Button {
+                                text: /*% "Rename…" */ qsTrId("craftward.action.rename_ellipsis")
+                                visible: root.conversation.threadId.length > 0 && !root.controller.showingArchived
+                                enabled: renameDialog.renameAllowed
+                                onClicked: renameDialog.begin()
+                            }
+
+                            Button {
+                                text: root.controller.showingArchived ? /*% "Restore" */ qsTrId("craftward.action.restore") : /*% "Archive…" */ qsTrId("craftward.action.archive_ellipsis")
+                                visible: root.conversation.threadId.length > 0
+                                enabled: root.controller.showingArchived ? historyActionState.canRestore : historyActionState.canArchive
+                                onClicked: {
+                                    if (root.controller.showingArchived)
+                                        root.controller.restoreSelectedThread();
+                                    else
+                                        archiveDialog.open();
+                                }
+                            }
+
+                            Rectangle {
+                                implicitWidth: runtimeStateLayout.implicitWidth + 16
+                                implicitHeight: runtimeStateLayout.implicitHeight + 8
+                                radius: height / 2
+                                color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerSurface : root.palette.alternateBase
+                                border.color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerBorder : root.palette.mid
+                                visible: root.conversation.threadId.length > 0
+
+                                RowLayout {
+                                    id: runtimeStateLayout
+
+                                    anchors.centerIn: parent
+                                    spacing: 6
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 7
+                                        Layout.preferredHeight: 7
+                                        radius: width / 2
+                                        color: root.runtimeIndicatorColor
+                                    }
+
+                                    Label {
+                                        text: root.runtimeStatusText
+                                        color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerForeground : root.palette.placeholderText
+                                        font.pixelSize: 11
+                                    }
+                                }
+                            }
+
+                            BusyIndicator {
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
+                                running: root.conversation.loading || root.controller.startingThread || root.controller.forkingThread || root.conversation.turnInFlight || root.controller.changingThreadLifecycle
+                                visible: running
+                            }
+                        }
+
+                        ListView {
+                            id: interactionList
+
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.min(contentHeight, 360)
+                            Layout.maximumHeight: 360
+                            clip: true
+                            spacing: 8
+                            model: root.conversation.interactions
+                            enabled: !root.controller.startingThread
+                            visible: count > 0 && !root.controller.showingArchived
+                            ScrollBar.vertical: OverlayScrollBar {}
+
+                            delegate: CodexInteractionCard {
+                                id: interactionCard
+
+                                width: ListView.view.width
+                                onApprovalSubmitted: decision => root.conversation.respondToApproval(interactionId, decision)
+                                onUserInputSubmitted: answers => root.conversation.respondToUserInput(interactionId, answers)
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: errorLayout.implicitHeight + 20
+                            radius: 9
+                            color: Theme.dangerSurface
+                            border.color: Theme.dangerBorder
+                            visible: root.controller.errorMessage.length > 0
+
+                            RowLayout {
+                                id: errorLayout
+
+                                anchors {
+                                    fill: parent
+                                    margins: 10
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.controller.errorMessage
+                                    color: Theme.dangerForeground
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                IconButton {
+                                    icon.source: "qrc:///icons/hugeicons/cancel-01.svg"
+                                    toolTipText: /*% "Dismiss error" */ qsTrId("craftward.error.dismiss")
+                                    onClicked: root.controller.clearError()
+                                }
+                            }
                         }
 
                         Label {
                             Layout.fillWidth: true
-                            text: root.controller.errorMessage
-                            color: Theme.dangerForeground
+                            text: /*% "Some runtime activity may be unavailable in persisted history." */ qsTrId("craftward.codex.history.runtime_activity_notice")
+                            color: root.palette.placeholderText
+                            font.pixelSize: 11
                             wrapMode: Text.WordWrap
+                            visible: root.conversation.threadId.length > 0 && root.conversation.activityHistoryPartial
                         }
 
-                        IconButton {
-                            icon.source: "qrc:///icons/fluent/dismiss-circle-20-regular.svg"
-                            toolTipText: /*% "Dismiss error" */ qsTrId("craftward.error.dismiss")
-                            onClicked: root.controller.clearError()
+                        Item {
+                            id: conversationSurface
+
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            readonly property real composerBottomMargin: 14
+                            readonly property real composerContentGap: 24
+
+                            CodexTimelineView {
+                                id: timelineView
+
+                                anchors.fill: parent
+                                bottomContentInset: composer.visible ? composer.height + conversationSurface.composerBottomMargin + conversationSurface.composerContentGap : 64
+                                controller: root.conversation
+                                forkEnabled: historyActionState.canFork
+                                showForkActions: root.conversation.threadId.length > 0 && !root.controller.showingArchived
+                                motionDiagnosticsEnabled: root.timelineMotionDiagnosticsEnabled
+                                timelineRenderBenchmarkEnabled: root.timelineRenderBenchmarkEnabled
+                                timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
+                                onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
+                                onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
+                            }
+
+                            CodexComposer {
+                                id: composer
+
+                                anchors {
+                                    horizontalCenter: parent.horizontalCenter
+                                    bottom: parent.bottom
+                                    bottomMargin: conversationSurface.composerBottomMargin
+                                }
+                                width: timelineView.contentColumnWidth
+                                z: 1
+                                controller: root.conversation
+                                readOnly: root.controller.showingArchived
+                                startingThread: root.controller.startingThread
+                                enabled: !root.controller.startingThread && !root.controller.forkingThread
+                                visible: historyActionState.composerVisible
+                                onTurnSubmitted: timelineView.followLatest()
+                            }
                         }
                     }
                 }
-
-                Label {
-                    Layout.fillWidth: true
-                    text: /*% "Some runtime activity may be unavailable in persisted history." */ qsTrId("craftward.codex.history.runtime_activity_notice")
-                    color: root.palette.placeholderText
-                    font.pixelSize: 11
-                    wrapMode: Text.WordWrap
-                    visible: root.conversation.threadId.length > 0 && root.conversation.activityHistoryPartial
-                }
-
-                Item {
-                    id: conversationSurface
-
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    readonly property real composerBottomMargin: 14
-                    readonly property real composerContentGap: 24
-
-                    CodexTimelineView {
-                        id: timelineView
-
-                        anchors.fill: parent
-                        bottomContentInset: composer.visible ? composer.height + conversationSurface.composerBottomMargin + conversationSurface.composerContentGap : 64
-                        controller: root.conversation
-                        forkEnabled: historyActionState.canFork
-                        showForkActions: root.conversation.threadId.length > 0 && !root.controller.showingArchived
-                        motionDiagnosticsEnabled: root.timelineMotionDiagnosticsEnabled
-                        timelineRenderBenchmarkEnabled: root.timelineRenderBenchmarkEnabled
-                        timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
-                        onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
-                        onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
+                Loader {
+                    id: terminalPanel
+                    active: visible
+                    sourceComponent: TerminalPanel {
+                        controller: root.terminalController
                     }
-
-                    CodexComposer {
-                        id: composer
-
-                        anchors {
-                            horizontalCenter: parent.horizontalCenter
-                            bottom: parent.bottom
-                            bottomMargin: conversationSurface.composerBottomMargin
-                        }
-                        width: timelineView.contentColumnWidth
-                        z: 1
-                        controller: root.conversation
-                        readOnly: root.controller.showingArchived
-                        startingThread: root.controller.startingThread
-                        enabled: !root.controller.startingThread && !root.controller.forkingThread
-                        visible: historyActionState.composerVisible
-                        onTurnSubmitted: timelineView.followLatest()
-                    }
+                    visible: root.terminalController ? root.terminalController.panelVisible : false
+                    SplitView.minimumHeight: 120
+                    SplitView.preferredHeight: root.terminalController ? root.terminalController.panelHeight : 240
                 }
             }
         }
@@ -537,7 +583,7 @@ Page {
             activeFocusOnTab: true
             padding: 6
             backgroundInset: 2
-            icon.source: "qrc:///icons/fluent/panel-left-tall-20-regular-emphasized.svg"
+            icon.source: "qrc:///icons/hugeicons/sidebar-left.svg"
             icon.width: 16
             icon.height: 16
             toolTipText: layoutState.sidebarExpanded ? /*% "Hide Sidebar" */ qsTrId("craftward.navigation.sidebar.hide") : /*% "Show Sidebar" */ qsTrId("craftward.navigation.sidebar.show")
@@ -576,7 +622,7 @@ Page {
                 activeFocusOnTab: true
                 padding: 6
                 backgroundInset: 2
-                icon.source: "qrc:///icons/fluent/chat-add-20-regular-emphasized.svg"
+                icon.source: "qrc:///icons/hugeicons/chat-add.svg"
                 icon.width: 16
                 icon.height: 16
                 toolTipText: /*% "New…" */ qsTrId("craftward.codex.history.new.action")
@@ -592,7 +638,7 @@ Page {
                 activeFocusOnTab: true
                 padding: 6
                 backgroundInset: 2
-                icon.source: "qrc:///icons/fluent/arrow-sync-20-regular-emphasized.svg"
+                icon.source: "qrc:///icons/hugeicons/refresh-01.svg"
                 icon.width: 16
                 icon.height: 16
                 toolTipText: /*% "Refresh" */ qsTrId("craftward.action.refresh")

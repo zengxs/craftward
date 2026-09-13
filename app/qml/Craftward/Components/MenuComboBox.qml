@@ -15,8 +15,17 @@ ComboBox {
     property var optionText: function (value) {
         return value;
     }
+    // Zero keeps all options visible.
+    property int maximumVisibleItems: 0
+    property string sectionRole: ""
 
     focusPolicy: Qt.TabFocus
+
+    FontMetrics {
+        id: checkmarkMetrics
+
+        font: control.font
+    }
 
     QtObject {
         id: metrics
@@ -24,16 +33,42 @@ ComboBox {
         readonly property real rowHeight: 24
         readonly property real popupPadding: 5
         readonly property real popupRightReveal: 24
+        readonly property real checkmarkInset: 3
+        readonly property real checkmarkWidth: 16
         readonly property real optionTextInset: 22
         readonly property real optionTextRightInset: 12
+        readonly property real sectionHeight: 24
         readonly property int alignedIndex: control.currentIndex >= 0 ? control.currentIndex : 0
-        readonly property real rowsHeight: control.count * rowHeight
-        readonly property real selectedRowCenter: popupPadding + alignedIndex * rowHeight + rowHeight / 2
+        readonly property int visibleRows: control.maximumVisibleItems > 0 ? Math.min(control.count, control.maximumVisibleItems) : control.count
+        readonly property int firstVisibleIndex: Math.max(0, Math.min(alignedIndex - Math.floor(visibleRows / 2), control.count - visibleRows))
+        readonly property real rowsHeight: itemTop(firstVisibleIndex + visibleRows) - itemTop(firstVisibleIndex)
+        readonly property real selectedRowCenter: popupPadding + itemTop(alignedIndex) - itemTop(firstVisibleIndex) + (startsSection(alignedIndex) ? sectionHeight : 0) + rowHeight / 2
         readonly property real basePopupWidth: Math.max(1, control.width - 20)
         readonly property real contentPopupWidth: widestOptionText + optionTextInset + optionTextRightInset + 2 * popupPadding
         readonly property real popupWidth: Math.max(basePopupWidth, contentPopupWidth)
         readonly property real popupHorizontalOffset: control.width - popupRightReveal - popupWidth
         property real widestOptionText: 0
+
+        function sectionAt(index) {
+            if (!control.sectionRole || index < 0 || index >= control.count)
+                return "";
+            const entry = control.delegateModel.items.get(index).model;
+            return String(entry[control.sectionRole] ?? entry.modelData?.[control.sectionRole] ?? "");
+        }
+
+        function startsSection(index) {
+            const section = sectionAt(index);
+            return section !== "" && section !== sectionAt(index - 1);
+        }
+
+        function itemTop(index) {
+            let top = index * rowHeight;
+            for (let row = 0; row < index; ++row) {
+                if (startsSection(row))
+                    top += sectionHeight;
+            }
+            return top;
+        }
 
         function updateWidestOptionText() {
             let widest = 0;
@@ -89,9 +124,9 @@ ComboBox {
         contentItem: Item {
             Text {
                 anchors.left: parent.left
-                anchors.leftMargin: 3
+                anchors.leftMargin: metrics.checkmarkInset
                 anchors.verticalCenter: parent.verticalCenter
-                width: 16
+                width: metrics.checkmarkWidth
                 text: option.index === control.currentIndex ? "✓" : ""
                 color: option.visuallyHighlighted ? Theme.menuSelectionForeground : control.palette.text
                 font: control.font
@@ -138,6 +173,7 @@ ComboBox {
         dim: false
         popupType: Popup.Window
         onAboutToShow: metrics.updateWidestOptionText()
+        onOpened: optionList.positionViewAtIndex(metrics.firstVisibleIndex, ListView.Beginning)
 
         contentItem: ListView {
             id: optionList
@@ -146,6 +182,41 @@ ComboBox {
             currentIndex: control.highlightedIndex >= 0 ? control.highlightedIndex : control.currentIndex
             clip: true
             boundsBehavior: Flickable.StopAtBounds
+            section.property: control.sectionRole
+            section.criteria: ViewSection.FullString
+            section.delegate: Item {
+                required property string section
+
+                width: optionList.width
+                height: section ? metrics.sectionHeight : 0
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: metrics.checkmarkInset + (metrics.checkmarkWidth - checkmarkMetrics.advanceWidth("✓")) / 2
+                    anchors.right: parent.right
+                    anchors.rightMargin: metrics.optionTextRightInset
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: parent.section
+                    font.family: control.font.family
+                    font.pixelSize: Math.max(9, control.font.pixelSize - 3)
+                    font.weight: Font.DemiBold
+                    color: TailwindColors.zinc400
+                    elide: Text.ElideRight
+                    Accessible.role: Accessible.Heading
+                    Accessible.name: text
+                }
+            }
+
+            ScrollBar.vertical: OverlayScrollBar {
+                hoverEnabled: true
+                palette.mid: {
+                    if (pressed)
+                        return Theme.dark ? TailwindColors.zinc400 : TailwindColors.zinc500;
+                    if (hovered)
+                        return Theme.dark ? TailwindColors.zinc500 : TailwindColors.zinc400;
+                    return Theme.dark ? TailwindColors.zinc600 : TailwindColors.zinc300;
+                }
+            }
         }
 
         background: Item {

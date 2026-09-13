@@ -8,6 +8,7 @@ T.ScrollBar {
     implicitHeight: orientation === Qt.Horizontal ? 10 : 0
     padding: 2
     policy: T.ScrollBar.AsNeeded
+    visible: policy === T.ScrollBar.AlwaysOn || (policy === T.ScrollBar.AsNeeded && size < 1)
 
     background: Item {}
 
@@ -22,7 +23,7 @@ T.ScrollBar {
 
         states: State {
             name: "active"
-            when: control.active || control.hovered || control.pressed
+            when: control.policy === T.ScrollBar.AlwaysOn || control.active || control.hovered || control.pressed
 
             PropertyChanges {
                 thumb.opacity: 0.8

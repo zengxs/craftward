@@ -22,7 +22,10 @@ set_source_files_properties(
     ${CRAFTWARD_FIRA_CODE_FONT_FILES}
     PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/fonts/firacode"
 )
+set_source_files_properties("${PROJECT_SOURCE_DIR}/src/ward/terminal/contour.yml"
+    PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/terminal")
 target_sources(Craftward PRIVATE
+    "${PROJECT_SOURCE_DIR}/src/ward/terminal/contour.yml"
     "${CRAFTWARD_ENTITLEMENTS_FILE}"
     "${CRAFTWARD_APP_ICON_FILE}"
     ${CRAFTWARD_FIRA_CODE_FONT_FILES}
@@ -59,6 +62,7 @@ target_link_libraries(Craftward
         CraftwardLocalizationplugin
         CraftwardPagesplugin
         CraftwardRealmplugin
+        CraftwardTerminalplugin
         Qt6::Quick
         Qt6::QuickControls2
         Qt6::QuickDialogs2

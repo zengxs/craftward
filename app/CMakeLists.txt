@@ -1,10 +1,10 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.28)
 
 if(POLICY CMP0144)
     cmake_policy(SET CMP0144 NEW)
 endif()
 
-set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.3" CACHE STRING
     "Minimum supported macOS version"
 )
 

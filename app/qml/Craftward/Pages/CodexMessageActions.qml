@@ -12,7 +12,7 @@ Item {
     property bool forkVisible: false
     property bool forkEnabled: false
     property int copyFeedbackDuration: 1600
-    property url forkIconSource: "qrc:///icons/fluent/arrow-split-20-regular.svg"
+    property url forkIconSource: "qrc:///icons/hugeicons/split.svg"
     readonly property bool copied: copyButton.copied
     readonly property bool keyboardRevealed: copyButton.activeFocus || forkButton.activeFocus
 
@@ -61,7 +61,7 @@ Item {
             icon.source: root.forkIconSource
             icon.width: 16
             icon.height: 16
-            iconRotation: -90
+            iconRotation: 90
             enabled: root.forkEnabled
             visible: root.forkVisible
             toolTipText: /*% "Fork from here" */ qsTrId("craftward.codex.timeline.fork.action")

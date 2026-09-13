@@ -639,7 +639,7 @@ MarkupSemanticTest::opensLocalFilesWithEncodedUrls()
     QVERIFY(!files.openLocalFile(directory.filePath(QStringLiteral("missing.cpp"))));
     QVERIFY(receiver.url.isEmpty());
     QVERIFY(files.openLocalFile(path));
-    QCOMPARE(receiver.url.toLocalFile(), path);
+    QCOMPARE(receiver.url.toLocalFile(), QFileInfo(path).canonicalFilePath());
     QVERIFY(receiver.url.fragment().isEmpty());
 }
 

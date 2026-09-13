@@ -17,7 +17,7 @@ ToolButton {
     hoverEnabled: false
     focusPolicy: Qt.NoFocus
     rotation: expanded ? 90 : 0
-    icon.source: "qrc:///icons/fluent/chevron-right-20-regular.svg"
+    icon.source: "qrc:///icons/hugeicons/chevron-right.svg"
     icon.width: 16
     icon.height: 16
     icon.color: chevronColor

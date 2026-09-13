@@ -8,6 +8,7 @@
 #include "ward/codex/codexhistorycontroller.h"
 #include "ward/coreffierror.h"
 #include "ward/realm/realmcontroller.h"
+#include "ward/terminal/terminalcontroller.h"
 #include <ward_core.h>
 
 #include <QByteArray>
@@ -32,6 +33,7 @@ Q_IMPORT_QML_PLUGIN(Craftward_Features_LegalPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_Features_RealmPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_PagesPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_RealmPlugin)
+Q_IMPORT_QML_PLUGIN(Craftward_TerminalPlugin)
 
 namespace {
 struct RuntimeDeleter
@@ -114,6 +116,19 @@ main(int argc, char* argv[])
     QSettings settings;
     LocalizationController localizationController(engine, settings);
     CodexHistoryController codexHistoryController(runtime.get(), codexExecutionTarget.get());
+    TerminalController terminalController(settings);
+    const auto selectTerminalConversation = [&] {
+        terminalController.selectConversation(codexHistoryController.conversation()->threadId(),
+                                              codexHistoryController.workingDirectory());
+    };
+    QObject::connect(codexHistoryController.conversation(),
+                     &CodexConversationController::selectionChanged,
+                     &terminalController,
+                     selectTerminalConversation);
+    QObject::connect(&codexHistoryController,
+                     &CodexHistoryController::workingDirectoryChanged,
+                     &terminalController,
+                     selectTerminalConversation);
     RealmController realmController;
     ApplicationController applicationController(app, realmController);
 
@@ -146,6 +161,8 @@ main(int argc, char* argv[])
                              QVariant::fromValue(static_cast<QObject*>(&codexHistoryController)));
     initialProperties.insert(QStringLiteral("realmController"),
                              QVariant::fromValue(static_cast<QObject*>(&realmController)));
+    initialProperties.insert(QStringLiteral("terminalController"),
+                             QVariant::fromValue(static_cast<QObject*>(&terminalController)));
     engine.setInitialProperties(initialProperties);
 
     QObject::connect(

@@ -30,6 +30,7 @@ MainWindow {
         buildNumber: root.buildNumber
         commitHash: root.commitHash
         localizationController: root.localizationController
+        terminalController: root.terminalController
         transientParent: null
     }
 

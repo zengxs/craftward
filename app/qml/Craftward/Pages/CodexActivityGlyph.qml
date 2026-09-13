@@ -18,19 +18,19 @@ Item {
         case "plan":
             return "qrc:///icons/fluent/lightbulb-20-regular.svg";
         case "readFiles":
-            return "qrc:///icons/fluent/book-open-20-regular.svg";
+            return "qrc:///icons/hugeicons/book-open-02.svg";
         case "listFiles":
-            return "qrc:///icons/fluent/folder-20-regular.svg";
+            return "qrc:///icons/hugeicons/folder-02.svg";
         case "searchFiles":
-            return "qrc:///icons/fluent/folder-search-20-regular.svg";
+            return "qrc:///icons/hugeicons/search-01.svg";
         case "runCommands":
-            return "qrc:///icons/fluent/window-console-20-regular.svg";
+            return "qrc:///icons/hugeicons/square-terminal.svg";
         case "fileChange":
-            return "qrc:///icons/fluent/edit-20-regular.svg";
+            return "qrc:///icons/hugeicons/edit-04.svg";
         case "webSearch":
-            return "qrc:///icons/fluent/globe-search-20-regular.svg";
+            return "qrc:///icons/hugeicons/global-search.svg";
         case "contextCompaction":
-            return "qrc:///icons/fluent/square-text-arrow-repeat-all-20-regular.svg";
+            return "qrc:///icons/hugeicons/fold-vertical.svg";
         default:
             return "";
         }

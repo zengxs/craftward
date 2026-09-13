@@ -6,11 +6,13 @@ import QtQuick.Controls
 import Craftward.Codex
 import Craftward.Components
 import Craftward.Pages
+import Craftward.Terminal
 
 ApplicationWindow {
     id: window
 
     required property CodexHistoryController codexHistoryController
+    required property TerminalController terminalController
     property bool frameTimingOverlayEnabled: false
     property bool timelineRenderBenchmarkEnabled: false
     property string timelineRenderBenchmarkThreadId: ""
@@ -84,6 +86,17 @@ ApplicationWindow {
             title: /*% "Window" */ qsTrId("craftward.menu.window")
 
             Action {
+                text: /*% "Terminal" */ qsTrId("craftward.terminal.title")
+                shortcut: "Ctrl+J"
+                checkable: true
+                checked: window.terminalController.panelVisible
+                enabled: window.terminalController.available || window.terminalController.tabs !== null
+                onTriggered: window.terminalController.togglePanel()
+            }
+
+            MenuSeparator {}
+
+            Action {
                 text: /*% "Minimize" */ qsTrId("craftward.window.minimize")
                 shortcut: "Ctrl+M"
                 onTriggered: window.minimizeActiveWindowRequested()
@@ -129,6 +142,7 @@ ApplicationWindow {
 
         anchors.fill: parent
         controller: window.codexHistoryController
+        terminalController: window.terminalController
         timelineMotionDiagnosticsEnabled: window.frameTimingOverlayEnabled
         timelineRenderBenchmarkEnabled: window.timelineRenderBenchmarkEnabled
         timelineRenderBenchmarkThreadId: window.timelineRenderBenchmarkThreadId

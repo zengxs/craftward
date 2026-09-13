@@ -22,7 +22,7 @@ jobs:
           lfs: 'true'
 
       - name: Install build dependencies
-        run: brew install aqtinstall cmake ninja go-task protobuf
+        run: brew install aqtinstall cmake ninja go-task protobuf meson pkgconf
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -45,7 +45,6 @@ jobs:
           !startsWith(github.ref, 'refs/tags/')
         run: |
           echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "SCCACHE_CACHE_MULTIARCH=1" >> "$GITHUB_ENV"
           echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
           echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
           echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
@@ -57,7 +56,7 @@ jobs:
           aqt install-qt \
             --outputdir "$HOME/Library/Qt" \
             mac desktop 6.11.2 clang_64 \
-            -m qtgrpc qtimageformats qttasktree
+            -m qtgrpc qtimageformats qttasktree qtmultimedia qt5compat qtshadertools
           echo "QT6_ROOT=$HOME/Library/Qt/6.11.2/macos" >> "$GITHUB_ENV"
 
       - name: Test

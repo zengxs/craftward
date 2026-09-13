@@ -380,7 +380,10 @@ Pane {
                         }
 
                         ToolButton {
-                            text: "×"
+                            display: AbstractButton.IconOnly
+                            icon.source: "qrc:///icons/hugeicons/cancel-01.svg"
+                            icon.width: 16
+                            icon.height: 16
                             enabled: root.attachmentIntakeEnabled
                             onClicked: composerState.removeAttachment(attachmentDelegate.index)
 

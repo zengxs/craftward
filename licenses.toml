@@ -46,6 +46,12 @@ license-url = "https://github.com/microsoft/fluentui-system-icons/raw/refs/tags/
 website = "https://github.com/microsoft/fluentui-system-icons"
 
 [[component]]
+name = "hugeicons"
+spdx-identifier = "MIT"
+license-url = "https://github.com/hugeicons/hugeicons/raw/refs/heads/main/LICENSE.md"
+website = "https://hugeicons.com/"
+
+[[component]]
 name = "prost"
 spdx-identifier = "Apache-2.0"
 website = "https://github.com/tokio-rs/prost"
@@ -198,3 +204,77 @@ name = "uuid"
 spdx-identifier = "MIT"
 license-url = "https://raw.githubusercontent.com/uuid-rs/uuid/6a8aeab3d02838f6fef71e69cdfda963e8c4158b/LICENSE-MIT"
 website = "https://github.com/uuid-rs/uuid"
+
+[[component]]
+name = "Contour"
+spdx-identifier = "Apache-2.0"
+license-file = "app/third_party/contour/LICENSE.txt"
+website = "https://contour-terminal.org/"
+notice-text = "Craftward includes a modified Contour terminal engine. The modified sources are provided in app/third_party/contour."
+
+[[component]]
+name = "Microsoft GSL"
+spdx-identifier = "MIT"
+license-file = "app/third_party/GSL/LICENSE"
+website = "https://github.com/microsoft/GSL"
+
+[[component]]
+name = "yaml-cpp"
+spdx-identifier = "MIT"
+license-file = "app/third_party/yaml-cpp/LICENSE"
+website = "https://github.com/jbeder/yaml-cpp"
+
+[[component]]
+name = "boxed-cpp"
+spdx-identifier = "Apache-2.0"
+license-file = "app/third_party/boxed-cpp/LICENSE.txt"
+website = "https://github.com/contour-terminal/boxed-cpp"
+
+[[component]]
+name = "reflection-cpp"
+spdx-identifier = "Apache-2.0"
+license-file = "app/third_party/reflection-cpp/LICENSE.txt"
+website = "https://github.com/contour-terminal/reflection-cpp"
+
+[[component]]
+name = "libunicode"
+spdx-identifier = "Apache-2.0"
+license-file = "app/third_party/libunicode/LICENSE"
+website = "https://github.com/contour-terminal/libunicode"
+
+[[component]]
+name = "Unicode Character Database"
+spdx-identifier = "Unicode-3.0"
+license-url = "https://www.unicode.org/license.txt"
+website = "https://www.unicode.org/ucd/"
+
+[[component]]
+name = "FreeType"
+spdx-identifier = "FTL"
+license-file = "app/third_party/freetype/docs/FTL.TXT"
+website = "https://freetype.org/"
+notice-text = "Portions of this software are copyright © 2026 The FreeType Project (www.freetype.org). All rights reserved."
+
+[[component]]
+name = "HarfBuzz"
+spdx-identifier = "MIT-Modern-Variant"
+license-file = "app/third_party/harfbuzz/COPYING"
+website = "https://harfbuzz.github.io/"
+
+[[component]]
+name = "libpng"
+spdx-identifier = "Libpng"
+license-file = "app/third_party/libpng/LICENSE"
+website = "http://www.libpng.org/pub/png/libpng.html"
+
+[[component]]
+name = "Pixman"
+spdx-identifier = "MIT"
+license-file = "app/third_party/pixman/COPYING"
+website = "https://pixman.org/"
+
+[[component]]
+name = "Cairo"
+spdx-identifier = "LGPL-2.1-only"
+license-file = "app/third_party/cairo/COPYING-LGPL-2.1"
+website = "https://cairographics.org/"

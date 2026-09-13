@@ -672,7 +672,8 @@ website = "https://example.invalid"
 
         let error = check(&manifest_path, &test_dir.path().join("cache")).unwrap_err();
         let error = format!("{error:#}");
+        let resolved_directory = test_dir.path().canonicalize().unwrap();
         assert!(error.contains("licenses/missing.txt"));
-        assert!(error.contains(&test_dir.path().display().to_string()));
+        assert!(error.contains(&resolved_directory.display().to_string()));
     }
 }

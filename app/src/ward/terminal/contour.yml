@@ -1,0 +1,82 @@
+# Embedded terminal defaults. The host supplies the login shell and conversation directory.
+default_profile: main
+early_exit_threshold: 0
+# Match existing shell/editor width rules; applications can opt into DEC mode 2027.
+grapheme_clustering: false
+# Use system font glyphs for Braille spinner frames.
+braille_style: font
+# Keep host shortcuts in QML and route clipboard actions through Contour.
+input_mapping:
+  - { mods: [Super], key: C, action: CopySelection }
+  - { mods: [Super], key: V, action: PasteClipboard }
+  - { mods: [Control, Shift], key: C, action: CopySelection }
+  - { mods: [Control, Shift], key: V, action: PasteClipboard }
+  - { mods: [], mouse: Middle, action: PasteSelection }
+color_schemes:
+  craftward:
+    # Tailwind values match Craftward.Design.TailwindColors.
+    default:
+      background: '#ffffff' # white
+      foreground: '#3f3f46' # zinc700
+      bright_foreground: '#27272a' # zinc800
+      dimmed_foreground: '#71717b' # zinc500
+    cursor:
+      default: '#3f3f46' # zinc700
+      text: '#ffffff' # white
+    selection:
+      foreground: '#3f3f46' # zinc700
+      foreground_alpha: 1.0
+      background: '#dbeafe' # blue100
+      background_alpha: 1.0
+    normal:
+      black: '#27272a' # zinc800
+      red: '#e7000b' # red600
+      green: '#008236' # green700
+      yellow: '#a65f00' # yellow700
+      blue: '#155dfc' # blue600
+      magenta: '#a800b7' # fuchsia700
+      cyan: '#007595' # cyan700
+      white: '#9f9fa9' # zinc400
+    # Keep bright accents readable on white, as in One Light.
+    bright:
+      black: '#71717b' # zinc500
+      red: '#e7000b' # red600
+      green: '#008236' # green700
+      yellow: '#a65f00' # yellow700
+      blue: '#155dfc' # blue600
+      magenta: '#a800b7' # fuchsia700
+      cyan: '#007595' # cyan700
+      white: '#ffffff' # white
+profiles:
+  main:
+    shell: /bin/zsh
+    arguments: ['-l', '-i']
+    environment:
+      TERM: xterm-256color
+      COLORTERM: truecolor
+    colors: craftward
+    font:
+      size: 10
+      render_mode: gray
+      emoji: 'Apple Color Emoji'
+      regular:
+        family: 'Fira Code'
+    terminal_size:
+      columns: 100
+      lines: 20
+    history:
+      limit: 5000
+    cursor:
+      shape: block
+      blinking: false
+    # Terminal input and alternate-screen switches should not animate behind the application.
+    cursor_motion_animation_duration: 0
+    screen_transition: classic
+    status_line:
+      display: none
+    show_title_bar: true
+    size_indicator_on_resize: false
+    permissions:
+      capture_buffer: deny
+      change_font: deny
+      display_host_writable_statusline: deny

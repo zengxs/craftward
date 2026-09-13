@@ -268,6 +268,10 @@ CodexHistoryController::updateMarkupDirectory()
         }
     }
     conversationController_.timeline()->setBaseDirectory(directory);
+    if (workingDirectory_ != directory) {
+        workingDirectory_ = directory;
+        emit workingDirectoryChanged();
+    }
 }
 
 bool

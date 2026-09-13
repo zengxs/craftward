@@ -171,7 +171,7 @@ ModalDialog {
 
                         IconButton {
                             visible: Boolean(root.currentComponent.website)
-                            icon.source: "qrc:///icons/fluent/open-20-regular.svg"
+                            icon.source: "qrc:///icons/hugeicons/link-square-02.svg"
                             toolTipText: /*% "Open Project Website" */ qsTrId("craftward.legal.third_party.open_website")
                             onClicked: Qt.openUrlExternally(root.currentComponent.website)
                         }

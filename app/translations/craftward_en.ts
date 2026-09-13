@@ -1405,5 +1405,37 @@ version 3 or later.</translation>
         <source>The Realm command could not be queued.</source>
         <translation>The Realm command could not be queued.</translation>
     </message>
+    <message id="craftward.terminal.title">
+        <source>Terminal</source>
+        <translation>Terminal</translation>
+    </message>
+    <message id="craftward.terminal.new">
+        <source>New terminal</source>
+        <translation>New terminal</translation>
+    </message>
+    <message id="craftward.terminal.close">
+        <source>Close terminal</source>
+        <translation>Close terminal</translation>
+    </message>
+    <message id="craftward.terminal.empty">
+        <source>Create a terminal with the + button.</source>
+        <translation>Create a terminal with the + button.</translation>
+    </message>
+    <message id="craftward.terminal.font">
+        <source>Terminal font</source>
+        <translation>Terminal font</translation>
+    </message>
+    <message id="craftward.terminal.fonts.bundled">
+        <source>Bundled fonts</source>
+        <translation>Bundled fonts</translation>
+    </message>
+    <message id="craftward.terminal.fonts.system">
+        <source>System fonts</source>
+        <translation>System fonts</translation>
+    </message>
+    <message id="craftward.terminal.font_size">
+        <source>Terminal font size</source>
+        <translation>Terminal font size</translation>
+    </message>
 </context>
 </TS>

@@ -1404,5 +1404,37 @@ version 3 or later.</source>
         <source>The Realm command could not be queued.</source>
         <translation>无法将 Realm 命令加入队列。</translation>
     </message>
+    <message id="craftward.terminal.title">
+        <source>Terminal</source>
+        <translation>终端</translation>
+    </message>
+    <message id="craftward.terminal.new">
+        <source>New terminal</source>
+        <translation>新建终端</translation>
+    </message>
+    <message id="craftward.terminal.close">
+        <source>Close terminal</source>
+        <translation>关闭终端</translation>
+    </message>
+    <message id="craftward.terminal.empty">
+        <source>Create a terminal with the + button.</source>
+        <translation>点击 + 按钮新建终端。</translation>
+    </message>
+    <message id="craftward.terminal.font">
+        <source>Terminal font</source>
+        <translation>终端字体</translation>
+    </message>
+    <message id="craftward.terminal.fonts.bundled">
+        <source>Bundled fonts</source>
+        <translation>内置字体</translation>
+    </message>
+    <message id="craftward.terminal.fonts.system">
+        <source>System fonts</source>
+        <translation>系统字体</translation>
+    </message>
+    <message id="craftward.terminal.font_size">
+        <source>Terminal font size</source>
+        <translation>终端字号</translation>
+    </message>
 </context>
 </TS>

@@ -23,3 +23,36 @@
 [submodule "core/ward-highlighting/assets/CMake"]
 	path = core/ward-highlighting/assets/CMake
 	url = https://github.com/zyxar/Sublime-CMakeLists.git
+[submodule "app/third_party/contour"]
+	path = app/third_party/contour
+	url = https://github.com/craftward/contour.git
+[submodule "app/third_party/libunicode"]
+	path = app/third_party/libunicode
+	url = https://github.com/contour-terminal/libunicode.git
+[submodule "app/third_party/freetype"]
+	path = app/third_party/freetype
+	url = https://github.com/freetype/freetype.git
+[submodule "app/third_party/harfbuzz"]
+	path = app/third_party/harfbuzz
+	url = https://github.com/harfbuzz/harfbuzz.git
+[submodule "app/third_party/cairo"]
+	path = app/third_party/cairo
+	url = https://gitlab.freedesktop.org/cairo/cairo.git
+[submodule "app/third_party/pixman"]
+	path = app/third_party/pixman
+	url = https://gitlab.freedesktop.org/pixman/pixman.git
+[submodule "app/third_party/libpng"]
+	path = app/third_party/libpng
+	url = https://github.com/pnggroup/libpng.git
+[submodule "app/third_party/yaml-cpp"]
+	path = app/third_party/yaml-cpp
+	url = https://github.com/jbeder/yaml-cpp.git
+[submodule "app/third_party/GSL"]
+	path = app/third_party/GSL
+	url = https://github.com/microsoft/GSL.git
+[submodule "app/third_party/boxed-cpp"]
+	path = app/third_party/boxed-cpp
+	url = https://github.com/contour-terminal/boxed-cpp.git
+[submodule "app/third_party/reflection-cpp"]
+	path = app/third_party/reflection-cpp
+	url = https://github.com/contour-terminal/reflection-cpp.git

@@ -3,7 +3,7 @@ version: "3"
 dotenv: [.env]
 
 vars:
-  MACOS_DEPLOYMENT_TARGET: "13.0"
+  MACOS_DEPLOYMENT_TARGET: "13.3"
 
 includes:
   core:

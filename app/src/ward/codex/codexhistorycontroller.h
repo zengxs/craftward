@@ -32,6 +32,7 @@ class CodexHistoryController : public QObject
     Q_PROPERTY(CodexThreadModel* threads READ threads CONSTANT)
     Q_PROPERTY(CodexConversationController* conversation READ conversation CONSTANT)
     Q_PROPERTY(bool showingArchived READ showingArchived NOTIFY historyScopeChanged)
+    Q_PROPERTY(QString workingDirectory READ workingDirectory NOTIFY workingDirectoryChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool loadingThreads READ loadingThreads NOTIFY loadingChanged)
     Q_PROPERTY(bool startingThread READ startingThread NOTIFY startingThreadChanged)
@@ -49,6 +50,7 @@ class CodexHistoryController : public QObject
     [[nodiscard]] CodexConversationController* conversation();
     [[nodiscard]] bool showingArchived() const;
     [[nodiscard]] QString errorMessage() const;
+    [[nodiscard]] QString workingDirectory() const { return workingDirectory_; }
     [[nodiscard]] bool loadingThreads() const;
     [[nodiscard]] bool startingThread() const;
     [[nodiscard]] bool forkingThread() const;
@@ -68,6 +70,7 @@ class CodexHistoryController : public QObject
 
   signals:
     void historyScopeChanged();
+    void workingDirectoryChanged();
     void errorMessageChanged();
     void loadingChanged();
     void startingThreadChanged();
@@ -107,6 +110,7 @@ class CodexHistoryController : public QObject
     std::unique_ptr<CodexHistoryCallbackContext> callbackContext_;
     bool showingArchived_ = false;
     QString errorMessage_;
+    QString workingDirectory_;
     QString threadErrorMessage_;
     QString threadStartErrorMessage_;
     std::uint64_t observerGeneration_ = 0;

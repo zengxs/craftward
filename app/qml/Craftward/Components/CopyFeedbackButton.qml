@@ -16,7 +16,7 @@ IconButton {
     implicitWidth: 24
     implicitHeight: 24
     padding: 4
-    icon.source: copied ? "qrc:///icons/fluent/checkmark-20-regular.svg" : "qrc:///icons/fluent/copy-20-regular.svg"
+    icon.source: copied ? "qrc:///icons/hugeicons/checkmark-square-04.svg" : "qrc:///icons/hugeicons/copy-01.svg"
     icon.width: 16
     icon.height: 16
     toolTipText: copied ? /*% "Copied" */ qsTrId("craftward.components.copy.copied") : /*% "Copy" */ qsTrId("craftward.components.copy.action")
