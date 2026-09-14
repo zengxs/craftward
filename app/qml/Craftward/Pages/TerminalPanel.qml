@@ -84,9 +84,47 @@ Pane {
                         required property int index
                         required property string title
                         readonly property bool selected: tab.index === root.controller.activeTabIndex
+                        property string displayedTitle: ""
+                        property bool titleInitialized: false
                         height: tabList.height
-                        width: Math.min(220, Math.max(148, Math.ceil(tabTitle.implicitWidth) + 76))
+                        width: 180
                         color: selected ? TailwindColors.white : TailwindColors.zinc100
+
+                        // Tab titles are navigation hints: brief shell/command changes should not
+                        // distract from terminal work. Only the label waits for 300 ms of stability.
+                        onTitleChanged: {
+                            if (!titleInitialized)
+                                return;
+                            if (title === displayedTitle) {
+                                titleSettleTimer.stop();
+                                titleMaxWaitTimer.stop();
+                                return;
+                            }
+                            titleSettleTimer.restart();
+                            if (!titleMaxWaitTimer.running)
+                                titleMaxWaitTimer.start();
+                        }
+                        Component.onCompleted: {
+                            titleInitialized = true;
+                            publishTitle();
+                        }
+                        function publishTitle() {
+                            displayedTitle = title;
+                            titleSettleTimer.stop();
+                            titleMaxWaitTimer.stop();
+                        }
+
+                        Timer {
+                            id: titleSettleTimer
+                            interval: 300
+                            onTriggered: tab.publishTitle()
+                        }
+                        Timer {
+                            id: titleMaxWaitTimer
+                            // Progress titles may never settle; cap their pending wait at one second.
+                            interval: 1000
+                            onTriggered: tab.publishTitle()
+                        }
 
                         HoverHandler {
                             id: tabHover
@@ -118,7 +156,7 @@ Pane {
                                 leftMargin: 8
                                 rightMargin: 4
                             }
-                            text: tab.title || /*% "Terminal" */ qsTrId("craftward.terminal.title")
+                            text: tab.displayedTitle || /*% "Terminal" */ qsTrId("craftward.terminal.title")
                             color: tab.selected ? TailwindColors.zinc700 : TailwindColors.zinc500
                             font.pixelSize: 12
                             elide: Text.ElideRight
