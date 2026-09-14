@@ -36,6 +36,18 @@ else
     exit 1
 fi
 
+# Every bundled framework and plugin must support the application's architectures.
+while IFS= read -r -d '' bundle_file; do
+    if [[ $(file -b "$bundle_file") == Mach-O* ]]; then
+        for architecture in $architectures; do
+            if ! lipo "$bundle_file" -verify_arch "$architecture"; then
+                echo "Missing $architecture architecture in bundled binary: $bundle_file" >&2
+                exit 1
+            fi
+        done
+    fi
+done < <(find "$app_bundle" -type f -print0)
+
 dmg_path="$output_directory/$app_name-$app_version-Build.$build_version-$architecture_name.dmg"
 
 plutil -lint "$entitlements"

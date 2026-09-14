@@ -3,6 +3,10 @@ version: "3"
 vars:
   APP_NAME: Craftward
   SIGN_IDENTITY: '{{default "-" .SIGN_IDENTITY}}'
+  BUILD_ROOT: '{{if hasPrefix "/" (default "" .BUILD_ROOT)}}{{.BUILD_ROOT}}{{else}}{{.TASKFILE_DIR}}/{{default "build" .BUILD_ROOT}}{{end}}'
+  HOST_ARCH:
+    sh: uname -m
+  OTHER_ARCH: '{{if eq .HOST_ARCH "arm64"}}x86_64{{else}}arm64{{end}}'
 
 tasks:
   prototype:inline:
@@ -36,7 +40,7 @@ tasks:
   clean:
     desc: Remove all application build artifacts
     cmds:
-      - rm -rf build
+      - cmake -E remove_directory "{{.BUILD_ROOT}}"
 
   format:qml:
     desc: Format QML files
@@ -70,13 +74,15 @@ tasks:
     desc: Run QML regression tests
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
-      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      ARCH: '{{default .HOST_ARCH .ARCH}}'
+      BUILD_DIR: "{{.BUILD_ROOT}}/{{.BUILD_TYPE}}/{{.ARCH}}"
     requires:
       vars: [QT6_ROOT]
     deps:
       - task: configure
         vars:
           BUILD_TYPE: "{{.BUILD_TYPE}}"
+          ARCH: "{{.ARCH}}"
           BUILD_TESTING: "ON"
           SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
     env:
@@ -93,7 +99,8 @@ tasks:
     desc: Build and run C++ regression tests
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
-      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      ARCH: '{{default .HOST_ARCH .ARCH}}'
+      BUILD_DIR: "{{.BUILD_ROOT}}/{{.BUILD_TYPE}}/{{.ARCH}}"
     deps:
       - task: :core:build
         vars:
@@ -101,6 +108,7 @@ tasks:
       - task: configure
         vars:
           BUILD_TYPE: "{{.BUILD_TYPE}}"
+          ARCH: "{{.ARCH}}"
           BUILD_TESTING: "ON"
           SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
     cmds:
@@ -129,11 +137,12 @@ tasks:
         -R '^Craftward(ApplicationController|CoreFfiSupport|CodexHistoryController|CodexTimelineModel|CodexTimelinePresentationModel|CodexTimelineViewportIntegration|CodexTimelineViewportModel|LocalizationController|MarkupSemantic|RealmController|SyntaxHighlighting|TerminalCursor|TerminalFont|TerminalInput|TerminalIntegration)Test([.].*)?$'
 
   configure:
-    label: "app:configure:{{.BUILD_TYPE}}:testing={{.BUILD_TESTING}}"
+    label: "app:configure:{{.BUILD_TYPE}}:{{.ARCH}}:testing={{.BUILD_TESTING}}"
     desc: Configure the application build
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
-      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      ARCH: '{{default .HOST_ARCH .ARCH}}'
+      BUILD_DIR: "{{.BUILD_ROOT}}/{{.BUILD_TYPE}}/{{.ARCH}}"
       BUILD_TESTING: '{{default "OFF" .BUILD_TESTING}}'
     requires:
       vars: [QT6_ROOT]
@@ -142,16 +151,19 @@ tasks:
       - task: :xtask:version:check
       - task: :xtask:licenses:generate
         vars:
-          OUTPUT_DIR: "app/{{.BUILD_DIR}}/generated/legal"
+          OUTPUT_DIR: "{{.BUILD_DIR}}/generated/legal"
     env:
       CRAFTWARD_SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    preconditions:
+      - sh: test "{{.ARCH}}" = "arm64" || test "{{.ARCH}}" = "x86_64"
+        msg: ARCH must be arm64 or x86_64
     cmds:
       - >-
         cmake -S .
         -B "{{.BUILD_DIR}}"
         -G Ninja
         -DCMAKE_BUILD_TYPE="{{.BUILD_TYPE}}"
-        -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+        -DCMAKE_OSX_ARCHITECTURES="{{.ARCH}}"
         -DCMAKE_OSX_DEPLOYMENT_TARGET="{{.MACOS_DEPLOYMENT_TARGET}}"
         -DBUILD_TESTING="{{.BUILD_TESTING}}"
         -DQt6_ROOT="$QT6_ROOT"
@@ -162,7 +174,36 @@ tasks:
     desc: Build the application
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
-      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      BUILD_DIR: "{{.BUILD_ROOT}}/{{.BUILD_TYPE}}"
+    env:
+      CRAFTWARD_SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+    cmds:
+      - task: build:arch
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+          ARCH: "{{.HOST_ARCH}}"
+          SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+      - task: build:arch
+        vars:
+          BUILD_TYPE: "{{.BUILD_TYPE}}"
+          ARCH: "{{.OTHER_ARCH}}"
+          SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
+      - >-
+        cmake
+        -DARM64_BUNDLE="{{.BUILD_DIR}}/arm64/{{.APP_NAME}}.app"
+        -DX86_64_BUNDLE="{{.BUILD_DIR}}/x86_64/{{.APP_NAME}}.app"
+        -DOUTPUT_BUNDLE="{{.BUILD_DIR}}/{{.APP_NAME}}.app"
+        -DENTITLEMENTS="{{.TASKFILE_DIR}}/macos/Entitlements.plist"
+        -P macos/merge-universal.cmake
+
+  build:arch:
+    label: "app:build:{{.BUILD_TYPE}}:{{.ARCH}}"
+    desc: Build one application architecture
+    internal: true
+    vars:
+      BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
+      ARCH: '{{default .HOST_ARCH .ARCH}}'
+      BUILD_DIR: "{{.BUILD_ROOT}}/{{.BUILD_TYPE}}/{{.ARCH}}"
     deps:
       - task: :core:build
         vars:
@@ -170,6 +211,7 @@ tasks:
       - task: configure
         vars:
           BUILD_TYPE: "{{.BUILD_TYPE}}"
+          ARCH: "{{.ARCH}}"
           SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
     cmds:
       - cmake --build "{{.BUILD_DIR}}" --parallel
@@ -179,21 +221,21 @@ tasks:
     desc: Run the application
     vars:
       BUILD_TYPE: '{{default "Debug" .BUILD_TYPE}}'
-      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      BUILD_DIR: "{{.BUILD_ROOT}}/{{.BUILD_TYPE}}"
     deps:
       - task: build
         vars:
           BUILD_TYPE: "{{.BUILD_TYPE}}"
           SIGN_IDENTITY: "{{.SIGN_IDENTITY}}"
     cmds:
-      - ./{{.BUILD_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/{{.APP_NAME}}
+      - '"{{.BUILD_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/{{.APP_NAME}}"'
 
   benchmark:timeline-render:
     label: "app:benchmark:timeline-render:{{.BUILD_TYPE}}"
     desc: Benchmark timeline rendering against a persisted Codex conversation
     vars:
       BUILD_TYPE: '{{default "Release" .BUILD_TYPE}}'
-      BUILD_DIR: "build/{{.BUILD_TYPE}}"
+      BUILD_DIR: "{{.BUILD_ROOT}}/{{.BUILD_TYPE}}"
     requires:
       vars: [QT6_ROOT, THREAD_ID]
     deps:
@@ -206,15 +248,15 @@ tasks:
       CRAFTWARD_TIMELINE_RENDER_BENCHMARK_THREAD: "{{.THREAD_ID}}"
       QT_MESSAGE_PATTERN: "%{message}"
     cmds:
-      - ./{{.BUILD_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/{{.APP_NAME}}
+      - '"{{.BUILD_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/{{.APP_NAME}}"'
 
   deploy:
     label: "app:deploy:{{.BUILD_TYPE}}"
     desc: Deploy the application
     vars:
       BUILD_TYPE: '{{default "Release" .BUILD_TYPE}}'
-      BUILD_DIR: "build/{{.BUILD_TYPE}}"
-      DEPLOY_DIR: "build/deploy/{{.BUILD_TYPE}}"
+      BUILD_DIR: "{{.BUILD_ROOT}}/{{.BUILD_TYPE}}"
+      DEPLOY_DIR: "{{.BUILD_ROOT}}/deploy/{{.BUILD_TYPE}}"
       APP_BUNDLE: "{{.DEPLOY_DIR}}/{{.APP_NAME}}.app"
     deps:
       - task: build
@@ -230,10 +272,12 @@ tasks:
         msg: hdiutil is not available in PATH
     cmds:
       - cmake -E remove_directory "{{.DEPLOY_DIR}}"
+      - ditto "{{.BUILD_DIR}}/{{.APP_NAME}}.app" "{{.APP_BUNDLE}}"
       - >-
-        cmake --install "{{.BUILD_DIR}}"
+        cmake --install "{{.BUILD_DIR}}/{{.HOST_ARCH}}"
         --prefix "{{.DEPLOY_DIR}}"
         --config "{{.BUILD_TYPE}}"
+        --component RuntimeDependencies
       - >-
         bash macos/finalize-deployment.sh
         "{{.APP_BUNDLE}}"

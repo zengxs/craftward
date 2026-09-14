@@ -1,6 +1,10 @@
 include_guard(GLOBAL)
 
 function(craftward_add_contour_dependencies source_root)
+    # Dependency feature checks must describe the target slice when cross-compiling.
+    if(CMAKE_OSX_ARCHITECTURES MATCHES "^(arm64|x86_64)$")
+        set(CMAKE_SYSTEM_PROCESSOR "${CMAKE_OSX_ARCHITECTURES}")
+    endif()
     set(CMAKE_CXX_STANDARD 23)
     set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
     set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
@@ -28,7 +32,7 @@ function(craftward_add_contour_dependencies source_root)
 
     # libunicode selects x86 SIMD translation units from the build machine's CPU.
     # Universal builds need those units for the Intel slice and NEON for the ARM slice.
-    if("x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+    if("x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES AND "arm64" IN_LIST CMAKE_OSX_ARCHITECTURES)
         set(unicode_source "${source_root}/libunicode/src/libunicode")
         get_target_property(unicode_sources unicode SOURCES)
         list(FILTER unicode_sources EXCLUDE REGEX "(^|/)(simd_detector|scan256|scan512|convert256|convert512)\\.cpp$")

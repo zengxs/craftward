@@ -163,4 +163,4 @@ qt_generate_deploy_qml_app_script(
     OUTPUT_SCRIPT craftward_deploy_script
     DEPLOY_TOOL_OPTIONS ${craftward_deploy_sign_options}
 )
-install(SCRIPT "${craftward_deploy_script}")
+install(SCRIPT "${craftward_deploy_script}" COMPONENT RuntimeDependencies)
