@@ -5,6 +5,7 @@ qt_add_qml_module(CraftwardPages
     URI Craftward.Pages
     QML_FILES
         AboutPage.qml
+        CodexAnnotationPopup.qml
         CodexApprovalActionState.qml
         CodexActivityGlyph.qml
         CodexActivityIdentity.qml

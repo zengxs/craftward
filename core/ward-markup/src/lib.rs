@@ -16,6 +16,8 @@ pub use semantic::{
 pub enum SourceFormat {
     PlainText,
     Markdown,
+    /// Markdown with Codex annotation and review directives enabled.
+    CodexMarkdown,
 }
 
 fn code_block_language(kind: CodeBlockKind<'_>) -> Option<String> {

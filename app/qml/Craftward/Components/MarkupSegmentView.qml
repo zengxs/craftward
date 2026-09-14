@@ -22,6 +22,7 @@ Control {
     property var renderParts: null
     property var selectionCoordinator: null
     property var selectionHost: null
+    property var annotationHandler: null
     readonly property var activeSelectionHost: selectionHost || localSelectionHost
     signal fileLocationRequested(string file, int start, int end)
 
@@ -58,6 +59,7 @@ Control {
             renderParts: root.renderParts
             selectionCoordinator: root.selectionCoordinator
             selectionHost: root.activeSelectionHost
+            annotationHandler: root.annotationHandler
             font: root.font
             codeFont: root.codeFont
             textColor: root.textColor
@@ -71,6 +73,7 @@ Control {
             part: root.renderParts[0]
             coordinator: root.selectionCoordinator
             selectionHost: root.activeSelectionHost
+            annotationHandler: root.annotationHandler
             font: root.font
             codeFont: root.codeFont
             textColor: root.textColor
@@ -148,6 +151,7 @@ Control {
                     surface: root.renderParts && root.renderParts.length ? root.renderParts[0].surface : null
                     coordinator: root.selectionCoordinator
                     selectionHost: root.activeSelectionHost
+                    annotationHandler: root.annotationHandler
                     selectionExclusions: [codeToolbar, horizontalBar]
                     color: root.textColor
                     font: root.codeFont

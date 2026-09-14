@@ -248,7 +248,7 @@ class Projector
                 }
             } else {
                 style.text = value.annotation().label().text();
-                style.annotation = true;
+                style.annotationIndex = value.annotation().index();
             }
             surface_.blocks.last().runs.append(std::move(style));
         } else if (value.hasList()) {

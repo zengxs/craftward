@@ -153,6 +153,7 @@ class SelectionScene
                 width: 520
                 height: 520
                 signal fileLocationRequested(string file, int start, int end)
+                signal annotationActivated(int index)
                 ListView {
                     id: timeline
                     objectName: "selectionTimeline"
@@ -170,6 +171,7 @@ class SelectionScene
                         renderParts: model.renderParts
                         selectionCoordinator: messageModel.selection
                         selectionHost: host
+                        annotationHandler: (action, item, hit) => { if (action === "activate") scene.annotationActivated(hit.index); }
                         font { family: "Helvetica Neue"; pixelSize: 16 }
                         codeFont { family: "Menlo"; pixelSize: 16 }
                         onFileLocationRequested: (file, start, end) => scene.fileLocationRequested(file, start, end)
@@ -186,6 +188,7 @@ class SelectionScene
                         renderParts: otherParts
                         selectionCoordinator: otherMessage ? otherMessage.selection : null
                         selectionHost: host
+                        annotationHandler: (action, item, hit) => { if (action === "activate") scene.annotationActivated(hit.index); }
                         font { family: "Helvetica Neue"; pixelSize: 16 }
                     }
                 }
@@ -270,6 +273,8 @@ class MarkupSemanticTest : public QObject
     void decoratesInlineCodeWithoutChangingTextLayout_data();
     void decoratesInlineCodeWithoutChangingTextLayout();
     void productionSegmentConsumesSemanticPayload();
+    void hitsAnnotationGlyphsAcrossWrappingAndBidi();
+    void activatesAnnotationsInTableCellsWithoutOpeningUrls();
     void splitsListsAndTablesAtStableBoundaries();
     void distinguishesListSpacing_data();
     void distinguishesListSpacing();
@@ -328,10 +333,11 @@ MarkupSemanticTest::decodesSemanticSnapshotFromRust()
             ward_core_error_destroy(error);
     });
     using Buffer = std::unique_ptr<WardOwnedBuffer, decltype(&ward_core_owned_buffer_destroy)>;
-    Buffer buffer(
-      ward_core_markup_parse_semantic(
-        WardMarkupSourceFormatMarkdown, reinterpret_cast<const uint8_t*>(source.constData()), source.size(), &error),
-      &ward_core_owned_buffer_destroy);
+    Buffer buffer(ward_core_markup_parse_semantic(WardMarkupSourceFormatCodexMarkdown,
+                                                  reinterpret_cast<const uint8_t*>(source.constData()),
+                                                  source.size(),
+                                                  &error),
+                  &ward_core_owned_buffer_destroy);
     QVERIFY(buffer);
     QVERIFY(!error);
     const QByteArrayView bytes(reinterpret_cast<const char*>(ward_core_owned_buffer_data(buffer.get())),
@@ -395,7 +401,7 @@ MarkupSemanticTest::projectsCodeCommentsAndPreservesSelection()
 ::code-comment{title="[P2] 表格间距" body="Use **bold** and `code`.\n\n| A | B |\n|---|---|\n| value | text |" file="src/file.cpp" start=122 end=125 priority=2}
 
 After.)md");
-    document.reconcileSource(source, Format::Markdown);
+    document.reconcileSource(source, Format::CodexMarkdown);
     QTRY_COMPARE(document.rowCount(), 3);
     auto part = payload(&document, 1).toList().first().toMap();
     QCOMPARE(part.value(QStringLiteral("kind")), QStringLiteral("codeComment"));
@@ -416,7 +422,7 @@ After.)md");
     QVERIFY(selected.contains(QStringLiteral("A\tB\nvalue\ttext")));
     QVERIFY(selected.endsWith(QStringLiteral("After.")));
     QVERIFY(!selected.contains(QStringLiteral("::code-comment")));
-    document.reconcileSource(source + QStringLiteral(" More."), Format::Markdown);
+    document.reconcileSource(source + QStringLiteral(" More."), Format::CodexMarkdown);
     QTRY_VERIFY(document.data(document.index(2), MarkupDocumentModel::SegmentTextRole)
                   .toString()
                   .endsWith(QStringLiteral("More.")));
@@ -433,7 +439,7 @@ After.)md");
     // Absence of structured priority keeps the title intact and creates no badge.
     document.reconcileSource(
       QStringLiteral(R"(::code-comment{title="[P1] Keep prefix" body="Body" file="/file.cpp" start=7})"),
-      Format::Markdown);
+      Format::CodexMarkdown);
     QTRY_COMPARE(document.rowCount(), 1);
     part = payload(&document, 0).toList().first().toMap();
     QVERIFY(!part.contains(QStringLiteral("badge")));
@@ -444,7 +450,7 @@ After.)md");
 
     document.reconcileSource(
       QStringLiteral(R"(::code-comment{title="[P3] Keep mismatch" body="Body" file="/file.cpp" priority=0})"),
-      Format::Markdown);
+      Format::CodexMarkdown);
     QTRY_COMPARE(payload(&document, 0).toList().first().toMap().value(QStringLiteral("priority")).toInt(), 0);
     document.selection()->selectAll();
     QCOMPARE(document.selection()->text(), QStringLiteral("P0 [P3] Keep mismatch\n/file.cpp\n\nBody"));
@@ -504,7 +510,7 @@ MarkupSemanticTest::resolvesCodeCommentFileReferences()
     document.setBaseDirectory(directory);
     document.reconcileSource(
       QStringLiteral(R"(::code-comment{title="Review" body="Body" file="%1" start=7 end=9})").arg(input),
-      Format::Markdown);
+      Format::CodexMarkdown);
     QTRY_COMPARE(document.rowCount(), 1);
     const auto part = payload(&document, 0).toList().first().toMap();
     QCOMPARE(part.value(QStringLiteral("file")).toString(), target);
@@ -542,7 +548,7 @@ MarkupSemanticTest::opensCodeCommentFilesThroughSymlinkParents()
         MarkupDocumentModel document;
         document.setBaseDirectory(project);
         document.reconcileSource(QStringLiteral(R"(::code-comment{title="Review" body="Body" file="%1"})").arg(input),
-                                 Format::Markdown);
+                                 Format::CodexMarkdown);
         QTRY_COMPARE(document.rowCount(), 1);
         const auto part = payload(&document, 0).toList().first().toMap();
         document.selection()->selectAll();
@@ -563,7 +569,7 @@ MarkupSemanticTest::laysOutAndSelectsCodeCommentFields()
     MarkupDocumentModel document;
     const QString source = QString::fromUtf8(
       R"(::code-comment{title="[P2] 表格后的普通块间距需要保留，标题换行仍应对齐第一行文字" body="Need **real** text and `code`.\n\n- First\n- Second" file="/project/file.cpp" start=122 end=125 priority=2})");
-    document.reconcileSource(source, Format::Markdown);
+    document.reconcileSource(source, Format::CodexMarkdown);
     QTRY_COMPARE(document.rowCount(), 1);
     SelectionScene scene(&document);
     QVERIFY2(scene.view, qPrintable(scene.component.errorString()));
@@ -696,7 +702,7 @@ MarkupSemanticTest::rendersInlineFormatsAndNativeLinkHits()
     document.reconcileSource(
       QString::fromUtf8("**Bold** *em* ~~gone~~ `print \"hello world\"` [link](https://example.com \"Hint\") "
                         ":codex-annotation{index=\"4\"} عربي 😀 é &amp;  \nnext"),
-      Format::Markdown);
+      Format::CodexMarkdown);
     auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     NativeText text(payload(model, 0));
@@ -991,7 +997,7 @@ void
 MarkupSemanticTest::productionSegmentConsumesSemanticPayload()
 {
     MarkupDocumentModel document;
-    document.reconcileSource(QStringLiteral("Native **text** :codex-annotation{index=\"4\"}"), Format::Markdown);
+    document.reconcileSource(QStringLiteral("Native **text** :codex-annotation{index=\"4\"}"), Format::CodexMarkdown);
     auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 1);
     QQmlEngine engine;
@@ -1019,13 +1025,87 @@ MarkupSemanticTest::productionSegmentConsumesSemanticPayload()
 }
 
 void
+MarkupSemanticTest::hitsAnnotationGlyphsAcrossWrappingAndBidi()
+{
+    MarkupDocumentModel model;
+    model.reconcileSource(QStringLiteral("- Wide prefix 中文 عربي :codex-annotation{index=\"4294967295\"} end"),
+                          Format::CodexMarkdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    NativeText native(payload(&model, 0));
+    QVERIFY2(native.object, qPrintable(native.component.errorString()));
+    auto* item = qobject_cast<QQuickItem*>(native.object.get());
+    auto* adapter = nativeAdapter(item);
+    QVERIFY(adapter);
+    item->setWidth(125);
+    native.document()->documentLayout()->documentSize();
+    const auto rendered = native.document()->toPlainText();
+    const int begin = rendered.indexOf(QStringLiteral("[4294967295]"));
+    QVERIFY(begin >= 0);
+    QCOMPARE(formatAt(native.document(), QStringLiteral("[4294967295]"))
+               .property(MarkupTextDocument::AnnotationIndexProperty)
+               .toUInt(),
+             4294967295u);
+    QSet<int> lines;
+    for (int position = begin; position < begin + 12; ++position) {
+        QRectF left;
+        QRectF right;
+        QVERIFY(
+          QMetaObject::invokeMethod(item, "positionToRectangle", Q_RETURN_ARG(QRectF, left), Q_ARG(int, position)));
+        QVERIFY(QMetaObject::invokeMethod(
+          item, "positionToRectangle", Q_RETURN_ARG(QRectF, right), Q_ARG(int, position + 1)));
+        const QPointF probe(left.x() + (right.y() == left.y() ? (right.x() - left.x()) / 2 : 2), left.center().y());
+        const auto hit = adapter->annotationAt(item, probe.x(), probe.y());
+        QCOMPARE(hit.value(QStringLiteral("index")).toUInt(), 4294967295u);
+        QVERIFY(hit.value(QStringLiteral("rect")).toRectF().contains(probe));
+        lines.insert(qRound(left.y()));
+    }
+    QVERIFY(lines.size() > 1);
+    QVERIFY(adapter->annotationAt(item, -10, 10).isEmpty());
+    QVERIFY(adapter->annotationAt(item, 124, item->height() + 30).isEmpty());
+}
+
+void
+MarkupSemanticTest::activatesAnnotationsInTableCellsWithoutOpeningUrls()
+{
+    MarkupDocumentModel model;
+    model.reconcileSource(
+      QStringLiteral("| Context | Reference |\n|---|---|\n| Quote | :codex-annotation{index=\"1\"} |"),
+      Format::CodexMarkdown);
+    QTRY_COMPARE(model.rowCount(), 1);
+    SelectionScene scene(&model);
+    QVERIFY2(scene.view, qPrintable(scene.component.errorString()));
+    QSignalSpy activated(scene.view.get(), SIGNAL(annotationActivated(int)));
+    QVERIFY(activated.isValid());
+    scene.window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&scene.window));
+    QQuickItem* reference = nullptr;
+    for (auto* editor : visualItems(scene.view.get(), QStringLiteral("markupProseText"))) {
+        auto* document = editor->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+        if (document->toPlainText() == QStringLiteral("[1]"))
+            reference = editor;
+    }
+    QVERIFY(reference);
+    QRectF rect;
+    QVERIFY(QMetaObject::invokeMethod(reference, "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, 1)));
+    const auto point = reference->mapToScene(rect.center() + QPointF(2, 0)).toPoint();
+    QTest::mouseClick(&scene.window, Qt::LeftButton, Qt::NoModifier, point);
+    QTRY_COMPARE(activated.size(), 1);
+    QCOMPARE(activated.first().first().toUInt(), 1u);
+    QVERIFY(!model.selection()->hasSelection());
+    QTest::mousePress(&scene.window, Qt::LeftButton, Qt::NoModifier, point);
+    QTest::mouseMove(&scene.window, point + QPoint(30, 0));
+    QTest::mouseRelease(&scene.window, Qt::LeftButton, Qt::NoModifier, point + QPoint(30, 0));
+    QCOMPARE(activated.size(), 1);
+}
+
+void
 MarkupSemanticTest::splitsListsAndTablesAtStableBoundaries()
 {
     MarkupDocumentModel document;
     const QString source =
       QStringLiteral("7. First **item**\n8. Second item\n\n| A | B |\n| :-- | --: |\n") +
       QStringLiteral("| `code` | [link](https://example.com) :codex-annotation{index=\"2\"} |\n").repeated(15);
-    document.reconcileSource(source, Format::Markdown);
+    document.reconcileSource(source, Format::CodexMarkdown);
     auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 2);
     NativeText list(payload(model, 0));
@@ -1051,7 +1131,7 @@ MarkupSemanticTest::splitsListsAndTablesAtStableBoundaries()
     QVERIFY(link.document()->toPlainText().contains(QStringLiteral("[2]")));
     const auto firstBody = payload(model, 1);
     QSignalSpy changed(model, &QAbstractItemModel::dataChanged);
-    document.reconcileSource(source + QStringLiteral("| More | cells |\n").repeated(128), Format::Markdown);
+    document.reconcileSource(source + QStringLiteral("| More | cells |\n").repeated(128), Format::CodexMarkdown);
     QTRY_COMPARE(model->rowCount(), 10);
     QCOMPARE(payload(model, 1), firstBody);
     QCOMPARE(changed.size(), 0);
@@ -1530,7 +1610,7 @@ MarkupSemanticTest::preservesCodeAndUnsupportedSource()
     MarkupDocumentModel document;
     document.reconcileSource(
       QStringLiteral("```python\n  print(\"hello\")\n\n```\n\n![alt](image.png)\n\n<div>literal &amp;</div>\n"),
-      Format::Markdown);
+      Format::CodexMarkdown);
     auto* model = &document;
     QTRY_COMPARE(model->rowCount(), 3);
     QCOMPARE(model->data(model->index(0, 0), MarkupDocumentModel::CodeBlockRole).toBool(), true);
@@ -1552,7 +1632,7 @@ MarkupSemanticTest::preservesCodeAndUnsupportedSource()
     QVERIFY(plain.object);
     QCOMPARE(plain.document()->toPlainText(), QStringLiteral("**plain** :codex-annotation{index=\"4\"}"));
 
-    document.reconcileSource(QStringLiteral("```\nunlabelled code\n```"), Format::Markdown);
+    document.reconcileSource(QStringLiteral("```\nunlabelled code\n```"), Format::CodexMarkdown);
     QTRY_VERIFY(model->data(model->index(0, 0), MarkupDocumentModel::CodeBlockRole).toBool());
     QCOMPARE(model->data(model->index(0, 0), MarkupDocumentModel::SegmentTextRole).toString(),
              QStringLiteral("unlabelled code"));

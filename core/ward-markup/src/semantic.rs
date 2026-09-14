@@ -171,7 +171,7 @@ impl MappedText {
 /// Unchanged node kinds and starts retain IDs on append; syntax reinterpretation
 /// can replace nodes. Arbitrary edits require caller-owned reconciliation.
 pub fn parse_semantic(source: &str, format: SourceFormat) -> SemanticDocument {
-    parse_snapshot(source, format, true)
+    parse_snapshot(source, format, format == SourceFormat::CodexMarkdown)
 }
 
 fn parse_snapshot(source: &str, format: SourceFormat, code_comments: bool) -> SemanticDocument {
@@ -245,7 +245,10 @@ fn parse_snapshot(source: &str, format: SourceFormat, code_comments: bool) -> Se
                                 | NodeContent::Image { .. }
                         )
                     });
-                    if inert || source[range.clone()] != *text {
+                    if format != SourceFormat::CodexMarkdown
+                        || inert
+                        || source[range.clone()] != *text
+                    {
                         builder.text(TextKind::Plain, &text, range);
                     } else {
                         builder.inline_text(&text, range);
@@ -420,7 +423,7 @@ impl<'a> Builder<'a> {
         let parent = self.push(NodeContent::CodeComment(parsed.comment), range);
         // The body is a complete embedded Markdown document, with its own references.
         // Nested directive examples remain inert to avoid recursive review cards.
-        let body = parse_snapshot(&parsed.body.value.text, SourceFormat::Markdown, false);
+        let body = parse_snapshot(&parsed.body.value.text, SourceFormat::CodexMarkdown, false);
         for block in body.blocks {
             let offset = self.nodes.len();
             for mut node in block.nodes {

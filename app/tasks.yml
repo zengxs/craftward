@@ -110,6 +110,7 @@ tasks:
         CraftwardApplicationControllerTest
         CraftwardCoreFfiSupportTest
         CraftwardCodexHistoryControllerTest
+        CraftwardCodexTimelineModelTest
         CraftwardCodexTimelinePresentationModelTest
         CraftwardCodexTimelineViewportIntegrationTest
         CraftwardCodexTimelineViewportModelTest
@@ -125,7 +126,7 @@ tasks:
       - >-
         ctest --test-dir "{{.BUILD_DIR}}"
         --output-on-failure
-        -R '^Craftward(ApplicationController|CoreFfiSupport|CodexHistoryController|CodexTimelinePresentationModel|CodexTimelineViewportIntegration|CodexTimelineViewportModel|LocalizationController|MarkupSemantic|RealmController|SyntaxHighlighting|TerminalCursor|TerminalFont|TerminalInput|TerminalIntegration)Test([.].*)?$'
+        -R '^Craftward(ApplicationController|CoreFfiSupport|CodexHistoryController|CodexTimelineModel|CodexTimelinePresentationModel|CodexTimelineViewportIntegration|CodexTimelineViewportModel|LocalizationController|MarkupSemantic|RealmController|SyntaxHighlighting|TerminalCursor|TerminalFont|TerminalInput|TerminalIntegration)Test([.].*)?$'
 
   configure:
     label: "app:configure:{{.BUILD_TYPE}}:testing={{.BUILD_TESTING}}"

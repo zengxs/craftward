@@ -1437,5 +1437,36 @@ version 3 or later.</translation>
         <source>Terminal font size</source>
         <translation>Terminal font size</translation>
     </message>
+    <message id="craftward.codex.annotations.count" numerus="yes">
+        <source>%n annotation(s)</source>
+        <translation>
+            <numerusform>%n annotation</numerusform>
+            <numerusform>%n annotations</numerusform>
+        </translation>
+    </message>
+    <message id="craftward.codex.annotations.ambiguous">
+        <source>Annotation %1 · %2 possible sources</source>
+        <translation>Annotation %1 · %2 possible sources</translation>
+    </message>
+    <message id="craftward.codex.annotations.number">
+        <source>Annotation %1</source>
+        <translation>Annotation %1</translation>
+    </message>
+    <message id="craftward.codex.annotations.missing">
+        <source>No earlier annotation with this number was found in this turn.</source>
+        <translation>No earlier annotation with this number was found in this turn.</translation>
+    </message>
+    <message id="craftward.codex.annotations.input">
+        <source>Input %1 in this turn</source>
+        <translation>Input %1 in this turn</translation>
+    </message>
+    <message id="craftward.codex.annotations.selected_text">
+        <source>Selected text:</source>
+        <translation>Selected text:</translation>
+    </message>
+    <message id="craftward.codex.annotations.comment">
+        <source>User comment:</source>
+        <translation>User comment:</translation>
+    </message>
 </context>
 </TS>

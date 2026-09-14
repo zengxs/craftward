@@ -97,6 +97,8 @@ Item {
         property bool moved: false
         property bool wordSelected: false
         property var pressLink: ""
+        property var pressAnnotation: ({})
+        property var pressSurface: null
 
         onPressed: mouse => {
             const hit = root.hitAt(mouse.x, mouse.y, false);
@@ -117,6 +119,8 @@ Item {
             moved = false;
             wordSelected = false;
             pressLink = hit.surface.linkAt(hit.x, hit.y);
+            pressSurface = hit.surface;
+            pressAnnotation = typeof hit.surface.annotationAt === "function" ? hit.surface.annotationAt(hit.x, hit.y) : ({});
             const endpoint = hit.surface.bridge.endpointAt(hit.surface.positionAt(hit.x, hit.y));
             if (extending)
                 root.extendAt(mouse.x, mouse.y);
@@ -134,9 +138,13 @@ Item {
         onReleased: mouse => {
             if (!wordSelected)
                 root.extendAt(mouse.x, mouse.y);
+            root.dragging = false;
             if (!moved && root.coordinator && !root.coordinator.hasSelection && !(mouse.modifiers & Qt.ShiftModifier)) {
                 const hit = root.hitAt(mouse.x, mouse.y, false);
-                if (hit && pressLink && hit.surface.linkAt(hit.x, hit.y) === pressLink) {
+                const annotation = hit && typeof hit.surface.annotationAt === "function" ? hit.surface.annotationAt(hit.x, hit.y) : ({});
+                if (hit && hit.surface === pressSurface && pressAnnotation.index && annotation.key === pressAnnotation.key && annotation.index === pressAnnotation.index)
+                    hit.surface.activateAnnotation(annotation);
+                else if (hit && pressLink && hit.surface.linkAt(hit.x, hit.y) === pressLink) {
                     if (typeof hit.surface.activateLink === "function")
                         hit.surface.activateLink(pressLink);
                     else

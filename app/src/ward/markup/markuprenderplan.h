@@ -15,7 +15,7 @@ struct MarkupTextRun
     QString text;
     QTextCharFormat format;
     bool code = false;
-    bool annotation = false;
+    quint32 annotationIndex = 0;
     qreal scale = 1;
     bool operator==(const MarkupTextRun&) const = default;
 };

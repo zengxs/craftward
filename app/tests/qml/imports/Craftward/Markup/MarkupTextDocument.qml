@@ -18,6 +18,10 @@ QtObject {
     property color linkColor
     property color annotationBackground
 
+    function annotationAt(item, x, y) {
+        return ({});
+    }
+
     function documentPosition(surfacePosition) {
         return surfacePosition;
     }

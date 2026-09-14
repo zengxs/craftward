@@ -1436,5 +1436,35 @@ version 3 or later.</source>
         <source>Terminal font size</source>
         <translation>终端字号</translation>
     </message>
+    <message id="craftward.codex.annotations.count" numerus="yes">
+        <source>%n annotation(s)</source>
+        <translation>
+            <numerusform>%n 条注释</numerusform>
+        </translation>
+    </message>
+    <message id="craftward.codex.annotations.ambiguous">
+        <source>Annotation %1 · %2 possible sources</source>
+        <translation>注释 %1 · %2 个可能来源</translation>
+    </message>
+    <message id="craftward.codex.annotations.number">
+        <source>Annotation %1</source>
+        <translation>注释 %1</translation>
+    </message>
+    <message id="craftward.codex.annotations.missing">
+        <source>No earlier annotation with this number was found in this turn.</source>
+        <translation>本轮此前的输入中未找到此编号的注释。</translation>
+    </message>
+    <message id="craftward.codex.annotations.input">
+        <source>Input %1 in this turn</source>
+        <translation>本轮第 %1 次输入</translation>
+    </message>
+    <message id="craftward.codex.annotations.selected_text">
+        <source>Selected text:</source>
+        <translation>所选文本：</translation>
+    </message>
+    <message id="craftward.codex.annotations.comment">
+        <source>User comment:</source>
+        <translation>用户评论：</translation>
+    </message>
 </context>
 </TS>

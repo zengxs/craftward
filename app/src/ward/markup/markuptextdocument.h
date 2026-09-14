@@ -8,6 +8,7 @@
 #include <QList>
 #include <QPointer>
 #include <QQmlParserStatus>
+#include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QTextFormat>
 #include <QVariant>
@@ -35,6 +36,9 @@ class MarkupTextDocument
   public:
     static constexpr int InlineCodeProperty = QTextFormat::UserProperty;
 
+    static constexpr int AnnotationIndexProperty = QTextFormat::UserProperty + 1;
+    static constexpr int AnnotationKeyProperty = QTextFormat::UserProperty + 2;
+
     explicit MarkupTextDocument(QObject* parent = nullptr);
 
     [[nodiscard]] QQuickTextDocument* textDocument() const;
@@ -46,6 +50,7 @@ class MarkupTextDocument
     Q_INVOKABLE [[nodiscard]] QVariantMap wordAt(int position) const;
     Q_INVOKABLE [[nodiscard]] int documentPosition(int surfacePosition) const;
     Q_INVOKABLE [[nodiscard]] qreal firstLineAscent() const;
+    Q_INVOKABLE [[nodiscard]] QVariantMap annotationAt(QQuickItem* textEdit, qreal x, qreal y) const;
     void classBegin() override;
     void componentComplete() override;
 

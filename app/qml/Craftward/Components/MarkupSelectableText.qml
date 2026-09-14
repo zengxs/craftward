@@ -27,6 +27,7 @@ TextEdit {
     readonly property alias bridge: adapter
     property real firstLineBaseline: baselineOffset
     property var linkHandler: null
+    property var annotationHandler: null
 
     objectName: "markupProseText"
     readOnly: true
@@ -65,20 +66,67 @@ TextEdit {
             Qt.openUrlExternally(target);
     }
 
+    function annotationAt(x, y) {
+        return annotationHandler ? adapter.annotationAt(root, x, y) : ({});
+    }
+
+    function activateAnnotation(hit) {
+        if (annotationHandler && hit.index)
+            annotationHandler("activate", root, hit);
+    }
+
+    function updateAnnotationHover() {
+        if (!annotationHandler)
+            return;
+        const eligible = annotationHover.hovered && !annotationHover.point.pressedButtons && !(selectionHost && selectionHost.dragging);
+        const hit = eligible ? annotationAt(annotationHover.point.position.x, annotationHover.point.position.y) : ({});
+        annotationHandler(hit.index ? "hover" : "leave", root, hit);
+    }
+
+    function invalidateAnnotation() {
+        if (annotationHandler)
+            annotationHandler("invalidate", root, ({}));
+    }
+
     onSelectionHostChanged: registerHost()
     onCoordinatorChanged: selectionRefresh.restart()
     onContentHeightChanged: selectionRefresh.restart()
-    onWidthChanged: selectionRefresh.restart()
+    onWidthChanged: {
+        selectionRefresh.restart();
+        invalidateAnnotation();
+    }
+    onVisibleChanged: if (!visible)
+        invalidateAnnotation()
     Component.onCompleted: {
         registerHost();
         selectionRefresh.restart();
     }
-    Component.onDestruction: if (registeredHost && typeof registeredHost.detach === "function")
-        registeredHost.detach(root)
+    Component.onDestruction: {
+        invalidateAnnotation();
+        if (registeredHost && typeof registeredHost.detach === "function")
+            registeredHost.detach(root);
+    }
 
     HoverHandler {
+        id: annotationHover
         blocking: false
-        cursorShape: root.linkAt(point.position.x, point.position.y) ? Qt.PointingHandCursor : Qt.IBeamCursor
+        cursorShape: root.annotationAt(point.position.x, point.position.y).index || root.linkAt(point.position.x, point.position.y) ? Qt.PointingHandCursor : Qt.IBeamCursor
+        onHoveredChanged: root.updateAnnotationHover()
+        onPointChanged: root.updateAnnotationHover()
+    }
+
+    TapHandler {
+        enabled: !root.coordinator && Boolean(root.annotationHandler)
+        onTapped: eventPoint => root.activateAnnotation(root.annotationAt(eventPoint.position.x, eventPoint.position.y))
+    }
+
+    Connections {
+        target: root.selectionHost
+        ignoreUnknownSignals: true
+        function onDraggingChanged() {
+            if (root.selectionHost.dragging)
+                root.invalidateAnnotation();
+        }
     }
 
     MarkupListMarkers {
@@ -137,7 +185,10 @@ TextEdit {
         linkColor: root.linkColor
         // Annotation labels use the document's native character background.
         annotationBackground: Theme.dark ? TailwindColors.zinc800 : TailwindColors.zinc100
-        onRendered: selectionRefresh.restart()
+        onRendered: {
+            selectionRefresh.restart();
+            root.invalidateAnnotation();
+        }
     }
 
     Connections {

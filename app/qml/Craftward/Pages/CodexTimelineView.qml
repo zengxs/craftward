@@ -107,6 +107,7 @@ Control {
 
         CodexTimelineRow {
             selectionHost: timelineViewport.selectionHost
+            annotationHandler: annotationPopup.handle
             width: parent ? parent.width : 0
             timelineModel: root.activeTimelineModel
             turnExpanded: {
@@ -125,10 +126,43 @@ Control {
         }
     }
 
+    CodexAnnotationPopup {
+        id: annotationPopup
+        font: root.font
+        resolveAnnotations: (entryId, index) => root.controller ? root.controller.timeline.responseAnnotations(entryId, index) : []
+    }
+
+    Connections {
+        target: timelineViewport.selectionHost.viewport
+        function onContentYChanged() {
+            annotationPopup.dismiss();
+        }
+    }
+
+    Connections {
+        target: root.controller ? root.controller.timeline : null
+        function onModelReset() {
+            annotationPopup.dismiss();
+        }
+        function onRowsRemoved() {
+            annotationPopup.dismiss();
+        }
+        function onDataChanged() {
+            if (annotationPopup.visible)
+                annotationPopup.refresh();
+        }
+    }
+
+    onVisibleChanged: if (!visible)
+        annotationPopup.dismiss()
+    onWidthChanged: annotationPopup.dismiss()
+    onHeightChanged: annotationPopup.dismiss()
+
     Connections {
         target: root.controller
 
         function onSelectionChanged() {
+            annotationPopup.dismiss();
             presentationModel.clearExpandedTurns();
             timelineViewport.resetForNewContent();
         }

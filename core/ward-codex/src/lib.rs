@@ -13,6 +13,7 @@ mod error;
 mod history;
 mod model;
 mod protocol;
+mod user_message;
 
 pub(crate) use model::ThreadInferenceState;
 
@@ -31,4 +32,8 @@ pub use model::{
     ThreadRuntimeStatus, ThreadStartOptions, ThreadStreamEvent, ThreadSubscription, ThreadSummary,
     Turn, TurnInput, TurnMode, TurnOptions, TurnPermissionPreset, TurnStatus, TurnTiming,
     UserInput,
+};
+pub use user_message::{
+    AnnotatedUserMessage, ResponseAnnotation, ResponseAnnotationSource,
+    parse_annotated_user_message,
 };

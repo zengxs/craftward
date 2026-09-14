@@ -43,6 +43,8 @@ and titles are resolved by the parser; labels retain their nested inline nodes.
 Reference definitions need not appear as visible blocks. Code preserves the
 parser's decoded whitespace and line breaks; display trimming is a renderer
 policy. Plain-text input performs no Markdown or directive interpretation.
+Ordinary `SourceFormat::Markdown` leaves Codex directives as text; the conversation
+adapter explicitly opts into `SourceFormat::CodexMarkdown` for these extensions.
 
 Inline HTML is literal text. Unsupported container syntax, including HTML
 blocks, is preserved as an opaque source-text node; its descendants are not
@@ -52,7 +54,7 @@ already has a production renderer or complete reference interaction.
 
 ## Codex Annotations
 
-Ordinary Markdown text recognizes `:codex-annotation{index="4"}` as a typed
+With `SourceFormat::CodexMarkdown`, prose recognizes `:codex-annotation{index="4"}` as a typed
 annotation with a positive 32-bit index and visible label `[4]`. Spaces or tabs
 around `index`, `=`, and the closing brace are accepted. The original directive
 remains recoverable from its source range. Resolving the index to a review object

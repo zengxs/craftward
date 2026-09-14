@@ -21,6 +21,7 @@ mod semantic;
 pub enum WardMarkupSourceFormat {
     PlainText = 0,
     Markdown = 1,
+    CodexMarkdown = 2,
 }
 
 impl From<WardMarkupSourceFormat> for SourceFormat {
@@ -28,6 +29,7 @@ impl From<WardMarkupSourceFormat> for SourceFormat {
         match format {
             WardMarkupSourceFormat::PlainText => Self::PlainText,
             WardMarkupSourceFormat::Markdown => Self::Markdown,
+            WardMarkupSourceFormat::CodexMarkdown => Self::CodexMarkdown,
         }
     }
 }
@@ -99,7 +101,7 @@ mod tests {
         // SAFETY: Source and error output are valid until the call returns.
         let buffer = unsafe {
             ward_core_markup_parse_semantic(
-                WardMarkupSourceFormat::Markdown,
+                WardMarkupSourceFormat::CodexMarkdown,
                 source.as_ptr(),
                 source.len(),
                 &raw mut error,
@@ -164,7 +166,7 @@ mod tests {
         // SAFETY: Source and error output are valid until the call returns.
         let buffer = unsafe {
             ward_core_markup_parse_semantic(
-                WardMarkupSourceFormat::Markdown,
+                WardMarkupSourceFormat::CodexMarkdown,
                 source.as_ptr(),
                 source.len(),
                 &raw mut error,

@@ -204,8 +204,9 @@ MarkupDocumentModel::parse(quint64 generation,
     Result result{ .generation = generation };
     const QByteArray encoded = source.toUtf8();
     WardError* error = nullptr;
-    const auto wireFormat = format == MarkupDocumentModel::SourceFormat::Markdown ? WardMarkupSourceFormatMarkdown
-                                                                                  : WardMarkupSourceFormatPlainText;
+    const auto wireFormat = format == SourceFormat::CodexMarkdown ? WardMarkupSourceFormatCodexMarkdown
+                            : format == SourceFormat::Markdown    ? WardMarkupSourceFormatMarkdown
+                                                                  : WardMarkupSourceFormatPlainText;
     const std::unique_ptr<WardOwnedBuffer, decltype(&ward_core_owned_buffer_destroy)> buffer(
       ward_core_markup_parse_semantic(
         wireFormat, reinterpret_cast<const uint8_t*>(encoded.constData()), encoded.size(), &error),

@@ -8,7 +8,7 @@ use ward_markup::{
 };
 
 fn markdown(source: &str) -> SemanticDocument {
-    let document = parse_semantic(source, SourceFormat::Markdown);
+    let document = parse_semantic(source, SourceFormat::CodexMarkdown);
     for block in &document.blocks {
         let mut ids = HashSet::new();
         for (index, node) in block.nodes.iter().enumerate() {
@@ -438,4 +438,24 @@ fn malformed_or_streaming_review_directives_remain_literal() {
     let before = markdown(&format!("Stable.\n\n{directive}"));
     let after = markdown(&format!("Stable.\n\n{directive}\n\nTail"));
     assert_eq!(before.blocks, after.blocks[..2]);
+}
+
+#[test]
+fn ordinary_markdown_keeps_codex_directives_as_text() {
+    let source = r#"**Bold** :codex-annotation{index="1"}
+
+::code-comment{title="Title" body="Body" file="/file.cpp"}"#;
+    let document = parse_semantic(source, SourceFormat::Markdown);
+    assert!(texts(&document).contains(":codex-annotation"));
+    assert!(texts(&document).contains("::code-comment"));
+    assert!(
+        !document
+            .blocks
+            .iter()
+            .flat_map(|block| &block.nodes)
+            .any(|node| matches!(
+                node.content,
+                NodeContent::Annotation { .. } | NodeContent::CodeComment(_)
+            ))
+    );
 }

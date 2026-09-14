@@ -14,6 +14,7 @@ Control {
     required property var renderParts
     property var selectionCoordinator: null
     property var selectionHost: null
+    property var annotationHandler: null
     property font codeFont: font
     property color textColor: palette.text
     property color linkColor: palette.link
@@ -45,6 +46,7 @@ Control {
                             surface: partItem.modelData.surface
                             coordinator: root.selectionCoordinator
                             selectionHost: root.selectionHost
+                            annotationHandler: root.annotationHandler
                             color: root.textColor
                             font: root.font
                             codeFont: root.codeFont
@@ -63,6 +65,7 @@ Control {
                                 part: partItem.modelData
                                 coordinator: root.selectionCoordinator
                                 selectionHost: root.selectionHost
+                                annotationHandler: root.annotationHandler
                                 textColor: root.textColor
                                 font: root.font
                                 codeFont: root.codeFont

@@ -51,6 +51,19 @@ target_link_libraries(CraftwardCodex
 )
 
 if(BUILD_TESTING)
+    qt_add_executable(CraftwardCodexTimelineModelTest
+        tests/codextimelinemodeltest.cpp
+    )
+    target_include_directories(CraftwardCodexTimelineModelTest PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_link_libraries(CraftwardCodexTimelineModelTest
+        PRIVATE
+            CraftwardCodex
+            Qt6::Gui
+            Qt6::Test
+            "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
+    )
+    add_test(NAME CraftwardCodexTimelineModelTest COMMAND CraftwardCodexTimelineModelTest)
+
     qt_add_executable(CraftwardCodexHistoryControllerTest
         tests/codexhistorycontrollertest.cpp
     )

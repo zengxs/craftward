@@ -25,6 +25,21 @@ displayMessageText(const CodexMessage& message)
         text.chop(1);
     return text;
 }
+
+QString
+annotatedMessageCopyText(const ward::codex::v1::AnnotatedUserMessage& message)
+{
+    QStringList parts;
+    for (const auto& annotation : message.annotations()) {
+        QString text = QStringLiteral("[%1] %2").arg(annotation.index()).arg(annotation.text());
+        if (annotation.hasComment() && !annotation.comment().isEmpty())
+            text += QStringLiteral("\n\n") + annotation.comment();
+        parts.append(std::move(text));
+    }
+    if (!message.body().trimmed().isEmpty())
+        parts.append(message.body());
+    return parts.join(QStringLiteral("\n\n"));
+}
 }
 
 CodexTimelineModel::CodexTimelineModel(QObject* parent)
@@ -84,7 +99,15 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
         case FinalAnswerRole:
             return !row.activityGroup && row.message.phase() == MessagePhase::MESSAGE_PHASE_FINAL_ANSWER;
         case TextRole:
-            return row.activityGroup ? QString() : displayMessageText(row.message);
+            return row.activityGroup ? QString() : row.copyText;
+        case RawTextRole:
+            return row.activityGroup ? QString() : row.message.text();
+        case DisplayTextRole:
+            return row.displayText;
+        case AnnotationCountRole:
+            return row.userInputNumber > 0 && row.message.hasAnnotatedUserMessage()
+                     ? row.message.annotatedUserMessage().annotations().size()
+                     : 0;
         case MarkupDocumentRole:
             return row.activityGroup ? QVariant()
                                      : QVariant::fromValue(static_cast<QObject*>(ensureMarkupDocument(row)));
@@ -142,6 +165,9 @@ CodexTimelineModel::roleNames() const
         { TurnCompletedAtUnixSecondsRole, "turnCompletedAtUnixSeconds" },
         { TurnDurationMillisecondsRole, "turnDurationMilliseconds" },
         { ActivityPresentationKindRole, "activityPresentationKind" },
+        { RawTextRole, "rawText" },
+        { DisplayTextRole, "displayText" },
+        { AnnotationCountRole, "annotationCount" },
     };
 }
 
@@ -152,16 +178,26 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline,
 {
     QList<TimelineRow> rows;
     rows.reserve(timeline.size());
+    QHash<QString, int> userInputNumbers;
     for (qsizetype sourceIndex = 0; sourceIndex < timeline.size(); ++sourceIndex) {
         CodexTimelineItem& item = timeline[sourceIndex];
         if (item.hasMessage()) {
             CodexMessage message = item.message();
             const QString sourceId = message.messageId().isEmpty() ? QString::number(sourceIndex) : message.messageId();
+            const QString entryId = QStringLiteral("message:%1:%2").arg(item.turnId(), sourceId);
+            using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
+            const bool user = message.role() == MessageRole::MESSAGE_ROLE_USER;
+            const bool annotated =
+              user && message.hasAnnotatedUserMessage() && !message.annotatedUserMessage().annotations().isEmpty();
+            const QString text = annotated ? message.annotatedUserMessage().body() : displayMessageText(message);
+            const QString copy = annotated ? annotatedMessageCopyText(message.annotatedUserMessage()) : text;
             rows.append(TimelineRow{
-              .entryId = QStringLiteral("message:%1:%2").arg(item.turnId(), sourceId),
+              .entryId = entryId,
               .turnId = item.turnId(),
-              .activityGroup = false,
               .message = std::move(message),
+              .displayText = text,
+              .copyText = copy,
+              .userInputNumber = user ? ++userInputNumbers[item.turnId()] : 0,
               .turnTiming = turnTimings.value(item.turnId()),
             });
             continue;
@@ -500,18 +536,20 @@ CodexTimelineModel::rowsEqual(const TimelineRow& left, const TimelineRow& right)
     return left.entryId == right.entryId && left.turnId == right.turnId && left.forkBoundary == right.forkBoundary &&
            left.turnForkable == right.turnForkable && left.latestTurn == right.latestTurn &&
            left.activityGroup == right.activityGroup && left.message == right.message &&
-           left.markupFinalized == right.markupFinalized && left.activityKind == right.activityKind &&
-           left.activities == right.activities && left.turnTiming == right.turnTiming;
+           left.displayText == right.displayText && left.copyText == right.copyText &&
+           left.userInputNumber == right.userInputNumber && left.markupFinalized == right.markupFinalized &&
+           left.activityKind == right.activityKind && left.activities == right.activities &&
+           left.turnTiming == right.turnTiming;
 }
 
 MarkupDocumentModel::SourceFormat
-CodexTimelineModel::messageSourceFormat(const CodexMessage& message)
+CodexTimelineModel::messageSourceFormat(const TimelineRow& row)
 {
     using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
-    switch (message.role()) {
+    switch (row.message.role()) {
         case MessageRole::MESSAGE_ROLE_USER:
         case MessageRole::MESSAGE_ROLE_AGENT:
-            return MarkupDocumentModel::SourceFormat::Markdown;
+            return MarkupDocumentModel::SourceFormat::CodexMarkdown;
         case MessageRole::MESSAGE_ROLE_UNSPECIFIED:
         default:
             return MarkupDocumentModel::SourceFormat::PlainText;
@@ -521,13 +559,13 @@ CodexTimelineModel::messageSourceFormat(const CodexMessage& message)
 MarkupDocumentModel*
 CodexTimelineModel::ensureMarkupDocument(const TimelineRow& row) const
 {
-    if (row.activityGroup)
+    if (row.activityGroup ||
+        (row.userInputNumber > 0 && row.message.hasAnnotatedUserMessage() && row.displayText.trimmed().isEmpty()))
         return nullptr;
     if (!row.markupDocument) {
         row.markupDocument = std::make_shared<MarkupDocumentModel>(const_cast<CodexTimelineModel*>(this));
         row.markupDocument->setBaseDirectory(baseDirectory_);
-        row.markupDocument->reconcileSource(
-          displayMessageText(row.message), messageSourceFormat(row.message), row.markupFinalized);
+        row.markupDocument->reconcileSource(row.displayText, messageSourceFormat(row), row.markupFinalized);
     }
     return row.markupDocument.get();
 }
@@ -577,11 +615,13 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline,
     for (qsizetype index = 0; index < commonPrefix; ++index) {
         if (rows[index].activityGroup)
             continue;
+        if (rows[index].userInputNumber > 0 && rows[index].message.hasAnnotatedUserMessage() &&
+            rows[index].displayText.trimmed().isEmpty())
+            continue;
         rows[index].markupDocument = rows_[index].markupDocument;
         if (rows[index].markupDocument) {
-            rows[index].markupDocument->reconcileSource(displayMessageText(rows[index].message),
-                                                        messageSourceFormat(rows[index].message),
-                                                        rows[index].markupFinalized);
+            rows[index].markupDocument->reconcileSource(
+              rows[index].displayText, messageSourceFormat(rows[index]), rows[index].markupFinalized);
         }
     }
 
@@ -608,6 +648,9 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline,
                            CommentaryRole,
                            FinalAnswerRole,
                            TextRole,
+                           RawTextRole,
+                           DisplayTextRole,
+                           AnnotationCountRole,
                            MarkupDocumentRole,
                            ActivityLabelRole,
                            ActivityCountRole,
@@ -634,6 +677,49 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline,
         rows_.remove(first, rows_.size() - first);
         endRemoveRows();
     }
+}
+
+QVariantList
+CodexTimelineModel::responseAnnotations(const QString& entryId, quint32 referenceIndex) const
+{
+    const auto origin =
+      std::find_if(rows_.cbegin(), rows_.cend(), [&](const auto& row) { return row.entryId == entryId; });
+    if (origin == rows_.cend() || origin->activityGroup)
+        return {};
+    // An index of zero requests the owning input's complete collection.
+    // References resolve only against earlier inputs in the same turn.
+    if ((referenceIndex == 0) != (origin->userInputNumber > 0))
+        return {};
+    QVariantList result;
+    QSet<QString> seen;
+    auto append = [&](const TimelineRow& row) {
+        if (row.userInputNumber == 0 || row.turnId != origin->turnId || !row.message.hasAnnotatedUserMessage())
+            return;
+        for (const auto& annotation : row.message.annotatedUserMessage().annotations()) {
+            if (referenceIndex && annotation.index() != referenceIndex)
+                continue;
+            const QString key = row.entryId + QLatin1Char('/') + QString::number(annotation.index());
+            if (seen.contains(key))
+                continue;
+            seen.insert(key);
+            result.append(QVariantMap{
+              { QStringLiteral("index"), annotation.index() },
+              { QStringLiteral("text"), annotation.text() },
+              { QStringLiteral("comment"), annotation.hasComment() ? annotation.comment() : QString() },
+              { QStringLiteral("sourceEntryId"), row.entryId },
+              { QStringLiteral("inputNumber"), row.userInputNumber },
+            });
+        }
+    };
+    if (!referenceIndex) {
+        append(*origin);
+    } else {
+        for (auto input = origin; input != rows_.cbegin();) {
+            --input;
+            append(*input);
+        }
+    }
+    return result;
 }
 
 void

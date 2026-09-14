@@ -10,6 +10,7 @@ enum SourceFormat {
   SOURCE_FORMAT_UNSPECIFIED = 0;
   SOURCE_FORMAT_PLAIN_TEXT = 1;
   SOURCE_FORMAT_MARKDOWN = 2;
+  SOURCE_FORMAT_CODEX_MARKDOWN = 3;
 }
 
 // Half-open UTF-8 byte positions in the complete input message snapshot.

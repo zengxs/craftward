@@ -21,6 +21,7 @@ class MarkupDocumentModel : public QAbstractListModel
     {
         PlainText,
         Markdown,
+        CodexMarkdown,
     };
 
     enum Role

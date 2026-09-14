@@ -17,6 +17,7 @@ Column {
     required property color linkColor
     property var coordinator: null
     property var selectionHost: null
+    property var annotationHandler: null
     readonly property color lineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, Theme.dark ? 0.25 : 0.22)
     readonly property int columns: Math.max(1, part.columns)
 
@@ -62,6 +63,7 @@ Column {
                         surface: cell.modelData
                         coordinator: root.coordinator
                         selectionHost: root.selectionHost
+                        annotationHandler: root.annotationHandler
                         font: root.font
                         codeFont: root.codeFont
                         color: root.textColor

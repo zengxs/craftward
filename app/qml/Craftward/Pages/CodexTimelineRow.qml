@@ -5,6 +5,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl as ControlsImpl
 import QtQuick.Layouts
 import Craftward.Components
 import Craftward.Design
@@ -14,6 +15,7 @@ Control {
 
     required property var timelineModel
     property var selectionHost: null
+    property var annotationHandler: null
     property int sourceRow: -1
     property int dataRevision: -1
     required property bool turnExpanded
@@ -23,6 +25,7 @@ Control {
     required property bool showForkActions
     required property double wallClockUnixMilliseconds
     readonly property string entryId: String(root.value("entryId") ?? "")
+    readonly property string sourceEntryId: String(root.value("sourceEntryId") ?? root.entryId)
     readonly property string heightCacheKey: "semantic:" + root.entryId
     readonly property bool contentMaterializationRequested: false
     readonly property bool contentMaterializationReady: true
@@ -40,18 +43,32 @@ Control {
     readonly property bool semanticBlock: Boolean(root.value("semanticBlock"))
     readonly property bool firstBlockInEntry: !root.semanticBlock || Boolean(root.value("firstBlockInEntry"))
     readonly property bool lastBlockInEntry: !root.semanticBlock || Boolean(root.value("lastBlockInEntry"))
+    readonly property bool firstBlockInMessage: root.firstBlockInEntry
+    readonly property bool lastBlockInMessage: root.lastBlockInEntry
+    readonly property int annotationCount: Number(root.value("annotationCount") ?? 0)
+    readonly property bool hasMessageBody: !root.annotationCount || root.textValue("displayText").trim().length > 0
     readonly property real semanticBlockSpacing: {
         if (!root.semanticBlock || root.lastBlockInEntry)
             return 0;
         const parts = root.value("renderParts");
         return parts && parts.length ? (parts[parts.length - 1].spacingAfter ?? 8) : 8;
     }
-    readonly property real semanticEntrySpacing: (!root.semanticBlock || root.lastBlockInEntry) ? 10 : 0
+    readonly property real semanticEntrySpacing: root.lastBlockInMessage ? 10 : 0
     readonly property bool presentationVisible: !root.detailRow || root.firstDetailInTurn || root.turnExpanded
 
     signal toggleTurnRequested(string turnId)
     signal forkRequested(string turnId)
     signal fileLocationRequested(string file, int start, int end)
+
+    function handleAnnotation(action, item, hit) {
+        if (root && root.annotationHandler)
+            root.annotationHandler(root.sourceEntryId, action, item, hit);
+    }
+
+    onEntryIdChanged: if (root.annotationHandler)
+        root.annotationHandler("", "invalidate", root, ({}))
+    onVisibleChanged: if (!visible && root.annotationHandler)
+        root.annotationHandler("", "invalidate", root, ({}))
 
     function prepareItemForLayout(item) {
         if (!item)
@@ -173,15 +190,15 @@ Control {
             width: primaryMessageLoader.width
             readonly property real userMaximumWidth: Math.min(width * 0.72, 680)
             readonly property real messageHorizontalPadding: root.fromUser ? 14 : 0
-            readonly property real messageTopPadding: root.fromUser && (!root.semanticBlock || root.firstBlockInEntry) ? 10 : 0
-            readonly property real messageBottomPadding: root.semanticBlock && !root.lastBlockInEntry ? root.semanticBlockSpacing : (root.fromUser ? 10 : 0)
+            readonly property real messageTopPadding: root.fromUser && root.firstBlockInMessage ? 10 : 0
+            readonly property real messageBottomPadding: root.semanticBlock && !root.lastBlockInEntry ? root.semanticBlockSpacing : (root.fromUser ? (root.lastBlockInMessage ? 10 : 8) : 0)
             readonly property real messageWidth: root.fromUser ? Math.min(userMaximumWidth, Math.max(120, userTextMetrics.advanceWidth + messageHorizontalPadding * 2)) : width
             implicitHeight: messageContent.height
 
             TextMetrics {
                 id: userTextMetrics
 
-                text: root.fromUser ? root.longestLine(root.textValue("text")) : ""
+                text: root.fromUser ? root.longestLine(root.textValue("displayText") || root.textValue("text")) : ""
                 font: root.font
             }
 
@@ -190,7 +207,7 @@ Control {
 
                 x: root.fromUser ? messageRoot.width - width : 0
                 width: messageRoot.messageWidth
-                height: messageBody.height + messageActions.implicitHeight + (messageActions.available ? 2 : 0)
+                height: annotationChip.height + (annotationChip.visible && root.hasMessageBody ? 8 : 0) + messageBody.height + messageActions.implicitHeight + (messageActions.available ? 2 : 0)
 
                 HoverHandler {
                     id: messageHover
@@ -199,8 +216,8 @@ Control {
                 CodexMessageActionState {
                     id: messageActionState
 
-                    fromUser: root.fromUser && root.lastBlockInEntry
-                    finalAnswer: root.finalAnswer && root.lastBlockInEntry
+                    fromUser: root.fromUser && root.lastBlockInMessage
+                    finalAnswer: root.finalAnswer && root.lastBlockInMessage
                     latestTurn: root.latestTurn
                     hasRunningEvidence: root.hasRunningEvidence
                     hovered: messageHover.hovered
@@ -209,11 +226,66 @@ Control {
                     showForkActions: root.showForkActions
                 }
 
+                AbstractButton {
+                    id: annotationChip
+                    objectName: "codexAnnotationChip"
+                    x: parent.width - width
+                    visible: root.annotationCount > 0 && root.firstBlockInEntry
+                    height: visible ? implicitHeight : 0
+                    text: /*% "%n annotation(s)" */ qsTrId("craftward.codex.annotations.count", root.annotationCount)
+                    font: root.font
+                    hoverEnabled: true
+                    leftPadding: 12
+                    rightPadding: 12
+                    topPadding: 6
+                    bottomPadding: 6
+                    contentItem: Row {
+                        spacing: 6
+
+                        ControlsImpl.IconImage {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 16
+                            height: 16
+                            source: "qrc:///icons/hugeicons/chat-feedback-01.svg"
+                            sourceSize.width: 24
+                            sourceSize.height: 24
+                            color: root.palette.placeholderText
+                        }
+
+                        Label {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: annotationChip.text
+                            font.weight: Font.DemiBold
+                            color: root.palette.text
+                            textFormat: Text.PlainText
+                        }
+                    }
+                    background: Rectangle {
+                        radius: height / 2
+                        color: annotationChip.hovered ? Theme.userMessageSurface : "transparent"
+                        border.color: Theme.metadataBadgeRing
+                    }
+                    onHoveredChanged: root.handleAnnotation(hovered ? "hover" : "leave", annotationChip, {
+                        index: 0,
+                        key: "collection",
+                        rect: Qt.rect(0, 0, width, height)
+                    })
+                    onClicked: root.handleAnnotation("activate", annotationChip, {
+                        index: 0,
+                        key: "collection",
+                        rect: Qt.rect(0, 0, width, height)
+                    })
+                    Component.onDestruction: if (root)
+                        root.handleAnnotation("invalidate", annotationChip, ({}))
+                }
+
                 Item {
                     id: messageBody
 
                     width: parent.width
-                    height: messageRenderer.implicitHeight + messageRoot.messageTopPadding + messageRoot.messageBottomPadding
+                    y: annotationChip.height + (annotationChip.visible && root.hasMessageBody ? 8 : 0)
+                    visible: root.hasMessageBody
+                    height: visible ? messageRenderer.implicitHeight + messageRoot.messageTopPadding + messageRoot.messageBottomPadding : 0
 
                     Rectangle {
                         id: userMessageSurface
@@ -232,7 +304,7 @@ Control {
                             }
                             height: Math.min(parent.radius, parent.height)
                             color: parent.color
-                            visible: root.semanticBlock && !root.firstBlockInEntry
+                            visible: !root.firstBlockInMessage
                         }
 
                         Rectangle {
@@ -243,7 +315,7 @@ Control {
                             }
                             height: Math.min(parent.radius, parent.height)
                             color: parent.color
-                            visible: root.semanticBlock && !root.lastBlockInEntry
+                            visible: !root.lastBlockInMessage
                         }
                     }
 
@@ -254,6 +326,7 @@ Control {
                         x: messageRoot.messageHorizontalPadding
                         y: messageRoot.messageTopPadding
                         width: parent.width - messageRoot.messageHorizontalPadding * 2
+                        active: root.hasMessageBody
                         sourceComponent: semanticBlockComponent
                     }
                 }
@@ -263,7 +336,7 @@ Control {
 
                     objectName: "codexMessageActions"
                     x: root.fromUser ? parent.width - width : 0
-                    y: messageBody.height + 2
+                    y: messageBody.y + messageBody.height + 2
                     available: messageActionState.available
                     revealed: messageActionState.revealed
                     forkVisible: messageActionState.forkVisible
@@ -286,6 +359,7 @@ Control {
             segmentText: root.textValue("blockText")
             renderParts: root.value("renderParts") ?? null
             selectionHost: root.selectionHost
+            annotationHandler: root.fromUser ? null : root.handleAnnotation
             selectionCoordinator: {
                 const document = root.value("markupDocument");
                 return document ? document.selection ?? null : null;

@@ -52,6 +52,9 @@ class CodexTimelineModel : public QAbstractListModel
         TurnCompletedAtUnixSecondsRole,
         TurnDurationMillisecondsRole,
         ActivityPresentationKindRole,
+        RawTextRole,
+        DisplayTextRole,
+        AnnotationCountRole,
     };
 
     explicit CodexTimelineModel(QObject* parent = nullptr);
@@ -64,6 +67,8 @@ class CodexTimelineModel : public QAbstractListModel
     void reconcileTimeline(QList<CodexTimelineItem> timeline,
                            const QStringList& forkableTurnIds,
                            const QList<CodexTurnTiming>& turnTimings = {});
+    Q_INVOKABLE [[nodiscard]] QVariantList responseAnnotations(const QString& entryId,
+                                                               quint32 referenceIndex = 0) const;
     void clear();
     void retranslate();
     void setBaseDirectory(const QString& directory);
@@ -99,6 +104,9 @@ class CodexTimelineModel : public QAbstractListModel
         bool latestTurn = false;
         bool activityGroup = false;
         CodexMessage message;
+        QString displayText;
+        QString copyText;
+        int userInputNumber = 0;
         bool markupFinalized = false;
         mutable std::shared_ptr<MarkupDocumentModel> markupDocument;
         ActivityPresentationKind activityKind = ActivityPresentationKind::Activity;
@@ -121,7 +129,7 @@ class CodexTimelineModel : public QAbstractListModel
     [[nodiscard]] bool rowFailed(const TimelineRow& row) const;
     [[nodiscard]] bool rowRunning(const TimelineRow& row) const;
     [[nodiscard]] bool rowsEqual(const TimelineRow& left, const TimelineRow& right) const;
-    [[nodiscard]] static MarkupDocumentModel::SourceFormat messageSourceFormat(const CodexMessage& message);
+    [[nodiscard]] static MarkupDocumentModel::SourceFormat messageSourceFormat(const TimelineRow& row);
     [[nodiscard]] MarkupDocumentModel* ensureMarkupDocument(const TimelineRow& row) const;
     void replaceRows(QList<TimelineRow> rows);
 

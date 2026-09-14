@@ -166,6 +166,48 @@ Item {
             compare(row.implicitHeight, retainedHeight);
         }
 
+        function test_annotationChipOwnsCollectionWithoutAnEmptyBubble() {
+            const copyText = "[1] Selected text\n\nChange it";
+            const annotated = messageRow({
+                fromUser: true,
+                finalAnswer: false,
+                text: copyText,
+                displayText: "",
+                annotationCount: 2,
+                semanticBlock: false
+            });
+            const row = createViewport([annotated]);
+            const chip = findChild(row, "codexAnnotationChip");
+            verify(chip.visible);
+            compare(chip.text, "2 annotations");
+            verify(!findChild(row, "codexUserMessageSurface").visible);
+            const actions = findChild(row, "codexMessageActions");
+            verify(actions.available);
+            actions.copyRequested();
+            compare(ApplicationClipboard.lastCopiedText, copyText);
+            const height = row.implicitHeight;
+            mouseMove(chip, chip.width / 2, chip.height / 2);
+            compare(row.implicitHeight, height);
+        }
+
+        function test_annotationChipAppearsOnlyAboveFirstBodySegment() {
+            const annotated = messageRow({
+                fromUser: true,
+                finalAnswer: false,
+                displayText: "Body",
+                annotationCount: 1
+            });
+            let row = createViewport([annotated]);
+            const chip = findChild(row, "codexAnnotationChip");
+            const surface = findChild(row, "codexUserMessageSurface");
+            verify(chip.visible && surface.visible);
+            verify(surface.mapToItem(row, 0, 0).y > chip.mapToItem(row, 0, chip.height).y);
+            row = createViewport([Object.assign({}, annotated, {
+                    firstBlockInEntry: false
+                })]);
+            verify(!findChild(row, "codexAnnotationChip").visible);
+        }
+
         function test_listContinuationUsesItsItemSpacing() {
             for (const spacing of [0, 10]) {
                 const row = createViewport([messageRow({

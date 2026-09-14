@@ -36,8 +36,23 @@ Item {
     QtObject {
         id: timelineData
 
+        signal modelReset
+        signal rowsRemoved
+        signal dataChanged
         property int revision: 0
         property var rows: []
+
+        function responseAnnotations(entryId, index) {
+            return [
+                {
+                    index: 1,
+                    text: "Selected text",
+                    comment: "Change it",
+                    sourceEntryId: "input-1",
+                    inputNumber: 1
+                }
+            ];
+        }
 
         function valueAt(sourceRow, roleName) {
             const row = rows[sourceRow];
@@ -127,6 +142,27 @@ Item {
             suite.timelineView = null;
             timelineData.rows = [];
             ++timelineData.revision;
+        }
+
+        function test_annotationPopupClosesOnScrollingAndConversationSwitch() {
+            const scroll = findChild(suite.timelineView, "codexTimelineScrollViewport");
+            const row = scroll.parent.delegateForEntry("message:turn-1:answer-1");
+            const popup = findChild(suite.timelineView, "codexAnnotationPopup");
+            verify(popup !== null);
+            const hit = {
+                index: 1,
+                key: "reference",
+                rect: Qt.rect(0, 0, 20, 20)
+            };
+            row.handleAnnotation("activate", row, hit);
+            tryCompare(popup, "opened", true);
+            compare(popup.candidates.length, 1);
+            scroll.contentY += 20;
+            tryCompare(popup, "visible", false);
+            row.handleAnnotation("activate", row, hit);
+            tryCompare(popup, "opened", true);
+            fakeController.selectionChanged();
+            tryCompare(popup, "visible", false);
         }
 
         function test_mapsControllerRunningEvidenceIntoTheLatestTimelineRow() {

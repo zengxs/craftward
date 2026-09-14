@@ -14,6 +14,7 @@ Control {
     required property var part
     property var coordinator: null
     property var selectionHost: null
+    property var annotationHandler: null
     property font codeFont: Components.Typography.codeFont
     property color textColor: palette.text
     property color linkColor: palette.link
@@ -57,6 +58,7 @@ Control {
             surface: root.part.badge ?? null
             coordinator: root.coordinator
             selectionHost: root.selectionHost
+            annotationHandler: root.annotationHandler
             wrapMode: TextEdit.NoWrap
             font: Qt.font({
                 family: root.font.family,
@@ -79,6 +81,7 @@ Control {
             surface: root.part.title
             coordinator: root.coordinator
             selectionHost: root.selectionHost
+            annotationHandler: root.annotationHandler
             font: Qt.font({
                 family: root.font.family,
                 pixelSize: Math.round(15 * root.fontScale),
@@ -94,6 +97,7 @@ Control {
             surface: root.part.location
             coordinator: root.coordinator
             selectionHost: root.selectionHost
+            annotationHandler: root.annotationHandler
             font: Qt.font({
                 family: root.codeFont.family,
                 pixelSize: Math.round(11 * root.fontScale)
@@ -119,6 +123,7 @@ Control {
             renderParts: root.part.body
             selectionCoordinator: root.coordinator
             selectionHost: root.selectionHost
+            annotationHandler: root.annotationHandler
             font: Qt.font({
                 family: root.font.family,
                 pixelSize: Math.round(13 * root.fontScale),

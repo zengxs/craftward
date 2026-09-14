@@ -283,7 +283,34 @@ message Message {
   string message_id = 1;
   MessageRole role = 2;
   MessagePhase phase = 3;
+  // Original input text, including any client envelope.
   string text = 4;
+
+  // Present only after a complete user-message envelope has been validated.
+  AnnotatedUserMessage annotated_user_message = 5;
+}
+
+message AnnotatedUserMessage {
+  // The request body is retained verbatim, including leading/trailing
+  // whitespace.
+  string body = 1;
+  repeated ResponseAnnotation annotations = 2;
+}
+
+message ResponseAnnotation {
+  // One-based position in the original annotation array.
+  uint32 index = 1;
+  string text = 2;
+  optional string comment = 3;
+  ResponseAnnotationSource source = 4;
+}
+
+message ResponseAnnotationSource {
+  string message_id = 1;
+  // Positions in the originating client's rendered UTF-16 text, not source
+  // bytes.
+  uint64 start_offset = 2;
+  uint64 end_offset = 3;
 }
 
 // One displayable item at its original position in a Codex turn.

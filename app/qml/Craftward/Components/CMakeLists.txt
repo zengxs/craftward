@@ -6,6 +6,8 @@ qt_add_qml_module(CraftwardComponents
         "${PROJECT_SOURCE_DIR}/src/components/applicationclipboard.h"
         "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.cpp"
         "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.h"
+        "${PROJECT_SOURCE_DIR}/src/components/popuppositioner.cpp"
+        "${PROJECT_SOURCE_DIR}/src/components/popuppositioner.h"
         "${PROJECT_SOURCE_DIR}/src/components/macos/typography.mm"
         "${PROJECT_SOURCE_DIR}/src/components/macos/windowmovehelper.mm"
         "${PROJECT_SOURCE_DIR}/src/components/typography.h"

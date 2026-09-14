@@ -10,6 +10,7 @@ pub(super) fn document_to_wire(document: ward_markup::SemanticDocument) -> wire:
         source_format: match document.source_format {
             SourceFormat::PlainText => wire::SourceFormat::PlainText,
             SourceFormat::Markdown => wire::SourceFormat::Markdown,
+            SourceFormat::CodexMarkdown => wire::SourceFormat::CodexMarkdown,
             _ => wire::SourceFormat::Unspecified,
         } as i32,
         blocks: document

@@ -8,9 +8,11 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QFontInfo>
+#include <QGlyphRun>
 #include <QTextBlock>
 #include <QTextBoundaryFinder>
 #include <QTextCursor>
+#include <QTextLayout>
 #include <QTextList>
 
 #include <algorithm>
@@ -90,6 +92,60 @@ MarkupTextDocument::firstLineAscent() const
     document->documentLayout()->documentSize();
     const auto* layout = document->firstBlock().layout();
     return layout && layout->lineCount() ? layout->lineAt(0).ascent() : 0;
+}
+
+QVariantMap
+MarkupTextDocument::annotationAt(QQuickItem* textEdit, qreal x, qreal y) const
+{
+    auto* document = document_ ? document_->textDocument() : nullptr;
+    if (!textEdit || !document || textEdit->property("textDocument").value<QQuickTextDocument*>() != document_)
+        return {};
+    auto* documentLayout = document->documentLayout();
+    documentLayout->documentSize();
+    const auto* firstLayout = document->firstBlock().layout();
+    if (!firstLayout || firstLayout->lineCount() == 0)
+        return {};
+    QRectF cursor;
+    if (!QMetaObject::invokeMethod(textEdit, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, 0)))
+        return {};
+    const auto firstLine = firstLayout->lineAt(0);
+    const QPointF origin = cursor.topLeft() - firstLayout->position() - QPointF(firstLine.cursorToX(0), firstLine.y());
+    const QPointF point = QPointF(x, y) - origin;
+    const int position = documentLayout->hitTest(point, Qt::FuzzyHit);
+    if (position < 0)
+        return {};
+    const auto block = document->findBlock(position);
+    const auto* layout = block.layout();
+    if (!layout)
+        return {};
+    // Fuzzy cursor hits include whitespace. Require containment in an actual
+    // annotation glyph range, including wrapped and bidirectional fragments.
+    for (auto it = block.begin(); !it.atEnd(); ++it) {
+        const auto fragment = it.fragment();
+        const auto format = fragment.charFormat();
+        const quint32 index = format.property(AnnotationIndexProperty).toUInt();
+        if (!index)
+            continue;
+        const int start = fragment.position() - block.position();
+        const int end = start + fragment.length();
+        for (int n = 0; n < layout->lineCount(); ++n) {
+            const auto line = layout->lineAt(n);
+            const int from = std::max(start, line.textStart());
+            const int to = std::min(end, line.textStart() + line.textLength());
+            if (from >= to)
+                continue;
+            for (const auto& glyphs : line.glyphRuns(from, to - from, QTextLayout::RetrieveGlyphPositions)) {
+                const QRectF bounds = glyphs.boundingRect();
+                const QRectF rect =
+                  QRectF(bounds.x(), line.y(), bounds.width(), line.height()).translated(layout->position());
+                if (rect.contains(point))
+                    return { { QStringLiteral("index"), index },
+                             { QStringLiteral("key"), format.property(AnnotationKeyProperty) },
+                             { QStringLiteral("rect"), rect.translated(origin) } };
+            }
+        }
+    }
+    return {};
 }
 
 void
@@ -175,10 +231,13 @@ MarkupTextDocument::render()
                     families.append(chineseFamily);
                 format.setFontFamilies(families);
             }
-            if (run.annotation || format.isAnchor())
+            if (run.annotationIndex || format.isAnchor())
                 format.setForeground(linkColor_);
-            if (run.annotation)
+            if (run.annotationIndex) {
                 format.setBackground(annotationBackground_);
+                format.setProperty(AnnotationIndexProperty, run.annotationIndex);
+                format.setProperty(AnnotationKeyProperty, run.key);
+            }
             transaction.insertText(run.text, format);
         }
     }

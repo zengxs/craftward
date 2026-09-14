@@ -270,16 +270,40 @@ fn interaction_decision_from_wire(
 
 fn message_from_item(item: CodexThreadItem) -> Option<Message> {
     match item {
-        CodexThreadItem::UserMessage { id, content } => Some(Message {
-            message_id: id,
-            role: MessageRole::User as i32,
-            phase: MessagePhase::Unspecified as i32,
-            text: content
+        CodexThreadItem::UserMessage { id, content } => {
+            let text = content
                 .into_iter()
                 .map(user_input_text)
                 .collect::<Vec<_>>()
-                .join("\n"),
-        }),
+                .join("\n");
+            let annotated_user_message =
+                ward_codex::parse_annotated_user_message(&text).map(|parsed| {
+                    AnnotatedUserMessage {
+                        body: parsed.body.to_owned(),
+                        annotations: parsed
+                            .annotations
+                            .into_iter()
+                            .map(|annotation| ResponseAnnotation {
+                                index: annotation.index,
+                                text: annotation.text,
+                                comment: annotation.comment,
+                                source: annotation.source.map(|source| ResponseAnnotationSource {
+                                    message_id: source.message_id,
+                                    start_offset: source.start_offset,
+                                    end_offset: source.end_offset,
+                                }),
+                            })
+                            .collect(),
+                    }
+                });
+            Some(Message {
+                message_id: id,
+                role: MessageRole::User as i32,
+                phase: MessagePhase::Unspecified as i32,
+                text,
+                annotated_user_message,
+            })
+        }
         CodexThreadItem::AgentMessage { id, text, phase } => Some(Message {
             message_id: id,
             role: MessageRole::Agent as i32,
@@ -291,6 +315,7 @@ fn message_from_item(item: CodexThreadItem) -> Option<Message> {
                 Some(_) => MessagePhase::Other,
             } as i32,
             text,
+            annotated_user_message: None,
         }),
         CodexThreadItem::Activity(_) => None,
         CodexThreadItem::Other { .. } => None,
@@ -387,6 +412,45 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn adapts_user_envelopes_without_changing_raw_text_or_agent_messages() {
+        let raw = "\n# Response annotations:\nClient instructions.\n<response-annotations>\n[{\"text\":\"Selected **text**\",\"annotation\":\"Change it\",\"source\":{\"messageId\":\"original\",\"startOffset\":0,\"endOffset\":17}}]\n</response-annotations>\n\n## My request:\n\n    code\n\n";
+        let user = message_from_item(CodexThreadItem::UserMessage {
+            id: "user-1".into(),
+            content: vec![UserInput::Text(raw.into())],
+        })
+        .unwrap();
+        let decoded = Message::decode(user.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(decoded.text, raw);
+        let content = decoded.annotated_user_message.unwrap();
+        assert_eq!(content.body, "\n    code\n\n");
+        assert_eq!(content.annotations[0].index, 1);
+        assert_eq!(content.annotations[0].text, "Selected **text**");
+        assert_eq!(content.annotations[0].comment.as_deref(), Some("Change it"));
+        assert_eq!(
+            content.annotations[0].source.as_ref().unwrap().message_id,
+            "original"
+        );
+
+        let agent = message_from_item(CodexThreadItem::AgentMessage {
+            id: "agent-1".into(),
+            text: raw.into(),
+            phase: Some(AgentMessagePhase::FinalAnswer),
+        })
+        .unwrap();
+        assert_eq!(agent.text, raw);
+        assert!(agent.annotated_user_message.is_none());
+
+        let malformed = raw.replace("</response-annotations>", "</incomplete>");
+        let user = message_from_item(CodexThreadItem::UserMessage {
+            id: "user-2".into(),
+            content: vec![UserInput::Text(malformed.clone())],
+        })
+        .unwrap();
+        assert_eq!(user.text, malformed);
+        assert!(user.annotated_user_message.is_none());
+    }
 
     #[test]
     fn serializes_a_thread_as_an_ordered_timeline() {

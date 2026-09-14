@@ -43,6 +43,7 @@ typedef enum WardCodexTurnAttachmentKind {
 typedef enum WardMarkupSourceFormat {
     WardMarkupSourceFormatPlainText = 0,
     WardMarkupSourceFormatMarkdown = 1,
+    WardMarkupSourceFormatCodexMarkdown = 2,
 } WardMarkupSourceFormat;
 
 // A Realm lifecycle state passed through Ward Core's private C interface.
