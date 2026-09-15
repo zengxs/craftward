@@ -12,7 +12,7 @@ Control {
     id: root
 
     required property real durationMilliseconds
-    property url timerIconSource: "qrc:///icons/fluent/timer-20-regular.svg"
+    property url timerIconSource: "qrc:///icons/hugeicons/stop-watch.svg"
     readonly property string clockText: root.formatClockDuration(root.durationMilliseconds)
     readonly property string durationDescription: root.formatDurationDescription(root.durationMilliseconds)
     readonly property string description: /*% "Elapsed %1" */ qsTrId("craftward.codex.timeline.elapsed").arg(root.durationDescription)

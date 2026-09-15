@@ -558,6 +558,10 @@ version 3 or later.</translation>
         <source>Loading conversations…</source>
         <translation>Loading conversations…</translation>
     </message>
+    <message id="craftward.codex.history.empty.search">
+        <source>No matching conversations were found.</source>
+        <translation>No matching conversations were found.</translation>
+    </message>
     <message id="craftward.codex.history.empty.archived">
         <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="274"/>
         <source>No archived conversations were found.</source>
@@ -643,11 +647,6 @@ version 3 or later.</translation>
         <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="46"/>
         <source>History only</source>
         <translation>History only</translation>
-    </message>
-    <message id="craftward.codex.history.runtime_activity_notice">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="421"/>
-        <source>Some runtime activity may be unavailable in persisted history.</source>
-        <translation>Some runtime activity may be unavailable in persisted history.</translation>
     </message>
     <message id="craftward.codex.interaction.command_approval.title">
         <location filename="../qml/Craftward/Pages/CodexInteractionCard.qml" line="83"/>
@@ -1467,6 +1466,94 @@ version 3 or later.</translation>
     <message id="craftward.codex.annotations.comment">
         <source>User comment:</source>
         <translation>User comment:</translation>
+    </message>
+    <message id="craftward.file.open">
+        <source>Open File…</source>
+        <translation>Open File…</translation>
+    </message>
+    <message id="craftward.tab.close">
+        <source>Close Tab</source>
+        <translation>Close Tab</translation>
+    </message>
+    <message id="craftward.tab.move_left">
+        <source>Move Tab Left</source>
+        <translation>Move Tab Left</translation>
+    </message>
+    <message id="craftward.tab.move_right">
+        <source>Move Tab Right</source>
+        <translation>Move Tab Right</translation>
+    </message>
+    <message id="craftward.file.external">
+        <source>External</source>
+        <translation>External</translation>
+    </message>
+    <message id="craftward.file.external_read_only">
+        <source>External · Read only</source>
+        <translation>External · Read only</translation>
+    </message>
+    <message id="craftward.file.read_only">
+        <source>Read only</source>
+        <translation>Read only</translation>
+    </message>
+    <message id="craftward.file.open_external">
+        <source>Open in Default Application</source>
+        <translation>Open in Default Application</translation>
+    </message>
+    <message id="craftward.file.reveal">
+        <source>Show in File List</source>
+        <translation>Show in File List</translation>
+    </message>
+    <message id="craftward.file.read_failed">
+        <source>Could not read this file.</source>
+        <translation>Could not read this file.</translation>
+    </message>
+    <message id="craftward.file.preview_too_large">
+        <source>This file is too large to preview. Open it in its default application.</source>
+        <translation>This file is too large to preview. Open it in its default application.</translation>
+    </message>
+    <message id="craftward.file.preview_unsupported">
+        <source>This file cannot be previewed as text. Open it in its default application.</source>
+        <translation>This file cannot be previewed as text. Open it in its default application.</translation>
+    </message>
+    <message id="craftward.files.title">
+        <source>Files</source>
+        <translation>Files</translation>
+    </message>
+    <message id="craftward.files.unavailable">
+        <source>This conversation has no accessible project directory.</source>
+        <translation>This conversation has no accessible project directory.</translation>
+    </message>
+    <message id="craftward.files.hide">
+        <source>Hide Files</source>
+        <translation>Hide Files</translation>
+    </message>
+    <message id="craftward.files.show">
+        <source>Show Files</source>
+        <translation>Show Files</translation>
+    </message>
+    <message id="craftward.files.toggle">
+        <source>Toggle Files</source>
+        <translation>Toggle Files</translation>
+    </message>
+    <message id="craftward.navigation.conversations">
+        <source>Conversations</source>
+        <translation>Conversations</translation>
+    </message>
+    <message id="craftward.navigation.search">
+        <source>Search conversations</source>
+        <translation>Search conversations</translation>
+    </message>
+    <message id="craftward.navigation.sidebar.toggle">
+        <source>Toggle Sidebar</source>
+        <translation>Toggle Sidebar</translation>
+    </message>
+    <message id="craftward.actions.more">
+        <source>More Actions</source>
+        <translation>More Actions</translation>
+    </message>
+    <message id="craftward.execution.local">
+        <source>Local</source>
+        <translation>Local</translation>
     </message>
 </context>
 </TS>

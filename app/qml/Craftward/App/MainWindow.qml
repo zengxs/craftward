@@ -35,6 +35,7 @@ ApplicationWindow {
         if (!window.timelineRenderBenchmarkEnabled || window.timelineRenderBenchmarkThreadId.length === 0)
             return;
         historyPage.sidebarExpanded = false;
+        historyPage.filesExpanded = false;
         window.codexHistoryController.selectThread(window.timelineRenderBenchmarkThreadId, "");
     }
 
@@ -44,7 +45,7 @@ ApplicationWindow {
     minimumHeight: 480
     flags: Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
     visible: true
-    title: /*% "Craftward" */ qsTrId("craftward.app.name")
+    title: window.codexHistoryController.conversation.title || /*% "Craftward" */ qsTrId("craftward.app.name")
     topPadding: 0
     leftPadding: 0
     rightPadding: 0
@@ -55,8 +56,20 @@ ApplicationWindow {
             title: /*% "File" */ qsTrId("craftward.menu.file")
 
             Action {
-                text: /*% "Close Window" */ qsTrId("craftward.window.close")
+                text: /*% "Open File…" */ qsTrId("craftward.file.open")
+                shortcut: StandardKey.Open
+                onTriggered: historyPage.chooseFile()
+            }
+
+            Action {
+                text: /*% "Close Tab" */ qsTrId("craftward.tab.close")
                 shortcut: StandardKey.Close
+                onTriggered: historyPage.closeActiveTab()
+            }
+
+            Action {
+                text: /*% "Close Window" */ qsTrId("craftward.window.close")
+                shortcut: "Ctrl+Shift+W"
                 onTriggered: window.closeWindowRequested()
             }
 
@@ -84,6 +97,18 @@ ApplicationWindow {
 
         Menu {
             title: /*% "Window" */ qsTrId("craftward.menu.window")
+
+            Action {
+                text: /*% "Toggle Sidebar" */ qsTrId("craftward.navigation.sidebar.toggle")
+                shortcut: "Ctrl+B"
+                onTriggered: historyPage.toggleSidebar()
+            }
+
+            Action {
+                text: /*% "Toggle Files" */ qsTrId("craftward.files.toggle")
+                shortcut: "Ctrl+Alt+B"
+                onTriggered: historyPage.toggleFiles()
+            }
 
             Action {
                 text: /*% "Terminal" */ qsTrId("craftward.terminal.title")
@@ -147,8 +172,7 @@ ApplicationWindow {
         timelineRenderBenchmarkEnabled: window.timelineRenderBenchmarkEnabled
         timelineRenderBenchmarkThreadId: window.timelineRenderBenchmarkThreadId
         onFileLocationRequested: (file, start, end) => {
-            // Keep the line range at the navigation boundary for the future editor.
-            // The system default application currently receives only the file URL.
+            // Explicit external-open actions use the system's default application.
             if (!ApplicationFiles.openLocalFile(file)) {
                 fileOpenError.message = file;
                 fileOpenError.open();

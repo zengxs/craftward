@@ -11,7 +11,7 @@ Control {
     required property real durationMilliseconds
     required property int detailCount
     required property bool expanded
-    property url timerIconSource: "qrc:///icons/fluent/timer-20-regular.svg"
+    property url timerIconSource: "qrc:///icons/hugeicons/stop-watch.svg"
 
     signal toggleRequested
 

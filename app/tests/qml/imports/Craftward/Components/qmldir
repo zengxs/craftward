@@ -1,11 +1,14 @@
 module Craftward.Components
 singleton ApplicationClipboard 1.0 ApplicationClipboard.qml
 AnimatedChevron 1.0 AnimatedChevron.qml
+CollapsibleSplitPane 1.0 ../../../../../qml/Craftward/Components/CollapsibleSplitPane.qml
 CopyFeedbackButton 1.0 CopyFeedbackButton.qml
 FrameTimingOverlay 1.0 FrameTimingOverlay.qml
 IconButton 1.0 IconButton.qml
 MarkupSegmentView 1.0 MarkupSegmentView.qml
 MenuComboBox 1.0 MenuComboBox.qml
 OverlayScrollBar 1.0 OverlayScrollBar.qml
+PanelActionButton 1.0 ../../../../../qml/Craftward/Components/PanelActionButton.qml
+PanelTab 1.0 ../../../../../qml/Craftward/Components/PanelTab.qml
 singleton Typography 1.0 Typography.qml
 MarkupSelectionHost 1.0 MarkupSelectionHost.qml

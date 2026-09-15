@@ -6,6 +6,8 @@ qt_add_qml_module(CraftwardComponents
         "${PROJECT_SOURCE_DIR}/src/components/applicationclipboard.h"
         "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.cpp"
         "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.h"
+        "${PROJECT_SOURCE_DIR}/src/components/projectfilesmodel.cpp"
+        "${PROJECT_SOURCE_DIR}/src/components/projectfilesmodel.h"
         "${PROJECT_SOURCE_DIR}/src/components/popuppositioner.cpp"
         "${PROJECT_SOURCE_DIR}/src/components/popuppositioner.h"
         "${PROJECT_SOURCE_DIR}/src/components/macos/typography.mm"
@@ -14,7 +16,9 @@ qt_add_qml_module(CraftwardComponents
         "${PROJECT_SOURCE_DIR}/src/components/windowmovehelper.h"
     QML_FILES
         AnimatedChevron.qml
+        CollapsibleSplitPane.qml
         ConfirmationDialog.qml
+        ContentHeader.qml
         CopyFeedbackButton.qml
         FrameTiming.js
         FrameTimingOverlay.qml
@@ -28,6 +32,8 @@ qt_add_qml_module(CraftwardComponents
         MarkupTable.qml
         ModalDialog.qml
         OverlayScrollBar.qml
+        PanelActionButton.qml
+        PanelTab.qml
         PrimaryButton.qml
         WindowMoveHandler.qml
 )
@@ -55,3 +61,17 @@ target_compile_options(CraftwardComponents
     PRIVATE
         "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
 )
+
+if(BUILD_TESTING)
+    qt_add_executable(CraftwardWorkbenchFilesTest
+        "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.cpp"
+        "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.h"
+        "${PROJECT_SOURCE_DIR}/src/components/projectfilesmodel.cpp"
+        "${PROJECT_SOURCE_DIR}/src/components/projectfilesmodel.h"
+        "${PROJECT_SOURCE_DIR}/src/components/tests/workbenchfilestest.cpp"
+    )
+    set_target_properties(CraftwardWorkbenchFilesTest PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+    target_include_directories(CraftwardWorkbenchFilesTest PRIVATE "${PROJECT_SOURCE_DIR}/src/components")
+    target_link_libraries(CraftwardWorkbenchFilesTest PRIVATE Qt6::Gui Qt6::Qml Qt6::Test)
+    add_test(NAME CraftwardWorkbenchFilesTest COMMAND CraftwardWorkbenchFilesTest)
+endif()

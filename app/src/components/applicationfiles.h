@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariantMap>
 #include <QtQmlIntegration/qqmlintegration.h>
 
 class ApplicationFiles : public QObject
@@ -17,4 +18,5 @@ class ApplicationFiles : public QObject
     explicit ApplicationFiles(QObject* parent = nullptr);
 
     Q_INVOKABLE [[nodiscard]] bool openLocalFile(const QString& path) const;
+    Q_INVOKABLE QVariantMap readTextFile(const QString& path, const QString& projectDirectory = {}) const;
 };

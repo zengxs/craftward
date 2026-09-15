@@ -15,6 +15,8 @@ qt_add_qml_module(CraftwardCodex
         codexmodelcatalogmodel.cpp
         codexmodelcatalogmodel.h
         persistentstringroleindex.h
+        codexthreadfiltermodel.cpp
+        codexthreadfiltermodel.h
         codexthreadmodel.cpp
         codexthreadmodel.h
         codextimelinemodel.cpp

@@ -27,6 +27,7 @@
 #include <pwd.h>
 #include <unistd.h>
 
+Q_IMPORT_QML_PLUGIN(Craftward_ComponentsPlugin)
 Q_IMPORT_QML_PLUGIN(Craftward_TerminalPlugin)
 
 namespace {

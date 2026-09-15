@@ -29,6 +29,8 @@ Item {
             return "qrc:///icons/hugeicons/edit-04.svg";
         case "webSearch":
             return "qrc:///icons/hugeicons/global-search.svg";
+        case "imageView":
+            return "qrc:///icons/hugeicons/image-02.svg";
         case "contextCompaction":
             return "qrc:///icons/hugeicons/fold-vertical.svg";
         default:

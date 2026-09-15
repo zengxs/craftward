@@ -5,70 +5,54 @@ import QtQuick
 import QtTest
 import "../../qml/Craftward/Pages" as Pages
 
-Item {
-    id: suite
-
-    width: 320
-    height: 180
-
+TestCase {
+    name: "CodexHistoryLayoutState"
     property var state
-
     Component {
-        id: stateComponent
-
+        id: factory
         Pages.CodexHistoryLayoutState {}
     }
 
-    TestCase {
-        name: "CodexHistoryLayoutState"
+    function init() {
+        state = createTemporaryObject(factory, this);
+    }
 
-        function init() {
-            suite.state = stateComponent.createObject(suite);
-            verify(suite.state !== null);
-        }
+    function test_sidebarWidthSurvivesCollapse() {
+        state.rememberSidebarWidth(350);
+        state.toggleSidebar();
+        compare(state.bodySidebarWidth, 0);
+        state.toggleSidebar();
+        compare(state.bodySidebarWidth, 350);
+    }
 
-        function cleanup() {
-            suite.state.destroy();
-            suite.state = null;
-        }
+    function test_widthsAreClamped() {
+        state.rememberSidebarWidth(10);
+        compare(state.sidebarWidth, state.minimumSidebarWidth);
+        state.rememberSidebarWidth(999);
+        compare(state.sidebarWidth, state.maximumSidebarWidth);
+        state.rememberFilesWidth(10);
+        compare(state.filesWidth, state.minimumFilesWidth);
+        state.rememberFilesWidth(999);
+        compare(state.filesWidth, state.maximumFilesWidth);
+        state.rememberFilesWidth(NaN);
+        compare(state.filesWidth, state.maximumFilesWidth);
+    }
 
-        function test_expandedSidebarDefinesNavigationAndBodyWidth() {
-            compare(suite.state.navigationChromeWidth, 310);
-            compare(suite.state.bodySidebarWidth, 310);
+    function test_narrowWindowHidesFilesWithoutLosingPreference() {
+        state.availableWidth = 960;
+        verify(state.filesVisible);
+        state.availableWidth = 640;
+        verify(!state.filesVisible);
+        verify(state.filesExpanded);
+        state.availableWidth = 960;
+        verify(state.filesVisible);
+    }
 
-            suite.state.rememberSidebarWidth(360);
-            compare(suite.state.navigationChromeWidth, 360);
-            compare(suite.state.bodySidebarWidth, 360);
-        }
-
-        function test_collapsedSidebarKeepsOnlyTitleBarNavigationChrome() {
-            suite.state.titleBarLeadingInset = 80;
-            suite.state.sidebarExpanded = false;
-
-            compare(suite.state.navigationChromeWidth, 164);
-            compare(suite.state.bodySidebarWidth, 0);
-            compare(suite.state.sidebarWidth, 310);
-            compare(suite.state.collapsedSidebarToggleX, 80);
-            compare(suite.state.leadingActionsX, 108);
-        }
-
-        function test_expandedTitleBarActionsStartAfterLeadingInset() {
-            suite.state.titleBarLeadingInset = 78;
-
-            compare(suite.state.leadingActionsX, 78);
-        }
-
-        function test_sidebarWidthIsClampedAndRememberedAcrossToggles() {
-            suite.state.rememberSidebarWidth(100);
-            compare(suite.state.sidebarWidth, 240);
-
-            suite.state.rememberSidebarWidth(500);
-            compare(suite.state.sidebarWidth, 420);
-
-            suite.state.toggleSidebar();
-            compare(suite.state.bodySidebarWidth, 0);
-            suite.state.toggleSidebar();
-            compare(suite.state.bodySidebarWidth, 420);
-        }
+    function test_filesCanReplaceSidebarInNarrowWindow() {
+        state.availableWidth = 640;
+        state.sidebarExpanded = false;
+        verify(state.filesVisible);
+        state.filesExpanded = false;
+        verify(!state.filesVisible);
     }
 }

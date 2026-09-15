@@ -1,7 +1,10 @@
 // Copyright (C) 2026 Xiangsong Zeng
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "codexthreadfiltermodel.h"
+#include "filetreefixture.h"
 #include "popuppositioner.h"
+#include "projectfilesmodel.h"
 
 #include <QAnimationDriver>
 #include <QCursor>
@@ -84,6 +87,9 @@ class QmlTestSetup : public QObject
     {
         qmlRegisterType<AnimationClock>("Craftward.TestSupport", 1, 0, "AnimationClock");
         qmlRegisterType<NativePointer>("Craftward.TestSupport", 1, 0, "NativePointer");
+        qmlRegisterType<FileTreeFixture>("Craftward.TestSupport", 1, 0, "FileTreeFixture");
+        qmlRegisterType<ProjectFilesModel>("Craftward.Components", 1, 0, "ProjectFilesModel");
+        qmlRegisterType<CodexThreadFilterModel>("Craftward.Codex", 1, 0, "CodexThreadFilterModel");
         qmlRegisterSingletonType<PopupPositioner>(
           "Craftward.Components", 1, 0, "PopupPositioner", [](QQmlEngine*, QJSEngine*) -> QObject* {
               return new PopupPositioner;

@@ -10,6 +10,10 @@ Control {
     property alias wordWrap: backend.wordWrap
     property real lineHeightScale: Typography.codeLineHeightScale
 
+    function revealLocation(start, end) {
+        backend.revealLocation(start, end);
+    }
+
     implicitWidth: 320
     implicitHeight: 240
     focusPolicy: Qt.StrongFocus

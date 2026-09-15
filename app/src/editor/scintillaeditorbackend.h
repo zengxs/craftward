@@ -41,6 +41,7 @@ class ScintillaEditorBackend : public QObject
 
     QString text() const;
     void setText(const QString& text);
+    Q_INVOKABLE void revealLocation(int startLine, int endLine = 0);
 
     bool isReadOnly() const;
     void setReadOnly(bool readOnly);

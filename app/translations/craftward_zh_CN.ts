@@ -557,6 +557,10 @@ version 3 or later.</source>
         <source>Loading conversations…</source>
         <translation>正在加载对话…</translation>
     </message>
+    <message id="craftward.codex.history.empty.search">
+        <source>No matching conversations were found.</source>
+        <translation>未找到匹配的对话。</translation>
+    </message>
     <message id="craftward.codex.history.empty.archived">
         <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="274"/>
         <source>No archived conversations were found.</source>
@@ -642,11 +646,6 @@ version 3 or later.</source>
         <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="46"/>
         <source>History only</source>
         <translation>仅历史记录</translation>
-    </message>
-    <message id="craftward.codex.history.runtime_activity_notice">
-        <location filename="../qml/Craftward/Pages/CodexHistoryPage.qml" line="421"/>
-        <source>Some runtime activity may be unavailable in persisted history.</source>
-        <translation>已保存的历史中可能缺少部分运行时活动。</translation>
     </message>
     <message id="craftward.codex.interaction.command_approval.title">
         <location filename="../qml/Craftward/Pages/CodexInteractionCard.qml" line="83"/>
@@ -1465,6 +1464,94 @@ version 3 or later.</source>
     <message id="craftward.codex.annotations.comment">
         <source>User comment:</source>
         <translation>用户评论：</translation>
+    </message>
+    <message id="craftward.file.open">
+        <source>Open File…</source>
+        <translation>打开文件…</translation>
+    </message>
+    <message id="craftward.tab.close">
+        <source>Close Tab</source>
+        <translation>关闭标签页</translation>
+    </message>
+    <message id="craftward.tab.move_left">
+        <source>Move Tab Left</source>
+        <translation>向左移动标签页</translation>
+    </message>
+    <message id="craftward.tab.move_right">
+        <source>Move Tab Right</source>
+        <translation>向右移动标签页</translation>
+    </message>
+    <message id="craftward.file.external">
+        <source>External</source>
+        <translation>项目外</translation>
+    </message>
+    <message id="craftward.file.external_read_only">
+        <source>External · Read only</source>
+        <translation>项目外 · 只读</translation>
+    </message>
+    <message id="craftward.file.read_only">
+        <source>Read only</source>
+        <translation>只读</translation>
+    </message>
+    <message id="craftward.file.open_external">
+        <source>Open in Default Application</source>
+        <translation>使用默认应用打开</translation>
+    </message>
+    <message id="craftward.file.reveal">
+        <source>Show in File List</source>
+        <translation>在文件列表中显示</translation>
+    </message>
+    <message id="craftward.file.read_failed">
+        <source>Could not read this file.</source>
+        <translation>无法读取此文件。</translation>
+    </message>
+    <message id="craftward.file.preview_too_large">
+        <source>This file is too large to preview. Open it in its default application.</source>
+        <translation>文件过大，无法预览。请使用默认应用打开。</translation>
+    </message>
+    <message id="craftward.file.preview_unsupported">
+        <source>This file cannot be previewed as text. Open it in its default application.</source>
+        <translation>无法以文本形式预览此文件。请使用默认应用打开。</translation>
+    </message>
+    <message id="craftward.files.title">
+        <source>Files</source>
+        <translation>文件</translation>
+    </message>
+    <message id="craftward.files.unavailable">
+        <source>This conversation has no accessible project directory.</source>
+        <translation>此会话没有可访问的项目目录。</translation>
+    </message>
+    <message id="craftward.files.hide">
+        <source>Hide Files</source>
+        <translation>隐藏文件列表</translation>
+    </message>
+    <message id="craftward.files.show">
+        <source>Show Files</source>
+        <translation>显示文件列表</translation>
+    </message>
+    <message id="craftward.files.toggle">
+        <source>Toggle Files</source>
+        <translation>切换文件列表</translation>
+    </message>
+    <message id="craftward.navigation.conversations">
+        <source>Conversations</source>
+        <translation>会话</translation>
+    </message>
+    <message id="craftward.navigation.search">
+        <source>Search conversations</source>
+        <translation>搜索会话</translation>
+    </message>
+    <message id="craftward.navigation.sidebar.toggle">
+        <source>Toggle Sidebar</source>
+        <translation>切换侧栏</translation>
+    </message>
+    <message id="craftward.actions.more">
+        <source>More Actions</source>
+        <translation>更多操作</translation>
+    </message>
+    <message id="craftward.execution.local">
+        <source>Local</source>
+        <translation>本机</translation>
     </message>
 </context>
 </TS>

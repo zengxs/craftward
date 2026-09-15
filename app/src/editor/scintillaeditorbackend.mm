@@ -246,6 +246,20 @@ ScintillaEditorBackend::text() const
 }
 
 void
+ScintillaEditorBackend::revealLocation(int startLine, int endLine)
+{
+    if (startLine <= 0)
+        return;
+    const int count = static_cast<int>([d->view message:SCI_GETLINECOUNT]);
+    const int first = qBound(0, startLine - 1, qMax(0, count - 1));
+    const int last = qBound(first, endLine > 0 ? endLine - 1 : first, qMax(0, count - 1));
+    const auto start = [d->view message:SCI_POSITIONFROMLINE wParam:first];
+    const auto end = [d->view message:SCI_GETLINEENDPOSITION wParam:last];
+    [d->view message:SCI_SETSEL wParam:start lParam:end];
+    [d->view message:SCI_SCROLLCARET];
+}
+
+void
 ScintillaEditorBackend::setText(const QString& text)
 {
     if (d->text == text)

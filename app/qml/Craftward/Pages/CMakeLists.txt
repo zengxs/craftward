@@ -15,6 +15,7 @@ qt_add_qml_module(CraftwardPages
         CodexComposerAction.qml
         CodexComposerActionButton.qml
         CodexComposerState.qml
+        CodexConversationView.qml
         CodexConversationRenameDialog.qml
         CodexConversationRenameState.qml
         CodexElapsedBadge.qml
@@ -26,13 +27,19 @@ qt_add_qml_module(CraftwardPages
         CodexMessageActionState.qml
         CodexModelSelector.qml
         CodexReasoningEffortSelector.qml
+        CodexThreadList.qml
         CodexTimelineDetailHeader.qml
         CodexTimelineRow.qml
         CodexTimelineView.qml
         CodexTimelineViewport.qml
         CodexTurnControlState.qml
+        FileContentView.qml
+        ProjectFilesPane.qml
         SettingsGeneralPage.qml
         TerminalPanel.qml
+        ThreadWorkspaceState.qml
+        WorkbenchContentMenu.qml
+        WorkbenchTabs.qml
         TimelineMotionDiagnostics.qml
         TimelineRenderBenchmark.qml
         TimelineRenderMetrics.qml
@@ -43,6 +50,7 @@ target_link_libraries(CraftwardPages
         CraftwardComponentsplugin
         CraftwardCodexplugin
         CraftwardDesign
+        CraftwardEditorplugin
         CraftwardLocalizationplugin
         CraftwardTerminalplugin
         Qt6::Quick

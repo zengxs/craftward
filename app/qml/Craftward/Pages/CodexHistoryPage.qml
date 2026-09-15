@@ -21,17 +21,42 @@ Page {
     property bool timelineMotionDiagnosticsEnabled: false
     property bool timelineRenderBenchmarkEnabled: false
     property string timelineRenderBenchmarkThreadId: ""
-    readonly property CodexConversationController conversation: root.controller.conversation
-    readonly property string timelineMotionDiagnosticsText: timelineView.motionDiagnosticsText
+    readonly property CodexConversationController conversation: controller.conversation
+    readonly property string timelineMotionDiagnosticsText: conversationView.timelineMotionDiagnosticsText
     property alias sidebarExpanded: layoutState.sidebarExpanded
-    readonly property bool historyPollingEnabled: root.visible && root.ApplicationWindow.window !== null && root.ApplicationWindow.window.visible && root.ApplicationWindow.window.visibility !== Window.Minimized
-    readonly property bool fullScreen: root.ApplicationWindow.window !== null && root.ApplicationWindow.window.visibility === Window.FullScreen
-    readonly property bool trafficLightsVisible: Qt.platform.os === "osx" && !root.fullScreen
-    readonly property int titleBarMotionDuration: 160
-    readonly property real titleBarHeight: Math.max(28, root.SafeArea.margins.top)
-    readonly property real titleBarLeadingInset: root.trafficLightsVisible ? Math.max(78, root.SafeArea.margins.left) : Math.max(0, root.SafeArea.margins.left)
-    property real animatedTitleBarLeadingInset: root.titleBarLeadingInset
-    readonly property bool titleBarLeadingInsetAnimating: Math.abs(root.animatedTitleBarLeadingInset - root.titleBarLeadingInset) > 0.01
+    property alias filesExpanded: workspaceState.filesExpanded
+    readonly property bool historyPollingEnabled: visible && ApplicationWindow.window !== null && ApplicationWindow.window.visible && ApplicationWindow.window.visibility !== Window.Minimized
+    readonly property bool fullScreen: ApplicationWindow.window !== null && ApplicationWindow.window.visibility === Window.FullScreen
+    readonly property bool trafficLightsVisible: Qt.platform.os === "osx" && !fullScreen
+    readonly property real titleBarHeight: Math.max(28, SafeArea.margins.top)
+    readonly property real titleBarLeadingInset: trafficLightsVisible ? Math.max(78, SafeArea.margins.left) : Math.max(12, SafeArea.margins.left)
+
+    function openFile(file, start = 0, end = 0) {
+        const tab = ApplicationFiles.readTextFile(file, controller.workingDirectory);
+        tab.startLine = start;
+        tab.endLine = end;
+        workspaceState.openTab(tab);
+    }
+
+    function chooseFile() {
+        fileDialog.open();
+    }
+    function closeActiveTab() {
+        workspaceState.closeTab(workspaceState.activeIndex);
+    }
+    function toggleSidebar() {
+        layoutState.toggleSidebar();
+    }
+    function toggleFiles() {
+        if (!layoutState.filesVisible) {
+            workspaceState.filesExpanded = true;
+            if (!layoutState.filesVisible)
+                layoutState.sidebarExpanded = false;
+        } else {
+            workspaceState.filesExpanded = false;
+        }
+    }
+
     readonly property string runtimeStatusText: {
         if (root.controller.showingArchived)
             return /*% "Archived · Read only" */ qsTrId("craftward.codex.runtime.archived_read_only");
@@ -60,23 +85,34 @@ Page {
         return root.palette.mid;
     }
 
-    Behavior on animatedTitleBarLeadingInset {
-        NumberAnimation {
-            duration: root.titleBarMotionDuration
-            easing.type: Easing.OutCubic
-        }
-    }
-
     Binding {
         target: root.controller
         property: "pollingEnabled"
         value: root.historyPollingEnabled
     }
 
+    ThreadWorkspaceState {
+        id: workspaceState
+    }
+    Connections {
+        target: root.conversation
+        function onSelectionChanged() {
+            workspaceState.selectThread(root.conversation.threadId);
+        }
+    }
+    Component.onCompleted: workspaceState.selectThread(root.conversation.threadId)
+
     CodexHistoryLayoutState {
         id: layoutState
+        availableWidth: root.width
+        filesExpanded: workspaceState.filesExpanded
+    }
 
-        titleBarLeadingInset: root.animatedTitleBarLeadingInset
+    FileDialog {
+        id: fileDialog
+        title: /*% "Open File…" */ qsTrId("craftward.file.open")
+        fileMode: FileDialog.OpenFile
+        onAccepted: root.openFile(selectedFile.toString())
     }
 
     CodexHistoryActionState {
@@ -124,184 +160,258 @@ Page {
         color: root.palette.window
     }
 
-    SplitView {
-        id: contentSplit
-
+    Rectangle {
+        id: titleBar
+        objectName: "codexTitleBar"
         anchors {
             top: parent.top
+            left: parent.left
+            right: parent.right
+        }
+        height: root.titleBarHeight
+        color: TailwindColors.zinc200
+        WindowMoveHandler {
+            targetWindow: root.ApplicationWindow.window
+        }
+        Label {
+            anchors {
+                fill: parent
+                leftMargin: root.titleBarLeadingInset + 12
+                rightMargin: root.titleBarLeadingInset + 12
+            }
+            text: root.conversation.title || /*% "Craftward" */ qsTrId("craftward.app.name")
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            font.pixelSize: 13
+            font.weight: Font.DemiBold
+            color: TailwindColors.zinc800
+            elide: Text.ElideRight
+        }
+        Rectangle {
+            anchors {
+                left: parent.left
+                right: parent.right
+                bottom: parent.bottom
+            }
+            height: 1
+            color: root.palette.windowText
+            opacity: 0.12
+        }
+    }
+
+    SplitView {
+        id: contentSplit
+        anchors {
+            top: titleBar.bottom
             left: parent.left
             right: parent.right
             bottom: statusBar.top
         }
         orientation: Qt.Horizontal
         handle: Rectangle {
+            id: columnDivider
             implicitWidth: 1
             color: root.palette.windowText
-            opacity: 0.14
+            opacity: SplitHandle.pressed ? 0.4 : 0.12
+            containmentMask: Item {
+                x: (columnDivider.width - width) / 2
+                width: 8
+                height: columnDivider.height
+            }
         }
-
-        Rectangle {
+        CollapsibleSplitPane {
             id: sidebarPane
-
             objectName: "codexSidebar"
-            SplitView.minimumWidth: layoutState.sidebarExpanded ? layoutState.minimumSidebarWidth : 0
-            SplitView.preferredWidth: layoutState.bodySidebarWidth
-            SplitView.maximumWidth: layoutState.sidebarExpanded ? layoutState.maximumSidebarWidth : 0
-            visible: layoutState.sidebarExpanded
-            color: Theme.sidebarSurface
-            onWidthChanged: if (visible)
-                layoutState.rememberSidebarWidth(width)
+            minimumExpandedWidth: layoutState.minimumSidebarWidth
+            expandedWidth: layoutState.sidebarWidth
+            maximumExpandedWidth: layoutState.maximumSidebarWidth
+            expanded: layoutState.sidebarExpanded
+            resizing: contentSplit.resizing
+            onResized: width => layoutState.rememberSidebarWidth(width)
+
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.sidebarSurface
+            }
 
             ColumnLayout {
                 anchors {
-                    fill: parent
-                    topMargin: root.titleBarHeight + 10
-                    leftMargin: 14
-                    rightMargin: 14
-                    bottomMargin: 14
+                    top: parent.top
+                    bottom: parent.bottom
+                    right: parent.right
                 }
-                spacing: 10
+                width: Math.max(sidebarPane.width, sidebarPane.minimumExpandedWidth)
+                spacing: 0
 
                 RowLayout {
                     Layout.fillWidth: true
-
+                    Layout.preferredHeight: 32
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 4
+                    spacing: 0
                     Label {
                         Layout.fillWidth: true
-                        text: /*% "Codex" */ qsTrId("craftward.codex.name")
-                        font.pixelSize: 20
+                        text: /*% "Conversations" */ qsTrId("craftward.navigation.conversations")
+                        font.pixelSize: 12
                         font.weight: Font.DemiBold
                     }
-
-                    BusyIndicator {
-                        Layout.preferredWidth: 20
-                        Layout.preferredHeight: 20
-                        running: root.controller.loadingThreads || root.controller.startingThread || root.controller.forkingThread
-                        visible: running
+                    IconButton {
+                        objectName: "codexNewConversationButton"
+                        icon.source: "qrc:///icons/hugeicons/chat-add.svg"
+                        toolTipText: /*% "New…" */ qsTrId("craftward.codex.history.new.action")
+                        visible: !root.controller.showingArchived
+                        enabled: historyActionState.canStartThread
+                        onClicked: workingDirectoryDialog.open()
+                    }
+                    IconButton {
+                        icon.source: "qrc:///icons/hugeicons/refresh-01.svg"
+                        toolTipText: /*% "Refresh" */ qsTrId("craftward.action.refresh")
+                        enabled: !historyActionState.busy
+                        onClicked: root.controller.refresh()
                     }
                 }
 
-                Label {
+                TextField {
+                    id: conversationSearch
                     Layout.fillWidth: true
-                    text: /*% "Continue persisted conversations through the local Codex app-server." */ qsTrId("craftward.codex.history.description")
-                    color: root.palette.placeholderText
-                    wrapMode: Text.WordWrap
-                }
-
-                ButtonGroup {
-                    id: historyScopeGroup
+                    Layout.margins: 8
+                    Layout.preferredHeight: 28
+                    placeholderText: /*% "Search conversations" */ qsTrId("craftward.navigation.search")
+                    font.pixelSize: 12
+                    selectByMouse: true
                 }
 
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.leftMargin: 8
+                    Layout.rightMargin: 8
+                    Layout.bottomMargin: 8
                     spacing: 6
-
+                    ButtonGroup {
+                        id: scopeGroup
+                    }
                     Button {
                         Layout.fillWidth: true
                         text: /*% "Active" */ qsTrId("craftward.codex.history.scope.active")
                         checkable: true
                         checked: !root.controller.showingArchived
                         enabled: historyActionState.canSwitchScope
-                        ButtonGroup.group: historyScopeGroup
+                        ButtonGroup.group: scopeGroup
                         onClicked: root.controller.showArchivedThreads(false)
                     }
-
                     Button {
                         Layout.fillWidth: true
                         text: /*% "Archived" */ qsTrId("craftward.codex.history.scope.archived")
                         checkable: true
                         checked: root.controller.showingArchived
                         enabled: historyActionState.canSwitchScope
-                        ButtonGroup.group: historyScopeGroup
+                        ButtonGroup.group: scopeGroup
                         onClicked: root.controller.showArchivedThreads(true)
                     }
                 }
 
-                ListView {
-                    id: threadList
-
+                CodexThreadList {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    clip: true
-                    spacing: 4
-                    model: root.controller.threads
-                    ScrollBar.vertical: OverlayScrollBar {}
-
-                    delegate: ItemDelegate {
-                        id: threadDelegate
-
-                        required property string threadId
-                        required property string title
-                        required property string preview
-                        required property string workingDirectory
-                        required property date updatedAt
-
-                        width: ListView.view.width
-                        checkable: true
-                        checked: root.conversation.threadId === threadId
-                        enabled: !historyActionState.busy
-                        hoverEnabled: true
-                        leftPadding: 12
-                        rightPadding: 12
-                        topPadding: 10
-                        bottomPadding: 10
-                        onClicked: root.controller.selectThread(threadId, title)
-
-                        contentItem: ColumnLayout {
-                            spacing: 3
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: threadDelegate.title || /*% "Untitled conversation" */ qsTrId("craftward.codex.history.untitled")
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: threadDelegate.preview
-                                color: root.palette.placeholderText
-                                maximumLineCount: 2
-                                elide: Text.ElideRight
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: threadDelegate.workingDirectory
-                                color: root.palette.placeholderText
-                                font.pixelSize: 11
-                                elide: Text.ElideMiddle
-                            }
-                        }
+                    Layout.leftMargin: 8
+                    Layout.rightMargin: 8
+                    Layout.bottomMargin: 8
+                    threads: root.controller.threads
+                    searchText: conversationSearch.text
+                    selectedThreadId: root.conversation.threadId
+                    busy: historyActionState.busy
+                    emptyText: {
+                        if (root.controller.loadingThreads)
+                            return /*% "Loading conversations…" */ qsTrId("craftward.codex.history.loading");
+                        if (conversationSearch.text.length > 0)
+                            return /*% "No matching conversations were found." */ qsTrId("craftward.codex.history.empty.search");
+                        return root.controller.showingArchived ? /*% "No archived conversations were found." */ qsTrId("craftward.codex.history.empty.archived") : /*% "No active conversations were found." */ qsTrId("craftward.codex.history.empty.active");
                     }
-
-                    Label {
-                        anchors.centerIn: parent
-                        width: Math.min(parent.width - 32, 240)
-                        text: root.controller.startingThread ? /*% "Starting a new conversation…" */ qsTrId("craftward.codex.history.new.starting") : (root.controller.loadingThreads ? /*% "Loading conversations…" */ qsTrId("craftward.codex.history.loading") : (root.controller.showingArchived ? /*% "No archived conversations were found." */ qsTrId("craftward.codex.history.empty.archived") : /*% "No active conversations were found." */ qsTrId("craftward.codex.history.empty.active")))
-                        color: root.palette.placeholderText
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        visible: threadList.count === 0
-                    }
+                    onThreadRequested: (threadId, title) => root.controller.selectThread(threadId, title)
                 }
             }
         }
 
         Item {
             id: mainPane
-
-            SplitView.minimumWidth: 360
+            SplitView.minimumWidth: layoutState.minimumContentWidth
             SplitView.fillWidth: true
+
+            WorkbenchContentMenu {
+                id: contentMenu
+                fileActive: workspaceState.activeTab !== null
+                hasConversation: root.conversation.threadId.length > 0
+                archived: root.controller.showingArchived
+                renameAllowed: renameDialog.renameAllowed
+                archiveAllowed: historyActionState.canArchive
+                restoreAllowed: historyActionState.canRestore
+                onOpenFileRequested: root.chooseFile()
+                onOpenExternalRequested: root.fileLocationRequested(workspaceState.activeTab.path, 0, 0)
+                onRefreshRequested: root.openFile(workspaceState.activeTab.path)
+                onRenameRequested: renameDialog.begin()
+                onArchiveRequested: archiveDialog.open()
+                onRestoreRequested: root.controller.restoreSelectedThread()
+            }
+
+            WorkbenchTabs {
+                id: tabStrip
+                objectName: "codexTabStrip"
+                anchors {
+                    top: parent.top
+                    left: parent.left
+                    right: parent.right
+                }
+                height: layoutState.tabBarHeight
+                workspace: workspaceState
+                onConversationActionsRequested: anchor => contentMenu.popup(anchor, 0, anchor.height)
+            }
+
+            ContentHeader {
+                id: contentHeader
+                objectName: "workbenchContentHeader"
+                anchors {
+                    top: tabStrip.bottom
+                    left: parent.left
+                    right: parent.right
+                }
+                height: layoutState.contentHeaderHeight
+                locationText: workspaceState.activeTab ? workspaceState.activeTab.location : (root.conversation.title || /*% "Untitled conversation" */ qsTrId("craftward.codex.history.untitled"))
+                statusText: workspaceState.activeTab ? (workspaceState.activeTab.external ? /*% "External · Read only" */ qsTrId("craftward.file.external_read_only") : /*% "Read only" */ qsTrId("craftward.file.read_only")) : ""
+
+                IconButton {
+                    icon.source: "qrc:///icons/hugeicons/folder-02.svg"
+                    toolTipText: /*% "Show in File List" */ qsTrId("craftward.file.reveal")
+                    visible: workspaceState.activeTab !== null && !workspaceState.activeTab.external
+                    onClicked: {
+                        workspaceState.filesExpanded = true;
+                        if (!layoutState.filesVisible)
+                            layoutState.sidebarExpanded = false;
+                        filesPane.reveal(workspaceState.activeTab.path);
+                    }
+                }
+                IconButton {
+                    id: contentMenuButton
+                    icon.source: "qrc:///icons/hugeicons/more-horizontal-circle-02.svg"
+                    toolTipText: /*% "More Actions" */ qsTrId("craftward.actions.more")
+                    visible: workspaceState.activeTab !== null
+                    onClicked: contentMenu.popup(contentMenuButton, 0, contentMenuButton.height)
+                }
+            }
 
             SplitView {
                 id: conversationSplit
-                anchors.fill: parent
+                anchors {
+                    top: contentHeader.bottom
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                }
                 orientation: Qt.Vertical
                 handle: Rectangle {
                     id: terminalDivider
                     implicitHeight: 1
-                    color: SplitHandle.pressed ? TailwindColors.zinc400 : SplitHandle.hovered ? TailwindColors.zinc300 : TailwindColors.zinc200
+                    color: root.palette.windowText
+                    opacity: SplitHandle.pressed ? 0.4 : 0.12
                     containmentMask: Item {
                         y: (terminalDivider.height - height) / 2
                         width: terminalDivider.width
@@ -315,461 +425,136 @@ Page {
                 Item {
                     SplitView.minimumHeight: 160
                     SplitView.fillHeight: true
-
-                    ColumnLayout {
-                        anchors {
-                            fill: parent
-                            topMargin: root.titleBarHeight + 14
-                            leftMargin: 22
-                            rightMargin: Math.max(22, root.SafeArea.margins.right)
-                        }
-                        spacing: 12
-
-                        RowLayout {
-                            Layout.fillWidth: true
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: root.conversation.title || /*% "Conversation" */ qsTrId("craftward.codex.history.conversation.title")
-                                font.pixelSize: 24
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
-                            }
-
-                            IconButton {
-                                objectName: "toggleTerminalButton"
-                                icon.source: "qrc:///icons/hugeicons/square-terminal.svg"
-                                checkable: true
-                                checked: root.terminalController ? root.terminalController.panelVisible : false
-                                enabled: root.terminalController ? root.terminalController.available || root.terminalController.tabs !== null : false
-                                toolTipText: /*% "Terminal" */ qsTrId("craftward.terminal.title") + " (⌘J)"
-                                onClicked: root.terminalController.togglePanel()
-                            }
-
-                            Button {
-                                text: /*% "Rename…" */ qsTrId("craftward.action.rename_ellipsis")
-                                visible: root.conversation.threadId.length > 0 && !root.controller.showingArchived
-                                enabled: renameDialog.renameAllowed
-                                onClicked: renameDialog.begin()
-                            }
-
-                            Button {
-                                text: root.controller.showingArchived ? /*% "Restore" */ qsTrId("craftward.action.restore") : /*% "Archive…" */ qsTrId("craftward.action.archive_ellipsis")
-                                visible: root.conversation.threadId.length > 0
-                                enabled: root.controller.showingArchived ? historyActionState.canRestore : historyActionState.canArchive
-                                onClicked: {
-                                    if (root.controller.showingArchived)
-                                        root.controller.restoreSelectedThread();
-                                    else
-                                        archiveDialog.open();
-                                }
-                            }
-
-                            Rectangle {
-                                implicitWidth: runtimeStateLayout.implicitWidth + 16
-                                implicitHeight: runtimeStateLayout.implicitHeight + 8
-                                radius: height / 2
-                                color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerSurface : root.palette.alternateBase
-                                border.color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerBorder : root.palette.mid
-                                visible: root.conversation.threadId.length > 0
-
-                                RowLayout {
-                                    id: runtimeStateLayout
-
-                                    anchors.centerIn: parent
-                                    spacing: 6
-
-                                    Rectangle {
-                                        Layout.preferredWidth: 7
-                                        Layout.preferredHeight: 7
-                                        radius: width / 2
-                                        color: root.runtimeIndicatorColor
-                                    }
-
-                                    Label {
-                                        text: root.runtimeStatusText
-                                        color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerForeground : root.palette.placeholderText
-                                        font.pixelSize: 11
-                                    }
-                                }
-                            }
-
-                            BusyIndicator {
-                                Layout.preferredWidth: 22
-                                Layout.preferredHeight: 22
-                                running: root.conversation.loading || root.controller.startingThread || root.controller.forkingThread || root.conversation.turnInFlight || root.controller.changingThreadLifecycle
-                                visible: running
-                            }
-                        }
-
-                        ListView {
-                            id: interactionList
-
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.min(contentHeight, 360)
-                            Layout.maximumHeight: 360
-                            clip: true
-                            spacing: 8
-                            model: root.conversation.interactions
-                            enabled: !root.controller.startingThread
-                            visible: count > 0 && !root.controller.showingArchived
-                            ScrollBar.vertical: OverlayScrollBar {}
-
-                            delegate: CodexInteractionCard {
-                                id: interactionCard
-
-                                width: ListView.view.width
-                                onApprovalSubmitted: decision => root.conversation.respondToApproval(interactionId, decision)
-                                onUserInputSubmitted: answers => root.conversation.respondToUserInput(interactionId, answers)
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            implicitHeight: errorLayout.implicitHeight + 20
-                            radius: 9
-                            color: Theme.dangerSurface
-                            border.color: Theme.dangerBorder
-                            visible: root.controller.errorMessage.length > 0
-
-                            RowLayout {
-                                id: errorLayout
-
-                                anchors {
-                                    fill: parent
-                                    margins: 10
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: root.controller.errorMessage
-                                    color: Theme.dangerForeground
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                IconButton {
-                                    icon.source: "qrc:///icons/hugeicons/cancel-01.svg"
-                                    toolTipText: /*% "Dismiss error" */ qsTrId("craftward.error.dismiss")
-                                    onClicked: root.controller.clearError()
-                                }
-                            }
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: /*% "Some runtime activity may be unavailable in persisted history." */ qsTrId("craftward.codex.history.runtime_activity_notice")
-                            color: root.palette.placeholderText
-                            font.pixelSize: 11
-                            wrapMode: Text.WordWrap
-                            visible: root.conversation.threadId.length > 0 && root.conversation.activityHistoryPartial
-                        }
-
-                        Item {
-                            id: conversationSurface
-
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            readonly property real composerBottomMargin: 14
-                            readonly property real composerContentGap: 24
-
-                            CodexTimelineView {
-                                id: timelineView
-
-                                anchors.fill: parent
-                                bottomContentInset: composer.visible ? composer.height + conversationSurface.composerBottomMargin + conversationSurface.composerContentGap : 64
-                                controller: root.conversation
-                                forkEnabled: historyActionState.canFork
-                                showForkActions: root.conversation.threadId.length > 0 && !root.controller.showingArchived
-                                motionDiagnosticsEnabled: root.timelineMotionDiagnosticsEnabled
-                                timelineRenderBenchmarkEnabled: root.timelineRenderBenchmarkEnabled
-                                timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
-                                onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
-                                onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
-                            }
-
-                            CodexComposer {
-                                id: composer
-
-                                anchors {
-                                    horizontalCenter: parent.horizontalCenter
-                                    bottom: parent.bottom
-                                    bottomMargin: conversationSurface.composerBottomMargin
-                                }
-                                width: timelineView.contentColumnWidth
-                                z: 1
-                                controller: root.conversation
-                                readOnly: root.controller.showingArchived
-                                startingThread: root.controller.startingThread
-                                enabled: !root.controller.startingThread && !root.controller.forkingThread
-                                visible: historyActionState.composerVisible
-                                onTurnSubmitted: timelineView.followLatest()
-                            }
+                    CodexConversationView {
+                        id: conversationView
+                        anchors.fill: parent
+                        visible: workspaceState.activeIndex === 0
+                        controller: root.controller
+                        actionState: historyActionState
+                        timelineMotionDiagnosticsEnabled: root.timelineMotionDiagnosticsEnabled
+                        timelineRenderBenchmarkEnabled: root.timelineRenderBenchmarkEnabled
+                        timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
+                        onFileLocationRequested: (file, start, end) => root.openFile(file, start, end)
+                    }
+                    Loader {
+                        anchors.fill: parent
+                        active: workspaceState.activeTab !== null
+                        visible: active
+                        sourceComponent: FileContentView {
+                            file: workspaceState.activeTab
+                            onOpenExternallyRequested: path => root.fileLocationRequested(path, 0, 0)
                         }
                     }
                 }
                 Loader {
                     id: terminalPanel
                     active: visible
-                    sourceComponent: TerminalPanel {
-                        controller: root.terminalController
-                    }
                     visible: root.terminalController ? root.terminalController.panelVisible : false
                     SplitView.minimumHeight: 120
                     SplitView.preferredHeight: root.terminalController ? root.terminalController.panelHeight : 240
-                }
-            }
-        }
-    }
-
-    Item {
-        id: titleBar
-
-        objectName: "codexTitleBar"
-        anchors {
-            top: parent.top
-            left: parent.left
-            right: parent.right
-        }
-        height: root.titleBarHeight
-        z: 10
-
-        WindowMoveHandler {
-            targetWindow: root.ApplicationWindow.window
-        }
-
-        Rectangle {
-            id: navigationChrome
-
-            anchors {
-                top: parent.top
-                bottom: parent.bottom
-                left: parent.left
-            }
-            width: Math.min(parent.width, layoutState.navigationChromeWidth)
-            color: layoutState.sidebarExpanded ? Theme.sidebarSurface : root.palette.window
-
-            Behavior on width {
-                enabled: !root.titleBarLeadingInsetAnimating && !contentSplit.resizing
-
-                NumberAnimation {
-                    duration: root.titleBarMotionDuration
-                    easing.type: Easing.OutCubic
+                    sourceComponent: TerminalPanel {
+                        controller: root.terminalController
+                    }
                 }
             }
         }
 
-        Rectangle {
-            id: titleBarSidebarDivider
+        CollapsibleSplitPane {
+            id: filesSidebar
+            objectName: "projectFilesSidebar"
+            minimumExpandedWidth: layoutState.minimumFilesWidth
+            expandedWidth: layoutState.filesWidth
+            maximumExpandedWidth: layoutState.maximumFilesWidth
+            expanded: layoutState.filesVisible
+            resizing: contentSplit.resizing
+            onResized: width => layoutState.rememberFilesWidth(width)
 
-            x: navigationChrome.width
-            anchors {
-                top: parent.top
-                bottom: parent.bottom
-            }
-            width: 1
-            color: root.palette.windowText
-            opacity: layoutState.sidebarExpanded ? 0.14 : 0
-            z: 2
-        }
-
-        IconButton {
-            id: sidebarToggle
-
-            objectName: "codexSidebarToggle"
-            x: layoutState.sidebarExpanded ? navigationChrome.width - width : layoutState.collapsedSidebarToggleX
-            anchors {
-                verticalCenter: parent.verticalCenter
-            }
-            activeFocusOnTab: true
-            padding: 6
-            backgroundInset: 2
-            icon.source: "qrc:///icons/hugeicons/sidebar-left.svg"
-            icon.width: 16
-            icon.height: 16
-            toolTipText: layoutState.sidebarExpanded ? /*% "Hide Sidebar" */ qsTrId("craftward.navigation.sidebar.hide") : /*% "Show Sidebar" */ qsTrId("craftward.navigation.sidebar.show")
-            onClicked: layoutState.toggleSidebar()
-
-            Behavior on x {
-                enabled: !root.titleBarLeadingInsetAnimating && !contentSplit.resizing
-
-                NumberAnimation {
-                    duration: root.titleBarMotionDuration
-                    easing.type: Easing.OutCubic
-                }
-            }
-        }
-
-        Row {
-            id: historyActions
-
-            x: layoutState.leadingActionsX
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 0
-
-            Behavior on x {
-                enabled: !root.titleBarLeadingInsetAnimating
-
-                NumberAnimation {
-                    duration: root.titleBarMotionDuration
-                    easing.type: Easing.OutCubic
-                }
-            }
-
-            IconButton {
-                id: newConversationButton
-
-                objectName: "codexNewConversationButton"
-                activeFocusOnTab: true
-                padding: 6
-                backgroundInset: 2
-                icon.source: "qrc:///icons/hugeicons/chat-add.svg"
-                icon.width: 16
-                icon.height: 16
-                toolTipText: /*% "New…" */ qsTrId("craftward.codex.history.new.action")
-                visible: !root.controller.showingArchived
-                enabled: historyActionState.canStartThread
-                onClicked: workingDirectoryDialog.open()
-            }
-
-            IconButton {
-                id: refreshButton
-
-                objectName: "codexRefreshButton"
-                activeFocusOnTab: true
-                padding: 6
-                backgroundInset: 2
-                icon.source: "qrc:///icons/hugeicons/refresh-01.svg"
-                icon.width: 16
-                icon.height: 16
-                toolTipText: /*% "Refresh" */ qsTrId("craftward.action.refresh")
-                enabled: !historyActionState.busy
-                onClicked: root.controller.refresh()
-            }
-        }
-
-        Item {
-            id: tabStrip
-
-            objectName: "codexTabStrip"
-            anchors {
-                top: parent.top
-                bottom: parent.bottom
-                left: navigationChrome.right
-                right: parent.right
-                rightMargin: Math.max(0, root.SafeArea.margins.right)
-            }
-            clip: true
-            z: 1
-
-            Rectangle {
-                id: conversationTab
-
+            ProjectFilesPane {
+                id: filesPane
+                objectName: "projectFilesPane"
                 anchors {
                     top: parent.top
                     bottom: parent.bottom
                     left: parent.left
                 }
-                width: Math.min(240, Math.max(112, conversationTabLabel.implicitWidth + 24))
-                color: Theme.navigationSelectionBackground
-
-                Label {
-                    id: conversationTabLabel
-
-                    anchors {
-                        fill: parent
-                        leftMargin: 12
-                        rightMargin: 12
-                    }
-                    text: /*% "Conversation" */ qsTrId("craftward.codex.history.conversation.title")
-                    font.pixelSize: 13
-                    font.weight: Font.DemiBold
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                }
-
-                Rectangle {
-                    anchors {
-                        left: parent.left
-                        right: parent.right
-                        bottom: parent.bottom
-                    }
-                    height: 2
-                    color: Theme.navigationSelectionForeground
-                    z: 1
-                }
+                width: Math.max(filesSidebar.width, filesSidebar.minimumExpandedWidth)
+                directory: root.controller.workingDirectory
+                selectedPath: workspaceState.activeTab ? workspaceState.activeTab.path : ""
+                onFileRequested: path => root.openFile(path)
+                onOpenFileRequested: root.chooseFile()
             }
-        }
-
-        Rectangle {
-            anchors {
-                left: layoutState.sidebarExpanded ? navigationChrome.right : parent.left
-                right: parent.right
-                bottom: parent.bottom
-            }
-            height: 1
-            color: root.palette.windowText
-            opacity: 0.14
         }
     }
 
     Rectangle {
         id: statusBar
-
         objectName: "codexStatusBar"
         anchors {
             left: parent.left
             right: parent.right
             bottom: parent.bottom
         }
-        height: 24 + Math.max(0, root.SafeArea.margins.bottom)
+        height: layoutState.statusBarHeight + Math.max(0, root.SafeArea.margins.bottom)
         color: root.palette.window
-        z: 9
-
         Rectangle {
             anchors {
-                top: parent.top
                 left: parent.left
                 right: parent.right
+                top: parent.top
             }
             height: 1
             color: root.palette.windowText
-            opacity: 0.14
+            opacity: 0.12
         }
-
         RowLayout {
             anchors {
                 top: parent.top
                 left: parent.left
                 right: parent.right
-                leftMargin: 10
-                rightMargin: 10
+                leftMargin: 4
+                rightMargin: 4
             }
-            height: 24
-            spacing: 7
-
+            height: layoutState.statusBarHeight
+            spacing: 6
+            PanelActionButton {
+                objectName: "codexSidebarToggle"
+                icon.source: "qrc:///icons/hugeicons/sidebar-left.svg"
+                toolTipText: layoutState.sidebarExpanded ? /*% "Hide Sidebar" */ qsTrId("craftward.navigation.sidebar.hide") : /*% "Show Sidebar" */ qsTrId("craftward.navigation.sidebar.show")
+                onClicked: root.toggleSidebar()
+            }
             Label {
-                text: /*% "Codex" */ qsTrId("craftward.codex.name")
-                color: root.palette.placeholderText
+                text: /*% "Local" */ qsTrId("craftward.execution.local")
                 font.pixelSize: 11
+                color: root.palette.placeholderText
             }
-
             Item {
                 Layout.fillWidth: true
             }
-
             Rectangle {
                 Layout.preferredWidth: 6
                 Layout.preferredHeight: 6
-                radius: width / 2
+                radius: 3
                 color: root.runtimeIndicatorColor
                 visible: root.conversation.threadId.length > 0
             }
-
             Label {
                 text: root.runtimeStatusText
-                color: root.conversation.turnState === CodexConversationController.SystemError ? Theme.dangerForeground : root.palette.placeholderText
                 font.pixelSize: 11
+                color: root.runtimeIndicatorColor
                 visible: root.conversation.threadId.length > 0
+            }
+            PanelActionButton {
+                objectName: "toggleTerminalButton"
+                icon.source: "qrc:///icons/hugeicons/sidebar-bottom.svg"
+                enabled: root.terminalController ? root.terminalController.available || root.terminalController.tabs !== null : false
+                toolTipText: /*% "Terminal" */ qsTrId("craftward.terminal.title") + " (⌘J)"
+                onClicked: root.terminalController.togglePanel()
+            }
+            PanelActionButton {
+                objectName: "toggleFilesButton"
+                icon.source: "qrc:///icons/hugeicons/sidebar-right.svg"
+                toolTipText: layoutState.filesVisible ? /*% "Hide Files" */ qsTrId("craftward.files.hide") : /*% "Show Files" */ qsTrId("craftward.files.show")
+                onClicked: root.toggleFiles()
             }
         }
     }

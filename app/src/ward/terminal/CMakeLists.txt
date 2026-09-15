@@ -47,8 +47,9 @@ if(BUILD_TESTING)
 
     qt_add_executable(CraftwardTerminalIntegrationTest tests/terminalintegrationtest.cpp)
     target_link_libraries(CraftwardTerminalIntegrationTest PRIVATE
-        CraftwardTerminal CraftwardTerminalplugin CraftwardDesign contour_core
+        CraftwardTerminal CraftwardTerminalplugin CraftwardComponentsplugin CraftwardDesign contour_core
         Qt6::QuickControls2 Qt6::Test
+        "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
     )
     qt_add_resources(CraftwardTerminalIntegrationTest "terminal_test_icons"
         PREFIX "/icons"
