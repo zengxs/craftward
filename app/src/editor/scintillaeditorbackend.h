@@ -4,21 +4,29 @@
 #ifndef CRAFTWARD_SCINTILLAEDITORBACKEND_H
 #define CRAFTWARD_SCINTILLAEDITORBACKEND_H
 
+#include "scintillaimageitem_p.h"
 #include <QColor>
 #include <QObject>
 #include <QQmlEngine>
 #include <QString>
-#include <QWindow>
+#include <QVariantList>
 
 #include <memory>
 
 class ScintillaEditorBackendPrivate;
 
-class ScintillaEditorBackend : public QObject
+class ScintillaEditorBackend : public ScintillaImageItem
 {
     Q_OBJECT
     QML_ELEMENT
-    Q_PROPERTY(QWindow* window READ window CONSTANT)
+    Q_PROPERTY(qreal verticalPosition READ verticalPosition WRITE setVerticalPosition NOTIFY scrollChanged)
+    Q_PROPERTY(qreal verticalSize READ verticalSize NOTIFY scrollChanged)
+    Q_PROPERTY(qreal horizontalPosition READ horizontalPosition WRITE setHorizontalPosition NOTIFY scrollChanged)
+    Q_PROPERTY(qreal horizontalSize READ horizontalSize NOTIFY scrollChanged)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY editorStateChanged)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY editorStateChanged)
+    Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY editorStateChanged)
+    Q_PROPERTY(bool canPaste READ canPaste NOTIFY editorStateChanged)
     Q_PROPERTY(QString text READ text WRITE setText NOTIFY textChanged)
     Q_PROPERTY(bool readOnly READ isReadOnly WRITE setReadOnly NOTIFY readOnlyChanged)
     Q_PROPERTY(bool wordWrap READ wordWrap WRITE setWordWrap NOTIFY wordWrapChanged)
@@ -34,10 +42,29 @@ class ScintillaEditorBackend : public QObject
                  selectionBackgroundColorChanged)
 
   public:
-    explicit ScintillaEditorBackend(QObject* parent = nullptr);
+    explicit ScintillaEditorBackend(QQuickItem* parent = nullptr);
     ~ScintillaEditorBackend() override;
 
-    QWindow* window() const;
+    // Scintilla message parameters use UTF-8 byte positions, not QString indices.
+    qintptr sendMessage(unsigned int message, quintptr wParam = 0, qintptr lParam = 0);
+    qreal verticalPosition() const;
+    void setVerticalPosition(qreal value);
+    qreal verticalSize() const;
+    qreal horizontalPosition() const;
+    void setHorizontalPosition(qreal value);
+    qreal horizontalSize() const;
+    bool canUndo() const;
+    bool canRedo() const;
+    bool hasSelection() const;
+    bool canPaste() const;
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
+    Q_INVOKABLE void cut();
+    Q_INVOKABLE void copy();
+    Q_INVOKABLE void paste();
+    Q_INVOKABLE void selectAll();
+    Q_INVOKABLE void deleteSelection();
+    QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
 
     QString text() const;
     void setText(const QString& text);
@@ -74,6 +101,9 @@ class ScintillaEditorBackend : public QObject
     void setSelectionBackgroundColor(const QColor& selectionBackgroundColor);
 
   signals:
+    void scrollChanged();
+    void editorStateChanged();
+    void contextMenuRequested(QPointF position, QVariantList entries);
     void textChanged();
     void readOnlyChanged();
     void wordWrapChanged();
@@ -86,9 +116,30 @@ class ScintillaEditorBackend : public QObject
     void selectionForegroundColorChanged();
     void selectionBackgroundColorChanged();
 
+  protected:
+    bool paintImage(QPainter& painter, const QRect& rect) override;
+    void geometryChange(const QRectF& geometry, const QRectF& oldGeometry) override;
+    void itemChange(ItemChange change, const ItemChangeData& data) override;
+    bool event(QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void mouseUngrabEvent() override;
+    void hoverMoveEvent(QHoverEvent* event) override;
+    void hoverLeaveEvent(QHoverEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
+    void inputMethodEvent(QInputMethodEvent* event) override;
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dragLeaveEvent(QDragLeaveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+
   private:
     friend class ScintillaEditorBackendPrivate;
-    void handleNativeTextChanged();
 
     std::unique_ptr<ScintillaEditorBackendPrivate> d;
 };

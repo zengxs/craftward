@@ -24,7 +24,7 @@ Pane {
         id: editor
         anchors.fill: parent
         visible: root.details.error.length === 0
-        readOnly: true
+        readOnly: false
         text: root.details.text
         function reveal() {
             Qt.callLater(() => revealLocation(root.details.startLine || 0, root.details.endLine || 0));

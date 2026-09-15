@@ -147,6 +147,7 @@ qt_add_translations(
         Craftward
         CraftwardCodex
         CraftwardComponents
+        CraftwardEditor
         CraftwardFeaturesLegal
         CraftwardFeaturesRealm
         CraftwardLocalization

@@ -1553,5 +1553,33 @@ version 3 or later.</source>
         <source>Local</source>
         <translation>本机</translation>
     </message>
+    <message id="craftward.editor.undo">
+        <source>Undo</source>
+        <translation>撤销</translation>
+    </message>
+    <message id="craftward.editor.redo">
+        <source>Redo</source>
+        <translation>重做</translation>
+    </message>
+    <message id="craftward.editor.cut">
+        <source>Cut</source>
+        <translation>剪切</translation>
+    </message>
+    <message id="craftward.editor.copy">
+        <source>Copy</source>
+        <translation>复制</translation>
+    </message>
+    <message id="craftward.editor.paste">
+        <source>Paste</source>
+        <translation>粘贴</translation>
+    </message>
+    <message id="craftward.editor.delete">
+        <source>Delete</source>
+        <translation>删除</translation>
+    </message>
+    <message id="craftward.editor.select_all">
+        <source>Select All</source>
+        <translation>全选</translation>
+    </message>
 </context>
 </TS>

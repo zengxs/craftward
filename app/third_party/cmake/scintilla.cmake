@@ -6,10 +6,6 @@ function(craftward_add_scintilla)
     )
 
     add_library(CraftwardScintilla STATIC
-        "${scintilla_source_dir}/cocoa/InfoBar.mm"
-        "${scintilla_source_dir}/cocoa/PlatCocoa.mm"
-        "${scintilla_source_dir}/cocoa/ScintillaCocoa.mm"
-        "${scintilla_source_dir}/cocoa/ScintillaView.mm"
         "${scintilla_source_dir}/src/AutoComplete.cxx"
         "${scintilla_source_dir}/src/CallTip.cxx"
         "${scintilla_source_dir}/src/CaseConvert.cxx"
@@ -44,26 +40,16 @@ function(craftward_add_scintilla)
         "${scintilla_source_dir}/src/ViewStyle.cxx"
         "${scintilla_source_dir}/src/XPM.cxx"
     )
-    add_library(Scintilla::Cocoa ALIAS CraftwardScintilla)
+    add_library(Scintilla::Core ALIAS CraftwardScintilla)
 
     target_include_directories(CraftwardScintilla
         SYSTEM
         PUBLIC
-            "${scintilla_source_dir}/cocoa"
             "${scintilla_source_dir}/include"
         PRIVATE
             "${scintilla_source_dir}/src"
     )
 
     target_compile_features(CraftwardScintilla PRIVATE cxx_std_17)
-    target_compile_options(CraftwardScintilla
-        PRIVATE
-            "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
-    )
-
-    target_link_libraries(CraftwardScintilla
-        PUBLIC
-            "${CRAFTWARD_COCOA_FRAMEWORK}"
-            "${CRAFTWARD_QUARTZ_CORE_FRAMEWORK}"
-    )
+    target_compile_definitions(CraftwardScintilla PUBLIC SCINTILLA_QT_QML)
 endfunction()

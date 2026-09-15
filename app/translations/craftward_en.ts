@@ -1555,5 +1555,33 @@ version 3 or later.</translation>
         <source>Local</source>
         <translation>Local</translation>
     </message>
+    <message id="craftward.editor.undo">
+        <source>Undo</source>
+        <translation>Undo</translation>
+    </message>
+    <message id="craftward.editor.redo">
+        <source>Redo</source>
+        <translation>Redo</translation>
+    </message>
+    <message id="craftward.editor.cut">
+        <source>Cut</source>
+        <translation>Cut</translation>
+    </message>
+    <message id="craftward.editor.copy">
+        <source>Copy</source>
+        <translation>Copy</translation>
+    </message>
+    <message id="craftward.editor.paste">
+        <source>Paste</source>
+        <translation>Paste</translation>
+    </message>
+    <message id="craftward.editor.delete">
+        <source>Delete</source>
+        <translation>Delete</translation>
+    </message>
+    <message id="craftward.editor.select_all">
+        <source>Select All</source>
+        <translation>Select All</translation>
+    </message>
 </context>
 </TS>

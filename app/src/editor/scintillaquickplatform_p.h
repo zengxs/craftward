@@ -1,0 +1,224 @@
+// Adapted from Scintilla 5.6.6 qt/ScintillaEditBase/PlatQt.h.
+//          Copyright (c) 1990-2011, Scientific Toolworks, Inc.
+//
+// See ../../third_party/scintilla/License.txt for the upstream license.
+//
+// Author: Jason Haslam
+//
+// Additions Copyright (c) 2011 Archaeopteryx Software, Inc. d/b/a Wingware
+// Qt Quick image platform.
+
+#ifndef CRAFTWARD_SCINTILLAQUICKPLATFORM_P_H
+#define CRAFTWARD_SCINTILLAQUICKPLATFORM_P_H
+
+#include <cstddef>
+#include <cstdint>
+
+#include <algorithm>
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+// Scintilla's internal headers require this include order.
+// clang-format off
+#include "Debugging.h"
+#include "Geometry.h"
+#include "ScintillaTypes.h"
+#include "ScintillaMessages.h"
+#include "Platform.h"
+// clang-format on
+
+#include "scintillaimageitem_p.h"
+#include <QHash>
+#include <QPaintDevice>
+#include <QPainter>
+#include <QPointer>
+#include <QUrl>
+#include <QVariantList>
+#include <QWheelEvent>
+#include <functional>
+
+namespace Scintilla::Internal {
+
+struct QuickWindow
+{
+    QPointer<ScintillaImageItem> item;
+    QImage measurementDevice{ 1, 1, QImage::Format_ARGB32_Premultiplied };
+    qreal devicePixelRatio = 1;
+    bool owned = false;
+    std::function<void(QPointF, const QVariantList&)> showMenu;
+};
+struct QuickMenu
+{
+    QVariantList entries;
+};
+QuickWindow*
+CreateQuickPopup(QuickWindow& parent,
+                 std::function<void(QPainter&)> paint,
+                 std::function<void(QPointF, bool)> click = {},
+                 std::function<void(const QWheelEvent&)> wheel = {});
+QFont
+FontForQuick(const Font* font);
+
+inline QColor
+QColorFromColourRGBA(ColourRGBA ca)
+{
+    return QColor(ca.GetRed(), ca.GetGreen(), ca.GetBlue(), ca.GetAlpha());
+}
+
+inline QRect
+QRectFromPRect(PRectangle pr)
+{
+    return QRect(pr.left, pr.top, pr.Width(), pr.Height());
+}
+
+inline QRectF
+QRectFFromPRect(PRectangle pr)
+{
+    return QRectF(pr.left, pr.top, pr.Width(), pr.Height());
+}
+
+inline PRectangle
+PRectFromQRect(QRect qr)
+{
+    return PRectangle(qr.x(), qr.y(), qr.x() + qr.width(), qr.y() + qr.height());
+}
+
+inline Point
+PointFromQPoint(QPoint qp)
+{
+    return Point(qp.x(), qp.y());
+}
+
+inline Point
+PointFromQPointF(QPointF qp)
+{
+    return Point(qp.x(), qp.y());
+}
+
+inline QPointF
+QPointFFromPoint(Point qp)
+{
+    return QPointF(qp.x, qp.y);
+}
+
+inline QuickWindow*
+window(WindowID wid) noexcept
+{
+    return static_cast<QuickWindow*>(wid);
+}
+
+class SurfaceImpl : public Surface
+{
+  private:
+    QPaintDevice* device = nullptr;
+    QPainter* painter = nullptr;
+    bool deviceOwned = false;
+    bool painterOwned = false;
+    SurfaceMode mode;
+    qreal scale = 0.0;
+
+    void Clear();
+
+  public:
+    SurfaceImpl();
+    SurfaceImpl(int width, int height, SurfaceMode mode_, qreal scale_, const QPaintDevice* reference);
+    virtual ~SurfaceImpl() override;
+
+    void Init(WindowID wid) override;
+    void Init(SurfaceID sid, WindowID wid) override;
+    std::unique_ptr<Surface> AllocatePixMap(int width, int height) override;
+
+    void SetMode(SurfaceMode mode) override;
+
+    void Release() noexcept override;
+    int SupportsFeature(Scintilla::Supports feature) noexcept override;
+    bool Initialised() override;
+    void PenColour(ColourRGBA fore);
+    void PenColourWidth(ColourRGBA fore, XYPOSITION strokeWidth);
+    int LogPixelsY() override;
+    int PixelDivisions() override;
+    int DeviceHeightFont(int points) override;
+    void LineDraw(Point start, Point end, Stroke stroke) override;
+    void PolyLine(const Point* pts, size_t npts, Stroke stroke) override;
+    void Polygon(const Point* pts, size_t npts, FillStroke fillStroke) override;
+    void RectangleDraw(PRectangle rc, FillStroke fillStroke) override;
+    void RectangleFrame(PRectangle rc, Stroke stroke) override;
+    void FillRectangle(PRectangle rc, Fill fill) override;
+    void FillRectangleAligned(PRectangle rc, Fill fill) override;
+    void FillRectangle(PRectangle rc, Surface& surfacePattern) override;
+    void RoundedRectangle(PRectangle rc, FillStroke fillStroke) override;
+    void AlphaRectangle(PRectangle rc, XYPOSITION cornerSize, FillStroke fillStroke) override;
+    void GradientRectangle(PRectangle rc, const std::vector<ColourStop>& stops, GradientOptions options) override;
+    void DrawRGBAImage(PRectangle rc, int width, int height, const unsigned char* pixelsImage) override;
+    void Ellipse(PRectangle rc, FillStroke fillStroke) override;
+    void Stadium(PRectangle rc, FillStroke fillStroke, Ends ends) override;
+    void Copy(PRectangle rc, Point from, Surface& surfaceSource) override;
+
+    std::unique_ptr<IScreenLineLayout> Layout(const IScreenLine* screenLine) override;
+
+    void DrawTextNoClip(PRectangle rc,
+                        const Font* font,
+                        XYPOSITION ybase,
+                        std::string_view text,
+                        ColourRGBA fore,
+                        ColourRGBA back) override;
+    void DrawTextClipped(PRectangle rc,
+                         const Font* font,
+                         XYPOSITION ybase,
+                         std::string_view text,
+                         ColourRGBA fore,
+                         ColourRGBA back) override;
+    void DrawTextTransparent(PRectangle rc,
+                             const Font* font,
+                             XYPOSITION ybase,
+                             std::string_view text,
+                             ColourRGBA fore) override;
+    void MeasureWidths(const Font* font, std::string_view text, XYPOSITION* positions) override;
+    XYPOSITION WidthText(const Font* font, std::string_view text) override;
+
+    void DrawTextNoClipUTF8(PRectangle rc,
+                            const Font* font_,
+                            XYPOSITION ybase,
+                            std::string_view text,
+                            ColourRGBA fore,
+                            ColourRGBA back) override;
+    void DrawTextClippedUTF8(PRectangle rc,
+                             const Font* font_,
+                             XYPOSITION ybase,
+                             std::string_view text,
+                             ColourRGBA fore,
+                             ColourRGBA back) override;
+    void DrawTextTransparentUTF8(PRectangle rc,
+                                 const Font* font_,
+                                 XYPOSITION ybase,
+                                 std::string_view text,
+                                 ColourRGBA fore) override;
+    void MeasureWidthsUTF8(const Font* font_, std::string_view text, XYPOSITION* positions) override;
+    XYPOSITION WidthTextUTF8(const Font* font_, std::string_view text) override;
+
+    XYPOSITION Ascent(const Font* font) override;
+    XYPOSITION Descent(const Font* font) override;
+    XYPOSITION InternalLeading(const Font* font) override;
+    XYPOSITION Height(const Font* font) override;
+    XYPOSITION AverageCharWidth(const Font* font) override;
+
+    void SetClip(PRectangle rc) override;
+    void PopClip() override;
+    void FlushCachedState() override;
+    void FlushDrawing() override;
+
+    void BrushColour(ColourRGBA back);
+    void SetFont(const Font* font);
+
+    QPaintDevice* GetPaintDevice();
+    QPainter* GetPainter();
+};
+
+}
+
+#endif

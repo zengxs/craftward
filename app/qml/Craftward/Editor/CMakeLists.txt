@@ -3,7 +3,14 @@ qt_add_qml_module(CraftwardEditor
     URI Craftward.Editor
     SOURCES
         "${PROJECT_SOURCE_DIR}/src/editor/scintillaeditorbackend.h"
-        "${PROJECT_SOURCE_DIR}/src/editor/scintillaeditorbackend.mm"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaeditorbackend.cpp"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaimageitem_p.h"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaimageitem.cpp"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaquickadapter_p.h"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaquickadapter.cpp"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaquickplatform_p.h"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaquickplatform.cpp"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillaquickwindow.cpp"
     QML_FILES
         CodeEditor.qml
 )
@@ -11,11 +18,7 @@ qt_add_qml_module(CraftwardEditor
 target_include_directories(CraftwardEditor
     PRIVATE
         "${PROJECT_SOURCE_DIR}/src/editor"
-)
-
-target_compile_options(CraftwardEditor
-    PRIVATE
-        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        "${PROJECT_SOURCE_DIR}/third_party/scintilla/src"
 )
 
 target_link_libraries(CraftwardEditor
@@ -25,5 +28,26 @@ target_link_libraries(CraftwardEditor
         Qt6::Qml
         Qt6::Quick
         Qt6::QuickControls2
-        Scintilla::Cocoa
+        Scintilla::Core
 )
+
+if(BUILD_TESTING)
+    qt_add_executable(CraftwardScintillaQuickTest
+        "${PROJECT_SOURCE_DIR}/src/editor/tests/scintillaquicktest.cpp"
+    )
+    target_include_directories(CraftwardScintillaQuickTest PRIVATE "${PROJECT_SOURCE_DIR}/src/editor")
+    target_link_libraries(CraftwardScintillaQuickTest PRIVATE
+        CraftwardEditor CraftwardEditorplugin Scintilla::Core Qt6::Quick Qt6::Test Qt6::GuiPrivate
+        "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
+    )
+    add_test(NAME CraftwardScintillaQuickTest COMMAND CraftwardScintillaQuickTest)
+    set_tests_properties(CraftwardScintillaQuickTest PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        TIMEOUT 45
+    )
+    add_test(NAME CraftwardScintillaQuickTest.fractional COMMAND CraftwardScintillaQuickTest)
+    set_tests_properties(CraftwardScintillaQuickTest.fractional PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=1.25"
+        TIMEOUT 45
+    )
+endif()
