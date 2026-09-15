@@ -79,7 +79,9 @@ tasks:
         "target/aarch64-apple-darwin/{{.CARGO_OUTPUT_DIR}}/libward_core.a"
         "target/x86_64-apple-darwin/{{.CARGO_OUTPUT_DIR}}/libward_core.a"
         -output "{{.LIBRARY}}"
-      - lipo "{{.LIBRARY}}" -verify_arch arm64 x86_64
+      # Verify one architecture per invocation for compatibility across Xcode toolchains.
+      - lipo "{{.LIBRARY}}" -verify_arch arm64
+      - lipo "{{.LIBRARY}}" -verify_arch x86_64
 
   format:cargo:
     desc: Format Cargo files

@@ -56,8 +56,11 @@ execute_process(COMMAND /usr/bin/ditto "${ARM64_BUNDLE}" "${OUTPUT_BUNDLE}"
 execute_process(COMMAND /usr/bin/lipo -create
     "${ARM64_BUNDLE}/${binary}" "${X86_64_BUNDLE}/${binary}"
     -output "${OUTPUT_BUNDLE}/${binary}" COMMAND_ERROR_IS_FATAL ANY)
-execute_process(COMMAND /usr/bin/lipo "${OUTPUT_BUNDLE}/${binary}" -verify_arch arm64 x86_64
-    COMMAND_ERROR_IS_FATAL ANY)
+# Verify one architecture per invocation for compatibility across Xcode toolchains.
+foreach(arch IN ITEMS arm64 x86_64)
+    execute_process(COMMAND /usr/bin/lipo "${OUTPUT_BUNDLE}/${binary}" -verify_arch "${arch}"
+        COMMAND_ERROR_IS_FATAL ANY)
+endforeach()
 
 set(identity "$ENV{CRAFTWARD_SIGN_IDENTITY}")
 if(identity STREQUAL "")
