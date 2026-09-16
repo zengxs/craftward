@@ -28,6 +28,12 @@ class ScintillaEditorBackend : public ScintillaImageItem
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY editorStateChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY editorStateChanged)
     Q_PROPERTY(QString text READ text WRITE setText NOTIFY textChanged)
+    Q_PROPERTY(QString language READ language WRITE setLanguage NOTIFY languageChanged)
+    Q_PROPERTY(QString filePath READ filePath WRITE setFilePath NOTIFY filePathChanged)
+    Q_PROPERTY(bool darkTheme READ darkTheme WRITE setDarkTheme NOTIFY darkThemeChanged)
+    Q_PROPERTY(QString syntaxName READ syntaxName NOTIFY syntaxChanged)
+    Q_PROPERTY(bool languageRecognized READ languageRecognized NOTIFY syntaxChanged)
+    Q_PROPERTY(bool highlightingReady READ highlightingReady NOTIFY highlightingReadyChanged)
     Q_PROPERTY(bool readOnly READ isReadOnly WRITE setReadOnly NOTIFY readOnlyChanged)
     Q_PROPERTY(bool wordWrap READ wordWrap WRITE setWordWrap NOTIFY wordWrapChanged)
     Q_PROPERTY(bool showLineNumbers READ showLineNumbers WRITE setShowLineNumbers NOTIFY showLineNumbersChanged)
@@ -38,8 +44,8 @@ class ScintillaEditorBackend : public ScintillaImageItem
     Q_PROPERTY(qreal lineHeightScale READ lineHeightScale WRITE setLineHeightScale NOTIFY lineHeightScaleChanged)
     Q_PROPERTY(QColor foregroundColor READ foregroundColor WRITE setForegroundColor NOTIFY foregroundColorChanged)
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor NOTIFY backgroundColorChanged)
-    Q_PROPERTY(QColor selectionForegroundColor READ selectionForegroundColor WRITE setSelectionForegroundColor NOTIFY
-                 selectionForegroundColorChanged)
+    Q_PROPERTY(QColor selectionForegroundColor READ selectionForegroundColor WRITE setSelectionForegroundColor RESET
+                 resetSelectionForegroundColor NOTIFY selectionForegroundColorChanged)
     Q_PROPERTY(QColor selectionBackgroundColor READ selectionBackgroundColor WRITE setSelectionBackgroundColor NOTIFY
                  selectionBackgroundColorChanged)
 
@@ -48,6 +54,8 @@ class ScintillaEditorBackend : public ScintillaImageItem
     ~ScintillaEditorBackend() override;
 
     // Scintilla message parameters use UTF-8 byte positions, not QString indices.
+    // SCI_SETDOCPOINTER requires a document not attached to another Quick editor;
+    // otherwise it leaves this editor unchanged and sets SC_STATUS_FAILURE.
     qintptr sendMessage(unsigned int message, quintptr wParam = 0, qintptr lParam = 0);
     qreal verticalPosition() const;
     void setVerticalPosition(qreal value);
@@ -70,6 +78,15 @@ class ScintillaEditorBackend : public ScintillaImageItem
 
     QString text() const;
     void setText(const QString& text);
+    QString language() const;
+    void setLanguage(const QString& language);
+    QString filePath() const;
+    void setFilePath(const QString& path);
+    bool darkTheme() const;
+    void setDarkTheme(bool dark);
+    QString syntaxName() const;
+    bool languageRecognized() const;
+    bool highlightingReady() const;
     Q_INVOKABLE void revealLocation(int startLine, int endLine = 0);
 
     bool isReadOnly() const;
@@ -104,6 +121,7 @@ class ScintillaEditorBackend : public ScintillaImageItem
 
     QColor selectionForegroundColor() const;
     void setSelectionForegroundColor(const QColor& selectionForegroundColor);
+    void resetSelectionForegroundColor();
 
     QColor selectionBackgroundColor() const;
     void setSelectionBackgroundColor(const QColor& selectionBackgroundColor);
@@ -113,6 +131,11 @@ class ScintillaEditorBackend : public ScintillaImageItem
     void editorStateChanged();
     void contextMenuRequested(QPointF position, QVariantList entries);
     void textChanged();
+    void languageChanged();
+    void filePathChanged();
+    void darkThemeChanged();
+    void syntaxChanged();
+    void highlightingReadyChanged();
     void readOnlyChanged();
     void wordWrapChanged();
     void showLineNumbersChanged();

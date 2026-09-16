@@ -10,6 +10,8 @@
 
 #include <memory>
 
+struct WardSyntaxDocument;
+
 namespace craftward::highlighting {
 enum class Theme
 {
@@ -65,6 +67,8 @@ class SyntaxHighlightingEngine final
     [[nodiscard]] Result highlight(QByteArrayView source, QByteArrayView language, Theme theme) const;
 
   private:
+    friend class SyntaxHighlightingDocumentWorker;
+    WardSyntaxDocument* createDocument(QByteArrayView source, QByteArrayView configuration, QString& error) const;
     struct Private;
 
     SyntaxHighlightingEngine();

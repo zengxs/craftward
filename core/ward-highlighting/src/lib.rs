@@ -4,13 +4,14 @@
 use std::ops::Range;
 
 use syntect::dumps::{from_reader, from_uncompressed_data};
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{FontStyle, ThemeSet};
+use syntect::highlighting::{Highlighter as ThemeHighlighter, ThemeSet};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
-use syntect::util::LinesWithEndings;
 use thiserror::Error;
 
+mod document;
+mod parser;
 mod theme;
+pub use document::{Document, HighlightBatch};
 
 pub use theme::Theme;
 
@@ -55,6 +56,8 @@ pub struct HighlightedCode {
 /// Failures while loading embedded packs or highlighting source text.
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("the highlighting edit has an invalid revision or UTF-8 range")]
+    InvalidEdit,
     #[error("the embedded {name} pack is invalid: {message}")]
     InvalidPack { name: &'static str, message: String },
     #[error("the maintained theme {0:?} is unavailable")]
@@ -119,34 +122,27 @@ impl Highlighter {
             .themes
             .get(theme_name)
             .ok_or_else(|| Error::MissingTheme(theme_name.to_owned()))?;
-        let mut line_highlighter = HighlightLines::new(syntax, theme);
-        let mut spans = Vec::new();
-        let mut source_offset = 0usize;
-
-        for line in source_lines(source) {
-            let regions = line_highlighter
-                .highlight_line(line, &self.syntaxes)
-                .map_err(|error| Error::Highlight(error.to_string()))?;
-            for (style, region) in regions {
-                if region.is_empty() {
-                    continue;
-                }
-                let end = source_offset + region.len();
-                push_span(
-                    &mut spans,
-                    source_offset..end,
-                    Style {
-                        foreground: color(style.foreground),
-                        background: color(style.background),
-                        bold: style.font_style.contains(FontStyle::BOLD),
-                        italic: style.font_style.contains(FontStyle::ITALIC),
-                        underline: style.font_style.contains(FontStyle::UNDERLINE),
-                    },
-                );
-                source_offset = end;
+        let highlighter = ThemeHighlighter::new(theme);
+        let mut parser = parser::Parser::new(syntax, &highlighter);
+        let lines: Vec<_> = source_lines(source).collect();
+        let mut styled_lines = vec![Vec::new(); lines.len()];
+        for line in &lines {
+            for (index, styles) in parser.line(line, &self.syntaxes, &highlighter)? {
+                styled_lines[index] = styles;
             }
         }
-
+        let mut spans = Vec::new();
+        let mut source_offset = 0;
+        for (line, styles) in lines.into_iter().zip(styled_lines) {
+            for span in styles {
+                push_span(
+                    &mut spans,
+                    source_offset + span.range.start..source_offset + span.range.end,
+                    span.style,
+                );
+            }
+            source_offset += line.len();
+        }
         debug_assert_eq!(source_offset, source.len());
         Ok(HighlightedCode {
             syntax_name: syntax.name.clone(),
@@ -177,8 +173,11 @@ impl Highlighter {
     }
 }
 
-fn source_lines(source: &str) -> LinesWithEndings<'_> {
-    LinesWithEndings::from(source)
+fn source_lines(source: &str) -> impl Iterator<Item = &str> {
+    // Match the editor's logical lines, including its final empty line.
+    source
+        .split_inclusive('\n')
+        .chain((source.is_empty() || source.ends_with('\n')).then_some(""))
 }
 
 fn is_plain_text_language(language: &str) -> bool {
@@ -231,8 +230,155 @@ fn push_span(spans: &mut Vec<Span>, range: Range<usize>, style: Style) {
 mod tests {
     use super::{Highlighter, Theme};
 
+    #[test]
+    fn corrects_colors_before_a_cross_line_branch_failure() {
+        let syntax = syntect::parsing::SyntaxDefinition::load_from_str(
+            r#"
+name: Replay Test
+file_extensions: [replay]
+scope: source.replay
+contexts:
+  main:
+    - match: 'BEGIN'
+      branch_point: choice
+      branch: [attempt, retry, fallback]
+  attempt:
+    - meta_scope: string.quoted
+    - match: 'FAIL'
+      fail: choice
+    - match: 'END'
+      pop: true
+  fallback:
+    - meta_scope: comment.block
+    - match: 'END'
+      pop: true
+  retry:
+    - meta_scope: constant.numeric
+    - match: 'FAIL'
+      fail: choice
+    - match: 'END'
+      pop: true
+"#,
+            true,
+            None,
+        )
+        .unwrap();
+        let mut syntaxes = syntect::parsing::SyntaxSetBuilder::new();
+        syntaxes.add(syntax);
+        let mut engine = highlighter();
+        engine.syntaxes = syntaxes.build();
+        let source = "prefix\nBEGIN value\ncontinued\nFAIL\nEND\n";
+        let result = engine
+            .highlight(source, Some("replay"), Theme::Light)
+            .unwrap();
+        let reference = highlighter()
+            .highlight("/* value */", Some("rust"), Theme::Light)
+            .unwrap();
+        let expected = reference
+            .spans
+            .iter()
+            .find(|span| span.range.contains(&3))
+            .unwrap()
+            .style;
+        let actual = result
+            .spans
+            .iter()
+            .find(|span| span.range.contains(&13))
+            .unwrap()
+            .style;
+        assert_eq!(actual.foreground, expected.foreground);
+        let mut document = crate::Document::new(
+            std::sync::Arc::new(engine),
+            source,
+            "replay",
+            "",
+            Theme::Light,
+        );
+        let mut displayed = vec![None; source.len()];
+        while let Some(batch) = document.step(1, 7).unwrap() {
+            displayed[batch.range.clone()].fill(None);
+            for span in &batch.spans {
+                displayed[span.range.clone()].fill(Some(span.style));
+            }
+            document.acknowledge(batch.sequence, true);
+        }
+        for span in result.spans {
+            assert!(
+                displayed[span.range]
+                    .iter()
+                    .all(|style| *style == Some(span.style))
+            );
+        }
+    }
+
     fn highlighter() -> Highlighter {
         Highlighter::new().expect("the embedded packs should load")
+    }
+
+    #[test]
+    fn highlights_qml_enum_binding_after_cross_line_replay() {
+        let source = "Item {\n    focusPolicy: Qt.StrongFocus\n}\n";
+        let result = highlighter()
+            .highlight(source, Some("qml"), Theme::Light)
+            .expect("a QML enum binding must retain its syntax highlighting");
+        assert_eq!(result.syntax_name, "QML");
+        assert!(result.language_recognized);
+        assert_eq!(result.spans.last().unwrap().range.end, source.len());
+    }
+
+    #[test]
+    fn snapshot_and_document_both_parse_the_trailing_empty_line() {
+        let syntax = syntect::parsing::SyntaxDefinition::load_from_str(
+            r#"
+name: Empty Line Replay
+file_extensions: [empty-replay]
+scope: source.empty-replay
+contexts:
+  main:
+    - match: 'BEGIN'
+      branch_point: choice
+      branch: [attempt, fallback]
+  attempt:
+    - meta_scope: string.quoted
+    - match: '^$'
+      fail: choice
+  fallback:
+    - meta_scope: comment.block
+"#,
+            true,
+            None,
+        )
+        .unwrap();
+        let mut syntaxes = syntect::parsing::SyntaxSetBuilder::new();
+        syntaxes.add(syntax);
+        let mut engine = highlighter();
+        engine.syntaxes = syntaxes.build();
+        let source = "BEGIN value\n";
+        let reference = engine
+            .highlight(source, Some("empty-replay"), Theme::Light)
+            .unwrap();
+        let mut document = crate::Document::new(
+            std::sync::Arc::new(engine),
+            source,
+            "empty-replay",
+            "",
+            Theme::Light,
+        );
+        let mut displayed = vec![None; source.len()];
+        while let Some(batch) = document.step(1, 7).unwrap() {
+            displayed[batch.range.clone()].fill(None);
+            for span in batch.spans {
+                displayed[span.range].fill(Some(span.style));
+            }
+            document.acknowledge(batch.sequence, true);
+        }
+        for span in reference.spans {
+            assert!(
+                displayed[span.range]
+                    .iter()
+                    .all(|style| *style == Some(span.style))
+            );
+        }
     }
 
     #[test]

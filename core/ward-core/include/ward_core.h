@@ -99,6 +99,9 @@ typedef struct WardRealm WardRealm;
 // An opaque owner of Ward Core's process-wide asynchronous runtime.
 typedef struct WardRuntime WardRuntime;
 
+// A mutable editor highlighter, created, used and destroyed on one worker thread.
+typedef struct WardSyntaxDocument WardSyntaxDocument;
+
 // An immutable syntax-highlighting engine built from embedded application packs.
 typedef struct WardSyntaxHighlightingEngine WardSyntaxHighlightingEngine;
 
@@ -809,6 +812,66 @@ struct WardRuntime *ward_core_runtime_create(struct WardError **output_error);
 // `runtime` must be null or a live handle returned by
 // [`ward_core_runtime_create`], and ownership may be transferred only once.
 void ward_core_runtime_destroy(struct WardRuntime *runtime);
+
+// Acknowledges a published batch. Rejected or obsolete styles remain pending.
+//
+// # Safety
+// The document must be live and exclusively accessed on its owning thread.
+void ward_core_syntax_document_acknowledge(struct WardSyntaxDocument *document, uint64_t sequence, bool applied);
+
+// Reconfigures a document using serialized `DocumentConfiguration` and advances
+// its configuration counter, initially zero, by one.
+//
+// # Safety
+// The handle must be exclusively accessed on its owning thread. The input
+// range must be readable and the optional error output writable.
+bool ward_core_syntax_document_configure(struct WardSyntaxDocument *document,
+                                         const uint8_t *configuration,
+                                         size_t configuration_size,
+                                         struct WardError **output_error);
+
+// Creates a document mirror using a serialized `DocumentConfiguration`.
+// The document retains its immutable engine independently of the engine handle.
+//
+// # Safety
+// `engine` must be live. Nonempty input ranges must be readable. `source` must
+// be UTF-8. The optional error output must be writable. All document operations
+// including destruction must subsequently run on this same thread.
+struct WardSyntaxDocument *ward_core_syntax_document_create(const struct WardSyntaxHighlightingEngine *engine,
+                                                            const uint8_t *source,
+                                                            size_t source_size,
+                                                            const uint8_t *configuration,
+                                                            size_t configuration_size,
+                                                            struct WardError **output_error);
+
+// Destroys a document on its owning thread.
+//
+// # Safety
+// The handle must be null or live, with ownership transferred exactly once.
+// No other call may use the document concurrently.
+void ward_core_syntax_document_destroy(struct WardSyntaxDocument *document);
+
+// Applies an ordered serialized `DocumentEdit` to a document mirror.
+//
+// # Safety
+// `document` must be a live handle on its owning thread. The input range must
+// be readable and the optional error output writable. Calls must not overlap.
+bool ward_core_syntax_document_edit(struct WardSyntaxDocument *document,
+                                    const uint8_t *edit,
+                                    size_t edit_size,
+                                    struct WardError **output_error);
+
+// Parses a bounded batch and returns serialized `DocumentStyles`. Null without
+// an error means no further work. A returned batch must be acknowledged before
+// stepping again. The caller owns the returned buffer.
+//
+// # Safety
+// The handle must be exclusively accessed on its owning thread and the optional
+// error output must be writable. Budgets are positive counts of lines and bytes.
+struct WardOwnedBuffer *ward_core_syntax_document_step(struct WardSyntaxDocument *document,
+                                                       size_t line_budget,
+                                                       size_t byte_budget,
+                                                       struct WardError **output_error);
 
 // Highlights one complete source snapshot on the calling thread.
 //

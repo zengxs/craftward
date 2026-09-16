@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "scintillaeditorbackend.h"
+#include "scintillahighlighter_p.h"
 #include "scintillaquickadapter_p.h"
 
 #include <QClipboard>
@@ -33,8 +34,11 @@ class ScintillaEditorBackendPrivate
     explicit ScintillaEditorBackendPrivate(ScintillaEditorBackend* owner)
       : q(owner)
       , editor(owner)
+      , highlighter(owner, editor)
     {
         editor.notification = [this](const NotificationData& data) {
+            if (data.nmhdr.code == Notification::StyleNeeded)
+                highlighter.styleNeeded(data.position);
             if (!updatingText && data.nmhdr.code == Notification::Modified &&
                 (int(data.modificationType) & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT))) {
                 textDirty = true;
@@ -45,6 +49,21 @@ class ScintillaEditorBackendPrivate
             scheduleUpdate();
         };
         editor.scrollChanged = [this] { scheduleUpdate(); };
+        editor.documentChanged = [this] {
+            highlighter.resetFromEditor();
+            textDirty = pendingText = true;
+            scheduleUpdate();
+        };
+        editor.textModified = [this](qsizetype start, qsizetype deleted, QByteArray inserted) {
+            if (!updatingText)
+                highlighter.edit(start, deleted, std::move(inserted));
+        };
+        editor.compositionChanged = [this](bool composing) { highlighter.setComposing(composing); };
+        highlighter.metadataChanged = [this] { emit q->syntaxChanged(); };
+        highlighter.presentationChanged = [this] {
+            q->invalidateImage();
+            emit q->highlightingReadyChanged();
+        };
         editor.host.showMenu = [this](QPointF position, const QVariantList& entries) {
             emit q->contextMenuRequested(position, entries);
         };
@@ -87,6 +106,7 @@ class ScintillaEditorBackendPrivate
         editor.WndProc(Message::StyleSetFore, STYLE_DEFAULT, colorValue(foregroundColor));
         editor.WndProc(Message::StyleSetBack, STYLE_DEFAULT, colorValue(backgroundColor));
         editor.WndProc(Message::StyleClearAll);
+        highlighter.restoreStyles();
         editor.WndProc(Message::SetCaretFore, colorValue(foregroundColor));
         editor.WndProc(Message::SetExtraAscent, 0);
         editor.WndProc(Message::SetExtraDescent, 0);
@@ -140,14 +160,21 @@ class ScintillaEditorBackendPrivate
                                      SC_ELEMENT_SELECTION_SECONDARY_BACK,
                                      SC_ELEMENT_SELECTION_INACTIVE_BACK,
                                      SC_ELEMENT_SELECTION_INACTIVE_ADDITIONAL_BACK };
-        for (int element : textElements)
-            editor.WndProc(Message::SetElementColour, element, colorValue(selectionForegroundColor));
+        for (int element : textElements) {
+            if (selectionForegroundColor.isValid())
+                editor.WndProc(Message::SetElementColour, element, colorValue(selectionForegroundColor));
+            else
+                editor.WndProc(Message::ResetElementColour, element);
+        }
         for (int element : backElements)
             editor.WndProc(Message::SetElementColour, element, colorValue(selectionBackgroundColor));
         editor.WndProc(Message::SetSelectionLayer, SC_LAYER_BASE);
     }
     ScintillaEditorBackend* q;
     ScintillaQuickAdapter editor;
+    ScintillaHighlighter highlighter;
+    QString language, filePath;
+    bool darkTheme = false;
     mutable QString text;
     mutable bool textDirty = false;
     bool pendingText = false, updateQueued = false, updatingText = false;
@@ -160,7 +187,7 @@ class ScintillaEditorBackendPrivate
     int fontWeight = SC_WEIGHT_NORMAL;
     qreal lineHeightScale = 1;
     QColor foregroundColor = Qt::black, backgroundColor = Qt::white;
-    QColor selectionForegroundColor = Qt::white, selectionBackgroundColor = QColor(0, 122, 255);
+    QColor selectionForegroundColor, selectionBackgroundColor = QColor(220, 232, 250);
 };
 
 ScintillaEditorBackend::ScintillaEditorBackend(QQuickItem* parent)
@@ -215,9 +242,62 @@ ScintillaEditorBackend::setText(const QString& value)
     d->editor.WndProc(Message::SetReadOnly, d->readOnly);
     d->text = value;
     d->textDirty = d->pendingText = false;
+    d->highlighter.reset(bytes);
     d->updateLineNumberMargin();
     emit textChanged();
     d->scheduleUpdate();
+}
+QString
+ScintillaEditorBackend::language() const
+{
+    return d->language;
+}
+void
+ScintillaEditorBackend::setLanguage(const QString& language)
+{
+    if (d->language == language)
+        return;
+    d->language = language;
+    d->highlighter.configure(d->language, d->filePath, d->darkTheme);
+    emit languageChanged();
+}
+QString
+ScintillaEditorBackend::filePath() const
+{
+    return d->filePath;
+}
+void
+ScintillaEditorBackend::setFilePath(const QString& path)
+{
+    if (d->filePath == path)
+        return;
+    d->filePath = path;
+    d->highlighter.configure(d->language, d->filePath, d->darkTheme);
+    emit filePathChanged();
+}
+bool
+ScintillaEditorBackend::darkTheme() const
+{
+    return d->darkTheme;
+}
+void
+ScintillaEditorBackend::setDarkTheme(bool dark)
+{
+    if (d->darkTheme == dark)
+        return;
+    d->darkTheme = dark;
+    d->highlighter.configure(d->language, d->filePath, d->darkTheme);
+    emit darkThemeChanged();
+}
+QString
+ScintillaEditorBackend::syntaxName() const
+{
+    return d->highlighter.syntaxName;
+}
+bool
+ScintillaEditorBackend::languageRecognized() const
+{
+    return d->highlighter.languageRecognized;
 }
 void
 ScintillaEditorBackend::revealLocation(int startLine, int endLine)
@@ -431,13 +511,19 @@ ScintillaEditorBackend::selectionForegroundColor() const
 void
 ScintillaEditorBackend::setSelectionForegroundColor(const QColor& selectionForegroundColor)
 {
-    if (!selectionForegroundColor.isValid() || d->selectionForegroundColor == selectionForegroundColor) {
+    if (d->selectionForegroundColor == selectionForegroundColor) {
         return;
     }
 
     d->selectionForegroundColor = selectionForegroundColor;
     d->applySelectionStyle();
     emit selectionForegroundColorChanged();
+}
+
+void
+ScintillaEditorBackend::resetSelectionForegroundColor()
+{
+    setSelectionForegroundColor({});
 }
 
 QColor
@@ -491,6 +577,11 @@ void
 ScintillaEditorBackend::setHorizontalPosition(qreal value)
 {
     d->editor.setHorizontalPosition(value);
+}
+bool
+ScintillaEditorBackend::highlightingReady() const
+{
+    return d->highlighter.presentationReady();
 }
 bool
 ScintillaEditorBackend::canUndo() const
@@ -560,12 +651,17 @@ ScintillaEditorBackend::updatePolish()
     // Include tentative IME lines and expand the dirty region before the image is repainted.
     d->updateLineNumberMargin();
     d->editor.updateHorizontalExtent();
+    d->highlighter.updatePresentation();
     ScintillaImageItem::updatePolish();
 }
 
 bool
 ScintillaEditorBackend::paintImage(QPainter& painter, const QRect& rect)
 {
+    if (!highlightingReady()) {
+        painter.fillRect(rect, d->backgroundColor);
+        return true;
+    }
     return d->editor.paint(painter, rect);
 }
 void

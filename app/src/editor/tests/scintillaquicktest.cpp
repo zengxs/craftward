@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "Scintilla.h"
+#include "highlighting/syntaxhighlightingdocument.h"
+#include "highlighting/syntaxhighlightingengine.h"
 #include "scintillaeditorbackend.h"
 
 #include <QClipboard>
@@ -13,10 +15,12 @@
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QMimeData>
+#include <QPainter>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QScopedValueRollback>
 #include <QSignalSpy>
 #include <QTest>
@@ -35,6 +39,23 @@ class ScintillaQuickTest : public QObject
     Q_OBJECT
   private slots:
     void initTestCase();
+    void syntaxHighlightingLifecycle();
+    void syntaxHighlightingDuringComposition();
+    void syntaxHighlightingAfterRapidReplacement();
+    void syntaxHighlightingRendersAndReplacesDocuments();
+    void syntaxHighlightingRejectsSharedDocuments();
+    void syntaxHighlightingTransfersDetachedDocuments_data();
+    void syntaxHighlightingTransfersDetachedDocuments();
+    void documentSelfAttachmentIsNoOp();
+    void syntaxHighlightingRecoversAfterAnObsoleteError();
+    void syntaxHighlightingRecoversWithPendingConfiguration_data();
+    void syntaxHighlightingRecoversWithPendingConfiguration();
+    void selectionPreservesSyntaxColors_data();
+    void selectionPreservesSyntaxColors();
+    void selectionForegroundOverrideCanBeReset();
+    void initialTextWaitsForVisibleStyles_data();
+    void initialTextWaitsForVisibleStyles();
+    void initialPresentationRecoversAfterReplacementAndFailure();
     void textAndReadOnly();
     void readOnlyPreservesViewport();
     void editingAndUndo();
@@ -109,6 +130,16 @@ class PaintedEditor : public ScintillaEditorBackend
   public:
     using ScintillaEditorBackend::ScintillaEditorBackend;
     QList<QRect> painted;
+    QImage renderImage()
+    {
+        QImage image(QSize(qCeil(width()), qCeil(height())), QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::TextAntialiasing);
+        if (!paintImage(painter, image.rect()))
+            paintImage(painter, image.rect());
+        return image;
+    }
     bool paintImage(QPainter& painter, const QRect& rect) override
     {
         painted.append(rect);
@@ -123,12 +154,510 @@ class TestInputContext : public QPlatformInputContext
     void commit() override { onCommit(); }
     void reset() override { onReset(); }
 };
+class BeforeQueuedCall : public QObject
+{
+  public:
+    std::function<void()> callback;
+
+  protected:
+    bool eventFilter(QObject*, QEvent* event) override
+    {
+        if (event->type() == QEvent::MetaCall && callback)
+            std::exchange(callback, {})();
+        return false;
+    }
+};
 }
 
 void
 ScintillaQuickTest::initTestCase()
 {
     qmlRegisterType<ScintillaEditorBackend>("Craftward.TestEditor", 1, 0, "Editor");
+}
+
+namespace {
+qintptr
+syntaxColor(ScintillaEditorBackend& editor, qsizetype position)
+{
+    return editor.sendMessage(SCI_STYLEGETFORE, editor.sendMessage(SCI_GETSTYLEINDEXAT, position));
+}
+qintptr
+expectedSyntaxColor(const QByteArray& text, const QByteArray& language, bool dark, qsizetype position)
+{
+    using namespace craftward::highlighting;
+    const auto result =
+      SyntaxHighlightingEngine::shared()->highlight(text, language, dark ? Theme::Dark : Theme::Light);
+    for (const auto& span : result.spans) {
+        if (span.utf8Start <= position && span.utf8End > position)
+            return span.style.foreground.red() | (span.style.foreground.green() << 8) |
+                   (span.style.foreground.blue() << 16);
+    }
+    return -1;
+}
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingLifecycle()
+{
+    ScintillaEditorBackend editor;
+    const QByteArray source("let value = 42;\n");
+    editor.setText(QString::fromUtf8(source));
+    editor.setLanguage(QStringLiteral("rust"));
+    const auto keyword = expectedSyntaxColor(source, "rust", false, 0);
+    QTRY_COMPARE(editor.syntaxName(), QStringLiteral("Rust"));
+    QTRY_COMPARE(syntaxColor(editor, 0), keyword);
+    QVERIFY(editor.languageRecognized());
+    QVERIFY(!editor.canUndo());
+    QVERIFY(!editor.sendMessage(SCI_GETMODIFY));
+    editor.setFontPointSize(18);
+    QCOMPARE(syntaxColor(editor, 0), keyword);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, 0);
+    key(editor, Qt::Key_Slash, QStringLiteral("// "));
+    const auto comment = expectedSyntaxColor("// " + source, "rust", false, 3);
+    QTRY_COMPARE(syntaxColor(editor, 3), comment);
+    editor.undo();
+    QTRY_COMPARE(syntaxColor(editor, 0), keyword);
+    QCOMPARE(editor.text().toUtf8(), source);
+    QVERIFY(!editor.canUndo());
+    editor.setDarkTheme(true);
+    QTRY_COMPARE(syntaxColor(editor, 0), expectedSyntaxColor(source, "rust", true, 0));
+    editor.setLanguage(QStringLiteral("text"));
+    QTRY_COMPARE(editor.sendMessage(SCI_GETSTYLEINDEXAT, 0), 0);
+    QTRY_COMPARE(editor.syntaxName(), QStringLiteral("Plain Text"));
+    editor.setLanguage({});
+    editor.setFilePath(QStringLiteral("/project/core/Cargo.lock"));
+    editor.setText(QStringLiteral("version = 4\n"));
+    QTRY_COMPARE(editor.syntaxName(), QStringLiteral("TOML"));
+    QTRY_COMPARE(syntaxColor(editor, 10), expectedSyntaxColor("version = 4\n", "toml", true, 10));
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingDuringComposition()
+{
+    ScintillaEditorBackend editor;
+    editor.setLanguage(QStringLiteral("rust"));
+    editor.setText(QStringLiteral("let value = 1;\n"));
+    const auto keyword = expectedSyntaxColor("let value = 1;\n", "rust", false, 0);
+    QTRY_COMPARE(syntaxColor(editor, 0), keyword);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, 0);
+    compose(editor, QString::fromUtf8("中文😀"));
+    editor.setDarkTheme(true);
+    QTest::qWait(20);
+    QCOMPARE(editor.text(), QStringLiteral("let value = 1;\n"));
+    compose(editor, {});
+    QTRY_COMPARE(syntaxColor(editor, 0), expectedSyntaxColor("let value = 1;\n", "rust", true, 0));
+    QVERIFY(!editor.canUndo());
+    compose(editor, QString::fromUtf8("候选"));
+    compose(editor, {}, QStringLiteral("// "));
+    QTRY_COMPARE(syntaxColor(editor, 3), expectedSyntaxColor("// let value = 1;\n", "rust", true, 3));
+    editor.undo();
+    QTRY_COMPARE(syntaxColor(editor, 0), expectedSyntaxColor("let value = 1;\n", "rust", true, 0));
+    QCOMPARE(editor.text(), QStringLiteral("let value = 1;\n"));
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingAfterRapidReplacement()
+{
+    ScintillaEditorBackend editor;
+    for (int i = 0; i < 15; ++i) {
+        editor.setLanguage(QStringLiteral("cpp"));
+        editor.setText(QStringLiteral("/* unterminated\n").repeated(1000));
+        editor.setLanguage(QStringLiteral("rust"));
+        editor.setText(QStringLiteral("let value = 42;\n"));
+    }
+    QTRY_COMPARE(editor.syntaxName(), QStringLiteral("Rust"));
+    QTRY_COMPARE(syntaxColor(editor, 0), expectedSyntaxColor("let value = 42;\n", "rust", false, 0));
+    QCOMPARE(editor.text(), QStringLiteral("let value = 42;\n"));
+    editor.setLanguage(QStringLiteral("unknown-language"));
+    QTRY_COMPARE(editor.syntaxName(), QStringLiteral("Plain Text"));
+    QTRY_COMPARE(editor.sendMessage(SCI_GETSTYLEINDEXAT, 0), 0);
+    QVERIFY(!editor.languageRecognized());
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingRendersAndReplacesDocuments()
+{
+    QQuickWindow window;
+    window.resize(640, 220);
+    ScintillaEditorBackend editor(window.contentItem());
+    editor.setSize(QSizeF(640, 220));
+    editor.setShowLineNumbers(true);
+    editor.setLanguage(QStringLiteral("rust"));
+    editor.setText(QStringLiteral("fn main() {\n    let greeting = \"Hello, 世界\";\n    // Syntax highlighting in Qt "
+                                  "Quick\n    println!(\"{}\", greeting);\n}\n"));
+    const auto keyword = expectedSyntaxColor("fn main() {}", "rust", false, 0);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_COMPARE(syntaxColor(editor, 0), keyword);
+    const auto hasKeywordPixel = [&](const QImage& image) {
+        const QColor target(keyword & 255, (keyword >> 8) & 255, (keyword >> 16) & 255);
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                if (image.pixelColor(x, y) == target)
+                    return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY(hasKeywordPixel(window.grabWindow()));
+    const QString output = qEnvironmentVariable("CRAFTWARD_EDITOR_TEST_IMAGE");
+    if (!output.isEmpty())
+        QVERIFY(window.grabWindow().save(output));
+    const auto replacement = editor.sendMessage(SCI_CREATEDOCUMENT);
+    editor.sendMessage(SCI_SETDOCPOINTER, 0, replacement);
+    editor.sendMessage(SCI_RELEASEDOCUMENT, 0, replacement);
+    editor.sendMessage(SCI_ADDTEXT, 11, reinterpret_cast<qintptr>("let x = 1;\n"));
+    QTRY_COMPARE(syntaxColor(editor, 0), expectedSyntaxColor("let x = 1;\n", "rust", false, 0));
+    QCOMPARE(editor.text(), QStringLiteral("let x = 1;\n"));
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingRejectsSharedDocuments()
+{
+    ScintillaEditorBackend first;
+    ScintillaEditorBackend second;
+    const QString firstText = QStringLiteral("let value = 42;\n");
+    const QString secondText = QStringLiteral("// comment\nlet value = 42;\n");
+    for (auto* editor : { &first, &second }) {
+        editor->setSize(QSizeF(480, 160));
+        editor->setLanguage(QStringLiteral("rust"));
+    }
+    first.setText(firstText);
+    second.setText(secondText);
+    QTRY_VERIFY(first.highlightingReady() && second.highlightingReady());
+    const auto keyword = expectedSyntaxColor(firstText.toUtf8(), "rust", false, 0);
+    QCOMPARE(syntaxColor(first, 0), keyword);
+    QCOMPARE(syntaxColor(second, 11), keyword);
+    const auto firstDocument = first.sendMessage(SCI_GETDOCPOINTER);
+    const auto secondDocument = second.sendMessage(SCI_GETDOCPOINTER);
+    second.sendMessage(SCI_SETSEL, 3, 8);
+    QSignalSpy textChanges(&second, &ScintillaEditorBackend::textChanged);
+    QSignalSpy readyChanges(&second, &ScintillaEditorBackend::highlightingReadyChanged);
+
+    second.sendMessage(SCI_SETDOCPOINTER, 0, firstDocument);
+    QCOMPARE(second.sendMessage(SCI_GETSTATUS), SC_STATUS_FAILURE);
+    QCOMPARE(second.sendMessage(SCI_GETDOCPOINTER), secondDocument);
+    QCOMPARE(first.sendMessage(SCI_GETDOCPOINTER), firstDocument);
+    QCOMPARE(second.text(), secondText);
+    QCOMPARE(second.sendMessage(SCI_GETANCHOR), 3);
+    QCOMPARE(second.sendMessage(SCI_GETCURRENTPOS), 8);
+    QVERIFY(first.highlightingReady() && second.highlightingReady());
+    QTest::qWait(20);
+    QCOMPARE(textChanges.count(), 0);
+    QCOMPARE(readyChanges.count(), 0);
+    QCOMPARE(syntaxColor(first, 0), keyword);
+    QCOMPARE(syntaxColor(second, 11), keyword);
+
+    first.sendMessage(SCI_INSERTTEXT, 0, reinterpret_cast<qintptr>("// "));
+    QTRY_COMPARE(syntaxColor(first, 3), expectedSyntaxColor("// let value = 42;\n", "rust", false, 3));
+    QCOMPARE(second.text(), secondText);
+    QCOMPARE(syntaxColor(second, 11), keyword);
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingTransfersDetachedDocuments_data()
+{
+    QTest::addColumn<bool>("destroyOwner");
+    QTest::newRow("detach") << false;
+    QTest::newRow("destroy") << true;
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingTransfersDetachedDocuments()
+{
+    QFETCH(bool, destroyOwner);
+    ScintillaEditorBackend receiver;
+    auto owner = std::make_unique<ScintillaEditorBackend>();
+    const QString source = QStringLiteral("let value = 42;\n");
+    owner->setLanguage(QStringLiteral("rust"));
+    owner->setText(source);
+    receiver.setLanguage(QStringLiteral("rust"));
+    receiver.setText(QStringLiteral("// comment\n") + source);
+    QTRY_VERIFY(owner->highlightingReady() && receiver.highlightingReady());
+    const auto document = owner->sendMessage(SCI_GETDOCPOINTER);
+    owner->sendMessage(SCI_ADDREFDOCUMENT, 0, document);
+    const auto releaseDocument = qScopeGuard([&] { receiver.sendMessage(SCI_RELEASEDOCUMENT, 0, document); });
+    if (destroyOwner)
+        owner.reset();
+    else {
+        owner->sendMessage(SCI_SETDOCPOINTER);
+        QCOMPARE(owner->text(), QString());
+    }
+
+    receiver.sendMessage(SCI_SETDOCPOINTER, 0, document);
+    QCOMPARE(receiver.sendMessage(SCI_GETSTATUS), SC_STATUS_OK);
+    QCOMPARE(receiver.sendMessage(SCI_GETDOCPOINTER), document);
+    QCOMPARE(receiver.text(), source);
+    QTRY_VERIFY(receiver.highlightingReady());
+    QCOMPARE(syntaxColor(receiver, 0), expectedSyntaxColor(source.toUtf8(), "rust", false, 0));
+    receiver.sendMessage(SCI_INSERTTEXT, 0, reinterpret_cast<qintptr>("// "));
+    QTRY_COMPARE(syntaxColor(receiver, 3), expectedSyntaxColor("// let value = 42;\n", "rust", false, 3));
+    if (owner)
+        QCOMPARE(owner->text(), QString());
+}
+
+void
+ScintillaQuickTest::documentSelfAttachmentIsNoOp()
+{
+    ScintillaEditorBackend editor;
+    editor.setLanguage(QStringLiteral("rust"));
+    editor.setText(QStringLiteral("let value = 42;\n"));
+    QTRY_VERIFY(editor.highlightingReady());
+    editor.sendMessage(SCI_INSERTTEXT, 0, reinterpret_cast<qintptr>("// "));
+    QTRY_COMPARE(syntaxColor(editor, 3), expectedSyntaxColor("// let value = 42;\n", "rust", false, 3));
+    editor.sendMessage(SCI_SETSEL, 3, 8);
+    const auto document = editor.sendMessage(SCI_GETDOCPOINTER);
+    QSignalSpy readyChanges(&editor, &ScintillaEditorBackend::highlightingReadyChanged);
+    editor.sendMessage(SCI_SETDOCPOINTER, 0, document);
+    QCOMPARE(editor.sendMessage(SCI_GETSTATUS), SC_STATUS_OK);
+    QCOMPARE(editor.sendMessage(SCI_GETDOCPOINTER), document);
+    QCOMPARE(editor.text(), QStringLiteral("// let value = 42;\n"));
+    QCOMPARE(editor.sendMessage(SCI_GETANCHOR), 3);
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), 8);
+    QVERIFY(editor.highlightingReady());
+    QCOMPARE(readyChanges.count(), 0);
+    QVERIFY(editor.canUndo());
+    editor.undo();
+    QTRY_COMPARE(syntaxColor(editor, 0), expectedSyntaxColor("let value = 42;\n", "rust", false, 0));
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingRecoversAfterAnObsoleteError()
+{
+    ScintillaEditorBackend editor;
+    editor.setLanguage(QStringLiteral("rust"));
+    editor.setText(QStringLiteral("let x = 1;\n"));
+    QTRY_COMPARE(syntaxColor(editor, 0), expectedSyntaxColor("let x = 1;\n", "rust", false, 0));
+    const char invalid[] = { char(0xff), 0 };
+    editor.sendMessage(SCI_INSERTTEXT, 0, reinterpret_cast<qintptr>(invalid));
+    editor.sendMessage(SCI_DELETERANGE, 0, 1);
+    editor.sendMessage(SCI_INSERTTEXT, 0, reinterpret_cast<qintptr>("// "));
+    QTRY_COMPARE(syntaxColor(editor, 3), expectedSyntaxColor("// let x = 1;\n", "rust", false, 3));
+    QCOMPARE(editor.text(), QStringLiteral("// let x = 1;\n"));
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingRecoversWithPendingConfiguration_data()
+{
+    QTest::addColumn<QString>("change");
+    QTest::newRow("theme") << QStringLiteral("theme");
+    QTest::newRow("path") << QStringLiteral("path");
+    QTest::newRow("language") << QStringLiteral("language");
+    QTest::newRow("replacement") << QStringLiteral("replacement");
+}
+
+void
+ScintillaQuickTest::syntaxHighlightingRecoversWithPendingConfiguration()
+{
+    QFETCH(QString, change);
+    ScintillaEditorBackend editor;
+    editor.setSize(QSizeF(480, 160));
+    editor.setLanguage(QStringLiteral("rust"));
+    editor.setFilePath(QStringLiteral("main.rs"));
+    editor.setText(QStringLiteral("let value = 42;\n"));
+    QTRY_COMPARE(syntaxColor(editor, 0), expectedSyntaxColor("let value = 42;\n", "rust", false, 0));
+    auto* document = editor.findChild<craftward::highlighting::SyntaxHighlightingDocument*>();
+    QVERIFY(document);
+    QSignalSpy failures(document, &craftward::highlighting::SyntaxHighlightingDocument::failed);
+    BeforeQueuedCall beforeFailure;
+    beforeFailure.callback = [&] {
+        if (change == QStringLiteral("theme"))
+            editor.setDarkTheme(true);
+        else if (change == QStringLiteral("path"))
+            editor.setFilePath(QStringLiteral("renamed.rs"));
+        else if (change == QStringLiteral("language"))
+            editor.setLanguage(QStringLiteral("cpp"));
+        else
+            editor.setText(QStringLiteral("let replacement = 42;\n"));
+    };
+    // Queue the change immediately before delivery of the real worker failure,
+    // without letting the coalescing timer dispatch it first.
+    document->installEventFilter(&beforeFailure);
+    const char invalid[] = { char(0xff), 0 };
+    editor.sendMessage(SCI_INSERTTEXT, 0, reinterpret_cast<qintptr>(invalid));
+    QTRY_VERIFY(!failures.isEmpty());
+    QVERIFY(!beforeFailure.callback);
+    if (change == QStringLiteral("replacement")) {
+        QTRY_VERIFY(editor.highlightingReady());
+        QCOMPARE(editor.syntaxName(), QStringLiteral("Rust"));
+        QCOMPARE(editor.text(), QStringLiteral("let replacement = 42;\n"));
+        QCOMPARE(syntaxColor(editor, 0), expectedSyntaxColor(editor.text().toUtf8(), "rust", false, 0));
+        return;
+    }
+    QTRY_COMPARE(editor.syntaxName(), QStringLiteral("Plain Text"));
+    QTRY_VERIFY(editor.highlightingReady());
+    QCOMPARE(editor.sendMessage(SCI_GETSTYLEINDEXAT, 1), 0);
+    editor.sendMessage(SCI_DELETERANGE, 0, 1);
+    editor.sendMessage(SCI_INSERTTEXT, 0, reinterpret_cast<qintptr>("// "));
+    const QByteArray language = change == QStringLiteral("language") ? "cpp" : "rust";
+    QTRY_VERIFY(editor.highlightingReady());
+    QTRY_COMPARE(editor.syntaxName(), language == "cpp" ? QStringLiteral("C++") : QStringLiteral("Rust"));
+    QTRY_COMPARE(syntaxColor(editor, 3),
+                 expectedSyntaxColor("// let value = 42;\n", language, change == QStringLiteral("theme"), 3));
+    QCOMPARE(editor.text(), QStringLiteral("// let value = 42;\n"));
+}
+
+void
+ScintillaQuickTest::selectionPreservesSyntaxColors_data()
+{
+    QTest::addColumn<bool>("dark");
+    QTest::addColumn<bool>("focused");
+    QTest::addColumn<bool>("additional");
+    for (bool dark : { false, true })
+        for (bool focused : { false, true })
+            for (bool additional : { false, true })
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2-%3").arg(dark).arg(focused).arg(additional)))
+                  << dark << focused << additional;
+}
+
+void
+ScintillaQuickTest::selectionPreservesSyntaxColors()
+{
+    QFETCH(bool, dark);
+    QFETCH(bool, focused);
+    QFETCH(bool, additional);
+    QQuickWindow window;
+    window.resize(480, 100);
+    ScintillaEditorBackend editor(window.contentItem());
+    editor.setSize(QSizeF(480, 100));
+    editor.setFontPointSize(20);
+    editor.setBackgroundColor(dark ? QColor("#282c34") : QColor("#fafafa"));
+    editor.setForegroundColor(dark ? QColor("#abb2bf") : QColor("#383a42"));
+    editor.setSelectionBackgroundColor(dark ? QColor("#35455e") : QColor("#dce8fa"));
+    editor.setDarkTheme(dark);
+    editor.setLanguage(QStringLiteral("rust"));
+    editor.setText(QStringLiteral("let value = 42;\n"));
+    const auto keyword = expectedSyntaxColor("let value = 42;\n", "rust", dark, 0);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_COMPARE(syntaxColor(editor, 0), keyword);
+    if (additional) {
+        editor.sendMessage(SCI_SETMULTIPLESELECTION, 1);
+        editor.sendMessage(SCI_SETSEL, 12, 14);
+        editor.sendMessage(SCI_ADDSELECTION, 3, 0);
+        editor.sendMessage(SCI_SETMAINSELECTION, 0);
+    } else {
+        editor.sendMessage(SCI_SETSEL, 0, 3);
+    }
+    editor.sendMessage(SCI_SETFOCUS, focused);
+    const QColor target(keyword & 255, (keyword >> 8) & 255, (keyword >> 16) & 255);
+    const auto rendersKeyword = [&] {
+        const QImage image = window.grabWindow();
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (image.pixelColor(x, y) == target)
+                    return true;
+        return false;
+    };
+    QTRY_VERIFY(rendersKeyword());
+    const QString output = qEnvironmentVariable("CRAFTWARD_EDITOR_TEST_IMAGE");
+    if (!output.isEmpty())
+        QVERIFY(window.grabWindow().save(output));
+}
+
+void
+ScintillaQuickTest::selectionForegroundOverrideCanBeReset()
+{
+    ScintillaEditorBackend editor;
+    const int elements[] = { SC_ELEMENT_SELECTION_TEXT,
+                             SC_ELEMENT_SELECTION_ADDITIONAL_TEXT,
+                             SC_ELEMENT_SELECTION_SECONDARY_TEXT,
+                             SC_ELEMENT_SELECTION_INACTIVE_TEXT,
+                             SC_ELEMENT_SELECTION_INACTIVE_ADDITIONAL_TEXT };
+    editor.setSelectionForegroundColor(QColor(Qt::red));
+    for (int element : elements)
+        QVERIFY(editor.sendMessage(SCI_GETELEMENTISSET, element));
+    editor.resetSelectionForegroundColor();
+    editor.setSelectionBackgroundColor(QColor(Qt::blue));
+    editor.setDarkTheme(true);
+    for (int element : elements)
+        QVERIFY(!editor.sendMessage(SCI_GETELEMENTISSET, element));
+}
+
+void
+ScintillaQuickTest::initialTextWaitsForVisibleStyles_data()
+{
+    QTest::addColumn<bool>("wrapped");
+    QTest::addColumn<int>("startLine");
+    QTest::newRow("top") << false << 0;
+    QTest::newRow("requested-line") << false << 400;
+    QTest::newRow("wrapped") << true << 0;
+    QTest::newRow("wrapped-requested-line") << true << 400;
+}
+
+void
+ScintillaQuickTest::initialTextWaitsForVisibleStyles()
+{
+    QFETCH(bool, wrapped);
+    QFETCH(int, startLine);
+    QQuickWindow window;
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(480, 160));
+    editor.setWordWrap(wrapped);
+    editor.setLanguage(QStringLiteral("rust"));
+    editor.setText(QStringLiteral("// An italic comment that wraps around a narrow editor viewport\nlet value = 42;\n")
+                     .repeated(5000));
+    editor.revealLocation(startLine);
+    QVERIFY(!editor.highlightingReady());
+    bool presented = false;
+    qintptr tailStyleAtPresentation = -1;
+    qintptr visibleStyleAtPresentation = -1;
+    connect(&editor, &ScintillaEditorBackend::highlightingReadyChanged, &editor, [&] {
+        if (editor.highlightingReady()) {
+            presented = true;
+            tailStyleAtPresentation = editor.sendMessage(SCI_GETSTYLEINDEXAT, editor.sendMessage(SCI_GETLENGTH) - 2);
+            const auto position = editor.sendMessage(SCI_POSITIONFROMPOINT, 470, 150);
+            visibleStyleAtPresentation = editor.sendMessage(SCI_GETSTYLEINDEXAT, position);
+        }
+    });
+    const QImage initial = editor.renderImage();
+    for (int y = 0; y < initial.height(); ++y)
+        for (int x = 0; x < initial.width(); ++x)
+            QCOMPARE(initial.pixelColor(x, y), editor.backgroundColor());
+    QTRY_VERIFY(presented);
+    QCOMPARE(tailStyleAtPresentation, 0);
+    QVERIFY(visibleStyleAtPresentation > 0);
+    const auto commentStyle = editor.sendMessage(SCI_GETSTYLEINDEXAT, 0);
+    QVERIFY(editor.sendMessage(SCI_STYLEGETITALIC, commentStyle));
+    const QImage shown = editor.renderImage();
+    QVERIFY(shown != initial);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, 0);
+    key(editor, Qt::Key_Space, QStringLiteral(" "));
+    QVERIFY(editor.highlightingReady());
+}
+
+void
+ScintillaQuickTest::initialPresentationRecoversAfterReplacementAndFailure()
+{
+    QQuickWindow window;
+    ScintillaEditorBackend editor(window.contentItem());
+    editor.setSize(QSizeF(480, 160));
+    for (int i = 0; i < 5; ++i) {
+        editor.setFilePath(QStringLiteral("/project/main.cpp"));
+        editor.setText(QStringLiteral("/* unfinished\n").repeated(1000));
+        editor.setFilePath(QStringLiteral("/project/main.qml"));
+        editor.setText(QStringLiteral("Item {\n    focusPolicy: Qt.StrongFocus\n}\n"));
+    }
+    QVERIFY(!editor.highlightingReady());
+    QTRY_VERIFY(editor.highlightingReady());
+    QCOMPARE(editor.syntaxName(), QStringLiteral("QML"));
+    QVERIFY(editor.languageRecognized());
+    editor.setText({});
+    QVERIFY(editor.highlightingReady());
+    editor.setLanguage(QStringLiteral("unknown-language"));
+    editor.setText(QStringLiteral("unrecognized input"));
+    QTRY_VERIFY(editor.highlightingReady());
+    QCOMPARE(editor.syntaxName(), QStringLiteral("Plain Text"));
+    editor.setLanguage(QStringLiteral("rust"));
+    editor.setText(QStringLiteral("let value = 1;\n"));
+    const char invalid[] = { char(0xff), 0 };
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("Syntax highlighting:.*")));
+    editor.sendMessage(SCI_INSERTTEXT, 0, reinterpret_cast<qintptr>(invalid));
+    QTRY_VERIFY(editor.highlightingReady());
+    QCOMPARE(editor.syntaxName(), QStringLiteral("Plain Text"));
+    editor.setText(QStringLiteral("let recovered = 42;\n"));
+    QTRY_VERIFY(editor.highlightingReady());
+    QCOMPARE(editor.syntaxName(), QStringLiteral("Rust"));
 }
 
 void

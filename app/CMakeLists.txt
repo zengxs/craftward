@@ -85,12 +85,16 @@ if(NOT EXISTS "${CRAFTWARD_LEGAL_QRC}")
 endif()
 
 add_library(Ward::Core STATIC IMPORTED GLOBAL)
+set(CRAFTWARD_WARD_CORE_LIBRARY
+    "${CMAKE_CURRENT_SOURCE_DIR}/../core/dist/${CMAKE_BUILD_TYPE}/libward_core.a"
+    CACHE FILEPATH "Ward Core static library for the selected architecture"
+)
 set(CRAFTWARD_WARD_CORE_INCLUDE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../core/ward-core/include"
 )
 set_target_properties(Ward::Core PROPERTIES
     IMPORTED_LOCATION
-        "${CMAKE_CURRENT_SOURCE_DIR}/../core/dist/${CMAKE_BUILD_TYPE}/libward_core.a"
+        "${CRAFTWARD_WARD_CORE_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES
         "${CRAFTWARD_WARD_CORE_INCLUDE_DIR}"
 )

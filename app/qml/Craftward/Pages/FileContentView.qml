@@ -31,6 +31,7 @@ Pane {
         readOnly: false
         showLineNumbers: true
         text: root.details.text
+        filePath: root.details.path
         function reveal() {
             Qt.callLater(() => revealLocation(root.details.startLine || 0, root.details.endLine || 0));
         }

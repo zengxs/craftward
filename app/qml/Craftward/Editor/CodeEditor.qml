@@ -1,11 +1,18 @@
 import QtQuick
 import QtQuick.Controls
 import Craftward.Components
+import Craftward.Design
 
 Control {
     id: root
 
     property alias text: backend.text
+    property alias language: backend.language
+    property alias filePath: backend.filePath
+    property bool darkTheme: Theme.dark
+    readonly property alias syntaxName: backend.syntaxName
+    readonly property alias languageRecognized: backend.languageRecognized
+    readonly property alias highlightingReady: backend.highlightingReady
     property alias readOnly: backend.readOnly
     property alias wordWrap: backend.wordWrap
     property alias showLineNumbers: backend.showLineNumbers
@@ -49,10 +56,18 @@ Control {
             backend.forceActiveFocus();
     }
 
+    onHighlightingReadyChanged: {
+        loadingDelay.elapsed = false;
+        if (highlightingReady && activeFocus)
+            backend.forceActiveFocus();
+    }
+
     contentItem: ScintillaEditorBackend {
         id: backend
 
         activeFocusOnTab: true
+        enabled: root.highlightingReady
+        darkTheme: root.darkTheme
         fontFamily: root.font.family
         fontPointSize: root.font.pointSize > 0 ? root.font.pointSize : 13
         fontWeight: root.font.weight
@@ -60,13 +75,26 @@ Control {
         foregroundColor: root.palette.text
         backgroundColor: root.palette.base
         lineNumberColor: root.lineNumberColor
-        selectionForegroundColor: root.palette.text
-        selectionBackgroundColor: root.palette.highlight
+        selectionBackgroundColor: Qt.tint(root.palette.base, Qt.rgba(root.palette.highlight.r, root.palette.highlight.g, root.palette.highlight.b, root.darkTheme ? 0.30 : 0.18))
 
         onContextMenuRequested: function (position, entries) {
             const point = backend.mapToItem(root, position.x, position.y);
             editorMenu.popup(point.x, point.y);
         }
+    }
+
+    Timer {
+        id: loadingDelay
+        property bool elapsed: false
+        interval: 150
+        running: !root.highlightingReady
+        onTriggered: elapsed = true
+    }
+
+    BusyIndicator {
+        anchors.centerIn: parent
+        visible: !root.highlightingReady && loadingDelay.elapsed
+        running: visible
     }
 
     HoverHandler {

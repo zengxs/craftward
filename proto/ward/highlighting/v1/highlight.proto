@@ -36,3 +36,32 @@ message HighlightedCode {
   // True when the supplied language token matched a maintained syntax.
   bool language_recognized = 3;
 }
+
+// Configuration for one worker-affine editor document.
+message DocumentConfiguration {
+  string language = 1;
+  string file_name = 2;
+  bool dark_theme = 3;
+}
+
+// An ordered change using byte positions in the previous text revision.
+message DocumentEdit {
+  uint64 from_revision = 1;
+  uint64 start = 2;
+  uint64 deleted = 3;
+  bytes inserted = 4;
+}
+
+// A replacement range. Unspecified bytes inside the range use the default
+// style.
+message DocumentStyles {
+  uint64 revision = 1;
+  uint64 configuration = 2;
+  uint64 sequence = 3;
+  uint64 start = 4;
+  uint64 end = 5;
+  repeated Span spans = 6;
+  string syntax_name = 7;
+  bool language_recognized = 8;
+  bool complete = 9;
+}

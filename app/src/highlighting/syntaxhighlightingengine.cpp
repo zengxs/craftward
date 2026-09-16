@@ -4,6 +4,7 @@
 #include "highlighting/syntaxhighlightingengine.h"
 
 #include "highlight.qpb.h"
+#include "syntaxhighlightingwire_p.h"
 #include "ward/coreffierror.h"
 
 #include <ward_core.h>
@@ -30,15 +31,6 @@ struct WardOwnedBufferDeleter
 
 using OwnedSyntaxEngine = std::unique_ptr<WardSyntaxHighlightingEngine, SyntaxEngineDeleter>;
 using OwnedWardBuffer = std::unique_ptr<WardOwnedBuffer, WardOwnedBufferDeleter>;
-
-QColor
-colorFromWire(const ward::highlighting::v1::Color& color)
-{
-    return QColor::fromRgb(static_cast<int>(color.red()),
-                           static_cast<int>(color.green()),
-                           static_cast<int>(color.blue()),
-                           static_cast<int>(color.alpha()));
-}
 
 WardSyntaxHighlightingTheme
 themeToWire(craftward::highlighting::Theme theme)
@@ -68,6 +60,24 @@ SyntaxHighlightingEngine::SyntaxHighlightingEngine()
 }
 
 SyntaxHighlightingEngine::~SyntaxHighlightingEngine() = default;
+
+WardSyntaxDocument*
+SyntaxHighlightingEngine::createDocument(QByteArrayView source, QByteArrayView configuration, QString& error) const
+{
+    if (!d->engine) {
+        error = d->errorMessage;
+        return nullptr;
+    }
+    WardError* rawError = nullptr;
+    auto* document = ward_core_syntax_document_create(d->engine.get(),
+                                                      reinterpret_cast<const std::uint8_t*>(source.data()),
+                                                      source.size(),
+                                                      reinterpret_cast<const std::uint8_t*>(configuration.data()),
+                                                      configuration.size(),
+                                                      &rawError);
+    error = ward::coreffi::takeErrorMessage(rawError);
+    return document;
+}
 
 std::shared_ptr<const SyntaxHighlightingEngine>
 SyntaxHighlightingEngine::shared()
@@ -123,18 +133,10 @@ SyntaxHighlightingEngine::highlight(QByteArrayView source, QByteArrayView langua
             span.utf8End() > static_cast<quint64>(std::numeric_limits<qsizetype>::max())) {
             return Result{ .errorMessage = QStringLiteral("Ward Core returned an invalid highlighting span.") };
         }
-        const auto& style = span.style();
         result.spans.append(Span{
           .utf8Start = static_cast<qsizetype>(span.utf8Start()),
           .utf8End = static_cast<qsizetype>(span.utf8End()),
-          .style =
-            Style{
-              .foreground = colorFromWire(style.foreground()),
-              .background = colorFromWire(style.background()),
-              .bold = style.bold(),
-              .italic = style.italic(),
-              .underline = style.underline(),
-            },
+          .style = styleFromWire(span.style()),
         });
     }
     return result;

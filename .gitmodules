@@ -56,3 +56,6 @@
 [submodule "app/third_party/reflection-cpp"]
 	path = app/third_party/reflection-cpp
 	url = https://github.com/contour-terminal/reflection-cpp.git
+[submodule "core/third_party/syntect"]
+	path = core/third_party/syntect
+	url = https://github.com/craftward/syntect.git

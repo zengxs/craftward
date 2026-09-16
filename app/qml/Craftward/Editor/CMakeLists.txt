@@ -4,6 +4,8 @@ qt_add_qml_module(CraftwardEditor
     SOURCES
         "${PROJECT_SOURCE_DIR}/src/editor/scintillaeditorbackend.h"
         "${PROJECT_SOURCE_DIR}/src/editor/scintillaeditorbackend.cpp"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillahighlighter_p.h"
+        "${PROJECT_SOURCE_DIR}/src/editor/scintillahighlighter.cpp"
         "${PROJECT_SOURCE_DIR}/src/editor/scintillaimageitem_p.h"
         "${PROJECT_SOURCE_DIR}/src/editor/scintillaimageitem.cpp"
         "${PROJECT_SOURCE_DIR}/src/editor/scintillaquickadapter_p.h"
@@ -24,6 +26,8 @@ target_include_directories(CraftwardEditor
 target_link_libraries(CraftwardEditor
     PRIVATE
         CraftwardComponentsplugin
+        CraftwardHighlighting
+        CraftwardDesign
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
@@ -44,7 +48,7 @@ if(BUILD_TESTING)
     )
     target_include_directories(CraftwardScintillaQuickTest PRIVATE "${PROJECT_SOURCE_DIR}/src/editor")
     target_link_libraries(CraftwardScintillaQuickTest PRIVATE
-        CraftwardEditor CraftwardEditorplugin Scintilla::Core Qt6::Quick Qt6::Test Qt6::GuiPrivate
+        CraftwardEditor CraftwardEditorplugin CraftwardHighlighting Scintilla::Core Qt6::Quick Qt6::Test Qt6::GuiPrivate
         "${CRAFTWARD_VIRTUALIZATION_FRAMEWORK}"
     )
     add_test(NAME CraftwardScintillaQuickTest COMMAND CraftwardScintillaQuickTest)

@@ -58,6 +58,7 @@ tasks:
       - "ward-*/**/*.mm"
       - "ward-*/build.rs"
       - "ward-highlighting/assets/**"
+      - "third_party/syntect/**"
     generates:
       - "{{.LIBRARY}}"
     cmds:

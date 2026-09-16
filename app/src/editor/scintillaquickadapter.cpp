@@ -8,6 +8,7 @@
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QKeySequence>
+#include <QList>
 #include <QMimeData>
 #include <QQuickWindow>
 #include <QScopedValueRollback>
@@ -25,6 +26,14 @@ constexpr auto rectangularMime = "text/x-scintilla.utf16-plain-text.rectangular"
 constexpr int imeTextIndicator = INDIC_IME;
 constexpr int imeBackgroundIndicator = INDIC_IME + 1;
 constexpr int imeUnderlineIndicator = INDIC_IME + 2;
+
+QList<ScintillaQuickAdapter*>&
+liveEditors()
+{
+    // Editors and document attachment changes are confined to the GUI thread.
+    static QList<ScintillaQuickAdapter*> editors;
+    return editors;
+}
 
 QColor
 compositeColour(const QColor& foreground, const QColor& background)
@@ -113,12 +122,17 @@ ScintillaQuickAdapter::ScintillaQuickAdapter(ScintillaImageItem* owner)
     kmap.AssignCmdKey(Keys::Right, KeyMod::Alt | KeyMod::Shift, Message::WordRightExtend);
     kmap.AssignCmdKey(Keys::Back, KeyMod::Alt, Message::DelWordLeft);
 #endif
+    liveEditors().append(this);
 }
 
 ScintillaQuickAdapter::~ScintillaQuickAdapter()
 {
     notification = {};
     scrollChanged = {};
+    documentChanged = {};
+    textModified = {};
+    compositionChanged = {};
+    liveEditors().removeOne(this);
     ScintillaBase::Finalise();
     for (int timer : timers)
         if (timer)
@@ -130,6 +144,18 @@ sptr_t
 ScintillaQuickAdapter::WndProc(Message message, uptr_t wParam, sptr_t lParam)
 {
     try {
+        if (message == Message::SetDocPointer && lParam) {
+            for (const auto* editor : liveEditors()) {
+                if (reinterpret_cast<sptr_t>(editor->pdoc->AsDocumentEditable()) != lParam)
+                    continue;
+                // Style IDs are view-local, but style bytes belong to the document.
+                // Reject another owner before Scintilla changes either view. Reattaching
+                // our own document is a no-op, without releasing its only reference.
+                if (editor != this)
+                    errorStatus = Status::Failure;
+                return 0;
+            }
+        }
         if (message == Message::GrabFocus) {
             host.item->forceActiveFocus();
             return 0;
@@ -139,8 +165,11 @@ ScintillaQuickAdapter::WndProc(Message message, uptr_t wParam, sptr_t lParam)
         if ((stylesWereValid && !stylesValid) || message == Message::SetScrollWidthTracking ||
             message == Message::SetTabWidth || message == Message::SetCodePage || message == Message::SetWrapMode)
             invalidateHorizontalExtent();
-        if (message == Message::SetDocPointer)
+        if (message == Message::SetDocPointer) {
             resetHorizontalExtent();
+            if (documentChanged)
+                documentChanged();
+        }
         // Some selection messages set the pending notification without queuing idle work or a repaint.
         if (FlagSet(needUpdateUI, Update::Selection))
             queueUpdate();
@@ -167,6 +196,20 @@ ScintillaQuickAdapter::paint(QPainter& painter, const QRect& rect)
     paintState = PaintState::notPainting;
     queueUpdate();
     return complete;
+}
+
+qsizetype
+ScintillaQuickAdapter::visibleTextEnd()
+{
+    const PRectangle viewport = GetClientRectangle();
+    if (viewport.Width() <= 0 || viewport.Height() <= 0)
+        return pdoc->Length();
+    RefreshStyleData();
+    WrapLines(WrapScope::wsVisible);
+    // Include the character at the lower-right edge, including a partial row.
+    // Hit testing uses the current styles, wrapping, and horizontal offset.
+    const Sci::Position position = PositionFromLocation(Point(viewport.right, viewport.bottom), false, true);
+    return position >= pdoc->Length() ? pdoc->Length() : WndProc(Message::PositionRelative, position, 1);
 }
 
 void
@@ -491,6 +534,8 @@ ScintillaQuickAdapter::cancelComposition()
         return;
     const QScopedValueRollback guard(tentativeUpdate, true);
     pdoc->TentativeUndo();
+    if (compositionChanged)
+        compositionChanged(false);
     SetSelectionFromSerialized(compositionSelection.c_str());
     preeditPosition = -1;
     view.imeCaretBlockOverride = false;
@@ -588,6 +633,8 @@ ScintillaQuickAdapter::inputMethod(QInputMethodEvent* event)
             compositionText = documentText();
         compositionSelection = sel.ToString();
         pdoc->TentativeStart();
+        if (compositionChanged)
+            compositionChanged(true);
         ClearBeforeTentativeStart();
         preeditPosition = CurrentPosition();
         if (!wasComposing || commits)
@@ -808,6 +855,13 @@ ScintillaQuickAdapter::NotifyChange()
 void
 ScintillaQuickAdapter::NotifyModified(Document* document, DocModification modification, void* userData)
 {
+    const auto changed = modification.modificationType;
+    if (textModified && FlagSet(changed, ModificationFlags::InsertText | ModificationFlags::DeleteText)) {
+        const bool inserted = FlagSet(changed, ModificationFlags::InsertText);
+        textModified(modification.position,
+                     inserted ? 0 : modification.length,
+                     inserted ? QByteArray(modification.text, modification.length) : QByteArray{});
+    }
     ScintillaBase::NotifyModified(document, modification, userData);
     const auto flags = modification.modificationType;
     if (FlagSet(flags, ModificationFlags::InsertText | ModificationFlags::DeleteText)) {

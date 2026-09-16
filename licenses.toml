@@ -163,7 +163,7 @@ website = "https://github.com/jonasbb/serde_with"
 [[component]]
 name = "syntect"
 spdx-identifier = "MIT"
-license-url = "https://raw.githubusercontent.com/trishume/syntect/4aa78031e93ebd3e0be7278120d0bd9d2508b1a3/LICENSE.txt"
+license-file = "core/third_party/syntect/LICENSE.txt"
 website = "https://github.com/trishume/syntect"
 
 [[component]]

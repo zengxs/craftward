@@ -83,6 +83,9 @@ class ScintillaQuickAdapter final
     ~ScintillaQuickAdapter() override;
     std::function<void(const Scintilla::NotificationData&)> notification;
     std::function<void()> scrollChanged;
+    std::function<void()> documentChanged;
+    std::function<void(qsizetype, qsizetype, QByteArray)> textModified;
+    std::function<void(bool)> compositionChanged;
     Scintilla::Internal::QuickWindow host;
     int verticalMaximum = 0, verticalPage = 1;
     int horizontalMaximum = 0, horizontalPage = 1;
@@ -92,6 +95,7 @@ class ScintillaQuickAdapter final
                               Scintilla::uptr_t wParam = 0,
                               Scintilla::sptr_t lParam = 0) override;
     bool paint(QPainter& painter, const QRect& rect);
+    qsizetype visibleTextEnd();
     void resize();
     void updateMetrics();
     void resetHorizontalExtent();

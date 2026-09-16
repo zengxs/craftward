@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["third_party/syntect"]
 members = [
     "ward-cli",
     "ward-codex",
@@ -46,4 +47,5 @@ plist = "1"
 prost = "0.14"
 prost-build = "0.14"
 pulldown-cmark = { version = "0.13", default-features = false }
-syntect = { git = "https://github.com/trishume/syntect.git", rev = "4aa78031e93ebd3e0be7278120d0bd9d2508b1a3", default-features = false }
+# The submodule records the fork and its exact revision.
+syntect = { path = "third_party/syntect", default-features = false }

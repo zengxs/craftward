@@ -6,6 +6,9 @@ qt_add_qml_module(CraftwardHighlighting
         "${PROJECT_SOURCE_DIR}/src/highlighting/syntaxdocumenthighlighter.h"
         "${PROJECT_SOURCE_DIR}/src/highlighting/syntaxhighlightingengine.cpp"
         "${PROJECT_SOURCE_DIR}/src/highlighting/syntaxhighlightingengine.h"
+        "${PROJECT_SOURCE_DIR}/src/highlighting/syntaxhighlightingdocument.h"
+        "${PROJECT_SOURCE_DIR}/src/highlighting/syntaxhighlightingdocument.cpp"
+        "${PROJECT_SOURCE_DIR}/src/highlighting/syntaxhighlightingwire_p.h"
 )
 
 qt_add_protobuf(CraftwardHighlighting
