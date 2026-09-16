@@ -72,6 +72,9 @@ ScintillaQuickAdapter::ScintillaQuickAdapter(ScintillaImageItem* owner)
     clock.start();
     imeInteraction = IMEInteraction::Inline;
     view.bufferedDraw = false;
+    vs.marginNumberPadding = lineNumberPadding;
+    widthTimer.setSingleShot(true);
+    connect(&widthTimer, &QTimer::timeout, this, &ScintillaQuickAdapter::updateHorizontalExtent);
     updateMetrics();
     WndProc(Message::SetCodePage, SC_CP_UTF8);
     WndProc(Message::SetLayoutCache, SC_CACHE_PAGE);
@@ -131,7 +134,17 @@ ScintillaQuickAdapter::WndProc(Message message, uptr_t wParam, sptr_t lParam)
             host.item->forceActiveFocus();
             return 0;
         }
-        return ScintillaBase::WndProc(message, wParam, lParam);
+        const bool stylesWereValid = stylesValid;
+        const auto result = ScintillaBase::WndProc(message, wParam, lParam);
+        if ((stylesWereValid && !stylesValid) || message == Message::SetScrollWidthTracking ||
+            message == Message::SetTabWidth || message == Message::SetCodePage || message == Message::SetWrapMode)
+            invalidateHorizontalExtent();
+        if (message == Message::SetDocPointer)
+            resetHorizontalExtent();
+        // Some selection messages set the pending notification without queuing idle work or a repaint.
+        if (FlagSet(needUpdateUI, Update::Selection))
+            queueUpdate();
+        return result;
     } catch (const std::bad_alloc&) {
         errorStatus = Status::BadAlloc;
     } catch (const Failure& failure) {
@@ -167,6 +180,106 @@ ScintillaQuickAdapter::updateMetrics()
         }
     }
     InvalidateStyleRedraw();
+    invalidateHorizontalExtent();
+}
+
+void
+ScintillaQuickAdapter::invalidateHorizontalExtent()
+{
+    lineWidths.assign(size_t(pdoc->LinesTotal()), -1);
+    measuredLineWidths.clear();
+    nextWidthLine = 0;
+    widthEndLine = pdoc->LinesTotal();
+    if (trackLineWidth)
+        widthTimer.start(0);
+}
+
+void
+ScintillaQuickAdapter::resetHorizontalExtent()
+{
+    invalidateHorizontalExtent();
+    if (trackLineWidth) {
+        view.lineWidthMaxSeen = 0;
+        WndProc(Message::SetScrollWidth, 1);
+    }
+}
+
+void
+ScintillaQuickAdapter::invalidateLineWidths(Sci::Line first, Sci::Line last)
+{
+    first = std::max<Sci::Line>(0, first);
+    last = std::min<Sci::Line>(last, Sci::Line(lineWidths.size()) - 1);
+    for (Sci::Line line = first; line <= last; ++line) {
+        int& width = lineWidths[size_t(line)];
+        if (width >= 0) {
+            const auto count = measuredLineWidths.find(width);
+            if (--count->second == 0)
+                measuredLineWidths.erase(count);
+        }
+        width = -1;
+    }
+    if (nextWidthLine >= widthEndLine) {
+        nextWidthLine = first;
+        widthEndLine = last + 1;
+    } else {
+        nextWidthLine = std::min(nextWidthLine, first);
+        widthEndLine = std::max(widthEndLine, last + 1);
+    }
+    if (trackLineWidth)
+        widthTimer.start(0);
+}
+
+void
+ScintillaQuickAdapter::updateHorizontalExtent()
+{
+    if (!trackLineWidth || Wrapping())
+        return;
+    RefreshStyleData();
+    // Virtual space belongs to the live selections, not the cached document lines.
+    int virtualSpaceWidth = 0;
+    for (size_t i = 0; i < sel.Count(); ++i) {
+        const auto& range = sel.Range(i);
+        for (const auto position : { range.caret, range.anchor }) {
+            if (position.VirtualSpace())
+                virtualSpaceWidth = std::max(virtualSpaceWidth, XFromPosition(position) + qCeil(vs.aveCharWidth));
+        }
+    }
+    if (nextWidthLine >= widthEndLine && virtualSpaceWidth == lastVirtualSpaceWidth)
+        return;
+    AutoSurface surface(this);
+    if (!surface)
+        return;
+    lastVirtualSpaceWidth = virtualSpaceWidth;
+    QElapsedTimer budget;
+    budget.start();
+    // Keep initial measurement and font changes out of a single long GUI-thread scan.
+    while (nextWidthLine < widthEndLine && budget.elapsed() < 2) {
+        const Sci::Line line = nextWidthLine++;
+        int& width = lineWidths[size_t(line)];
+        if (width >= 0)
+            continue;
+        // Background measurement must not evict the visible page's layout cache.
+        LineLayout layout(line, int(pdoc->LineStart(line + 1) - pdoc->LineStart(line)));
+        view.LayoutLine(*this, surface, vs, &layout, LineLayout::wrapWidthInfinite);
+        width = qCeil(layout.positions[layout.numCharsInLine]);
+        ++measuredLineWidths[width];
+    }
+    // Leave room for the caret at the end of the widest line.
+    const int textWidth = measuredLineWidths.empty() ? 1 : measuredLineWidths.rbegin()->first + qCeil(vs.aveCharWidth);
+    const int maximum = std::max({ 1, textWidth, virtualSpaceWidth });
+    const bool complete = nextWidthLine >= widthEndLine;
+    // Do not shrink the range while a wider line is still waiting to be measured.
+    if (complete || maximum > scrollWidth) {
+        view.lineWidthMaxSeen = maximum;
+        const int oldOffset = xOffset;
+        WndProc(Message::SetScrollWidth, maximum);
+        if (xOffset != oldOffset)
+            Redraw();
+        if (scrollChanged)
+            scrollChanged();
+    }
+    if (!complete)
+        widthTimer.start(0);
 }
 void
 ScintillaQuickAdapter::resize()
@@ -693,12 +806,40 @@ ScintillaQuickAdapter::NotifyChange()
     queueUpdate();
 }
 void
+ScintillaQuickAdapter::NotifyModified(Document* document, DocModification modification, void* userData)
+{
+    ScintillaBase::NotifyModified(document, modification, userData);
+    const auto flags = modification.modificationType;
+    if (FlagSet(flags, ModificationFlags::InsertText | ModificationFlags::DeleteText)) {
+        const Sci::Line line = pdoc->SciLineFromPosition(modification.position);
+        if (Sci::Line(lineWidths.size()) != pdoc->LinesTotal() - modification.linesAdded) {
+            invalidateHorizontalExtent();
+            return;
+        }
+        const Sci::Line removed = std::max<Sci::Line>(0, -modification.linesAdded);
+        invalidateLineWidths(line, line + removed);
+        if (removed)
+            lineWidths.erase(lineWidths.begin() + line + 1, lineWidths.begin() + line + removed + 1);
+        else if (modification.linesAdded > 0)
+            lineWidths.insert(lineWidths.begin() + line + 1, size_t(modification.linesAdded), -1);
+        widthEndLine += modification.linesAdded;
+    } else if (FlagSet(flags, ModificationFlags::ChangeStyle)) {
+        invalidateLineWidths(pdoc->SciLineFromPosition(modification.position),
+                             pdoc->SciLineFromPosition(modification.position + modification.length));
+    } else if (FlagSet(flags, ModificationFlags::ChangeTabStops)) {
+        invalidateLineWidths(modification.line, modification.line);
+    }
+}
+void
 ScintillaQuickAdapter::NotifyParent(NotificationData data)
 {
     // IME candidates live in Scintilla's tentative undo transaction, not the bound document text.
     if (tentativeUpdate && data.nmhdr.code == Notification::Modified &&
         (int(data.modificationType) & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT)))
         return;
+    // Recompute selection extents after the core finishes dispatching the notification.
+    if (data.nmhdr.code == Notification::UpdateUI && FlagSet(data.updated, Update::Selection) && trackLineWidth)
+        widthTimer.start(0);
     if (notification)
         notification(data);
 }

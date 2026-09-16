@@ -40,6 +40,8 @@ class ScintillaEditorBackendPrivate
                 textDirty = true;
                 pendingText = true;
             }
+            if (data.nmhdr.code == Notification::Zoom)
+                lineNumberDigits = 0;
             scheduleUpdate();
         };
         editor.scrollChanged = [this] { scheduleUpdate(); };
@@ -53,6 +55,7 @@ class ScintillaEditorBackendPrivate
             return;
         updateQueued = true;
         QTimer::singleShot(0, q, [this] {
+            updateLineNumberMargin();
             updateQueued = false;
             const bool changed = std::exchange(pendingText, false);
             if (changed)
@@ -92,6 +95,38 @@ class ScintillaEditorBackendPrivate
           qMax(0, qCeil(fontPointSize * editor.host.measurementDevice.logicalDpiY() / 72.0 * lineHeightScale) - base);
         editor.WndProc(Message::SetExtraAscent, extra / 2);
         editor.WndProc(Message::SetExtraDescent, extra - extra / 2);
+        applyLineNumberStyle();
+        lineNumberDigits = 0;
+        updateLineNumberMargin();
+    }
+    void applyLineNumberStyle()
+    {
+        editor.WndProc(Message::StyleSetFore, STYLE_LINENUMBER, colorValue(lineNumberColor));
+        editor.WndProc(Message::StyleSetBack, STYLE_LINENUMBER, colorValue(backgroundColor));
+    }
+    void updateLineNumberMargin()
+    {
+        if (!showLineNumbers)
+            return;
+        int digits = 1;
+        for (auto lines = editor.WndProc(Message::GetLineCount); lines >= 10; lines /= 10)
+            ++digits;
+        if (digits == lineNumberDigits)
+            return;
+        lineNumberDigits = digits;
+        int textWidth = 0;
+        // Measure every digit so proportional fonts also have room for the widest line number.
+        for (char digit = '0'; digit <= '9'; ++digit) {
+            const QByteArray sample(digits, digit);
+            textWidth = qMax(
+              textWidth,
+              int(editor.WndProc(Message::TextWidth, STYLE_LINENUMBER, reinterpret_cast<sptr_t>(sample.constData()))));
+        }
+        const int width = textWidth + 2 * ScintillaQuickAdapter::lineNumberPadding;
+        if (editor.WndProc(Message::GetMarginWidthN, 0) != width) {
+            editor.WndProc(Message::SetMarginWidthN, 0, width);
+            editor.resize();
+        }
     }
     void applySelectionStyle()
     {
@@ -117,6 +152,9 @@ class ScintillaEditorBackendPrivate
     mutable bool textDirty = false;
     bool pendingText = false, updateQueued = false, updatingText = false;
     bool readOnly = false, wordWrap = false;
+    bool showLineNumbers = false;
+    int lineNumberDigits = 0;
+    QColor lineNumberColor = QColor(128, 128, 128);
     QString fontFamily = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
     qreal fontPointSize = 13;
     int fontWeight = SC_WEIGHT_NORMAL;
@@ -173,9 +211,11 @@ ScintillaEditorBackend::setText(const QString& value)
     d->editor.WndProc(Message::SetEmptySelection, 0);
     d->editor.WndProc(Message::SetFirstVisibleLine, 0);
     d->editor.WndProc(Message::SetXOffset, 0);
+    d->editor.resetHorizontalExtent();
     d->editor.WndProc(Message::SetReadOnly, d->readOnly);
     d->text = value;
     d->textDirty = d->pendingText = false;
+    d->updateLineNumberMargin();
     emit textChanged();
     d->scheduleUpdate();
 }
@@ -233,6 +273,51 @@ ScintillaEditorBackend::setWordWrap(bool wordWrap)
     d->editor.WndProc(Message::SetHScrollBar, !wordWrap);
     d->scheduleUpdate();
     emit wordWrapChanged();
+}
+
+bool
+ScintillaEditorBackend::showLineNumbers() const
+{
+    return d->showLineNumbers;
+}
+
+void
+ScintillaEditorBackend::setShowLineNumbers(bool showLineNumbers)
+{
+    if (d->showLineNumbers == showLineNumbers)
+        return;
+
+    d->showLineNumbers = showLineNumbers;
+    d->lineNumberDigits = 0;
+    if (showLineNumbers) {
+        d->editor.WndProc(Message::SetMarginTypeN, 0, SC_MARGIN_NUMBER);
+        d->editor.WndProc(Message::SetMarginMaskN, 0, 0);
+        // Non-sensitive margins retain Scintilla's built-in line selection and dragging.
+        d->editor.WndProc(Message::SetMarginSensitiveN, 0, 0);
+        d->updateLineNumberMargin();
+    } else {
+        d->editor.WndProc(Message::SetMarginWidthN, 0, 0);
+        d->editor.resize();
+    }
+    d->scheduleUpdate();
+    emit showLineNumbersChanged();
+}
+
+QColor
+ScintillaEditorBackend::lineNumberColor() const
+{
+    return d->lineNumberColor;
+}
+
+void
+ScintillaEditorBackend::setLineNumberColor(const QColor& lineNumberColor)
+{
+    if (!lineNumberColor.isValid() || d->lineNumberColor == lineNumberColor)
+        return;
+
+    d->lineNumberColor = lineNumberColor;
+    d->applyLineNumberStyle();
+    emit lineNumberColorChanged();
 }
 
 QString
@@ -467,6 +552,15 @@ ScintillaEditorBackend::deleteSelection()
 {
     d->editor.cancelComposition();
     d->editor.WndProc(Message::Clear);
+}
+
+void
+ScintillaEditorBackend::updatePolish()
+{
+    // Include tentative IME lines and expand the dirty region before the image is repainted.
+    d->updateLineNumberMargin();
+    d->editor.updateHorizontalExtent();
+    ScintillaImageItem::updatePolish();
 }
 
 bool

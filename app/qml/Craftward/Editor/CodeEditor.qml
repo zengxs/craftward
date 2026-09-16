@@ -8,6 +8,8 @@ Control {
     property alias text: backend.text
     property alias readOnly: backend.readOnly
     property alias wordWrap: backend.wordWrap
+    property alias showLineNumbers: backend.showLineNumbers
+    property color lineNumberColor: Qt.tint(palette.base, palette.placeholderText)
     property real lineHeightScale: Typography.codeLineHeightScale
     readonly property alias canUndo: backend.canUndo
     readonly property alias canRedo: backend.canRedo
@@ -57,6 +59,7 @@ Control {
         lineHeightScale: root.lineHeightScale
         foregroundColor: root.palette.text
         backgroundColor: root.palette.base
+        lineNumberColor: root.lineNumberColor
         selectionForegroundColor: root.palette.text
         selectionBackgroundColor: root.palette.highlight
 
@@ -64,45 +67,63 @@ Control {
             const point = backend.mapToItem(root, position.x, position.y);
             editorMenu.popup(point.x, point.y);
         }
+    }
 
-        OverlayScrollBar {
-            id: verticalBar
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.right: parent.right
-            orientation: Qt.Vertical
-            size: backend.verticalSize
-            active: hovered || pressed || backend.activeFocus
-            onPositionChanged: {
-                if (pressed)
-                    backend.verticalPosition = position;
-            }
-            Binding {
-                target: verticalBar
-                property: "position"
-                value: backend.verticalPosition
-                when: !verticalBar.pressed
-            }
+    HoverHandler {
+        id: editorHover
+    }
+
+    Timer {
+        id: scrollActivity
+        interval: 650
+    }
+
+    QtObject {
+        readonly property real verticalPosition: backend.verticalPosition
+        readonly property real horizontalPosition: backend.horizontalPosition
+        onVerticalPositionChanged: scrollActivity.restart()
+        onHorizontalPositionChanged: scrollActivity.restart()
+    }
+
+    OverlayScrollBar {
+        id: verticalBar
+        z: 1
+        anchors.top: parent.top
+        anchors.bottom: horizontalBar.visible ? horizontalBar.top : parent.bottom
+        anchors.right: parent.right
+        orientation: Qt.Vertical
+        size: backend.verticalSize
+        active: hovered || pressed || editorHover.hovered || backend.activeFocus || scrollActivity.running
+        onPositionChanged: {
+            if (pressed)
+                backend.verticalPosition = position;
         }
+        Binding {
+            target: verticalBar
+            property: "position"
+            value: backend.verticalPosition
+            when: !verticalBar.pressed
+        }
+    }
 
-        OverlayScrollBar {
-            id: horizontalBar
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            orientation: Qt.Horizontal
-            size: backend.horizontalSize
-            active: hovered || pressed || backend.activeFocus
-            onPositionChanged: {
-                if (pressed)
-                    backend.horizontalPosition = position;
-            }
-            Binding {
-                target: horizontalBar
-                property: "position"
-                value: backend.horizontalPosition
-                when: !horizontalBar.pressed
-            }
+    OverlayScrollBar {
+        id: horizontalBar
+        z: 1
+        anchors.left: parent.left
+        anchors.right: verticalBar.visible ? verticalBar.left : parent.right
+        anchors.bottom: parent.bottom
+        orientation: Qt.Horizontal
+        size: backend.horizontalSize
+        active: hovered || pressed || editorHover.hovered || backend.activeFocus || scrollActivity.running
+        onPositionChanged: {
+            if (pressed)
+                backend.horizontalPosition = position;
+        }
+        Binding {
+            target: horizontalBar
+            property: "position"
+            value: backend.horizontalPosition
+            when: !horizontalBar.pressed
         }
     }
 

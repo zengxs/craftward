@@ -75,15 +75,23 @@ scrolling layer.
 
 The adapter applies the same horizontal scroll limits to wheel input,
 scrollbars, and Scintilla messages. Position and range callbacks derive the
-limits from the current Scintilla scroll width and text viewport, then constrain the core
-offset before publishing state to QML. Resizing the viewport or explicitly
+limits from the current Scintilla scroll width and text viewport, then constrain
+the core offset before publishing state to QML. Resizing the viewport or explicitly
 reducing the scroll width also constrains the existing offset. Wrapping fixes
 the horizontal offset at zero. Caret navigation can expand the core scroll
 width before the adapter applies these limits.
 
-Scintilla's width tracking only expands its known width. Deleting a long line
-does not automatically shrink that width, so finite trailing space may remain.
-The adapter does not measure the whole document to remove that space.
+The adapter caches measured widths for document lines so the horizontal range
+can shrink after deletions, document replacement, or font changes. Initial
+measurement and layout changes process the document in short GUI-thread batches;
+ordinary edits invalidate the affected lines. Cached widths retain the widest
+offscreen line, and the range does not shrink while measurements are incomplete.
+The range also includes the current selections' virtual-space carets and anchors,
+using Scintilla's layout and line-end font metrics. These selection extents are
+kept separate from the document cache, so clearing virtual space removes its
+extra range without remeasuring the document. The widest extent includes a small
+caret gap. Selection notifications schedule extent updates even for offscreen
+selections, independently of repainting.
 
 ## Validation and provenance
 
@@ -93,7 +101,9 @@ The CTest entries run the editor under Qt's offscreen software backend at
 normal and 125% scale. They cover editing, undo, multiple selections, UTF-16
 IME replacement and cancellation, completion and call tips, text drops,
 wrapping, horizontal input bounds and range changes, range expansion during
-caret navigation, the public QML control, scene clipping and composition,
+caret navigation, virtual-space extents across appearance and selection changes
+(including offscreen carets and anchors),
+the public QML control, scene clipping and composition,
 partial painting, and scroll-image equivalence.
 The IME drop tests use Qt's private test input-context hook to cover platform
 commit and reset responses; this dependency is limited to the test target.

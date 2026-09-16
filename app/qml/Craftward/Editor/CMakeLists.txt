@@ -35,6 +35,13 @@ if(BUILD_TESTING)
     qt_add_executable(CraftwardScintillaQuickTest
         "${PROJECT_SOURCE_DIR}/src/editor/tests/scintillaquicktest.cpp"
     )
+    qt_add_resources(CraftwardScintillaQuickTest scintilla_editor_test_views
+        PREFIX "/editor-tests"
+        BASE "${PROJECT_SOURCE_DIR}/qml/Craftward"
+        FILES
+            "${PROJECT_SOURCE_DIR}/qml/Craftward/Pages/FileContentView.qml"
+            "${PROJECT_SOURCE_DIR}/qml/Craftward/Features/Legal/LegalTextView.qml"
+    )
     target_include_directories(CraftwardScintillaQuickTest PRIVATE "${PROJECT_SOURCE_DIR}/src/editor")
     target_link_libraries(CraftwardScintillaQuickTest PRIVATE
         CraftwardEditor CraftwardEditorplugin Scintilla::Core Qt6::Quick Qt6::Test Qt6::GuiPrivate

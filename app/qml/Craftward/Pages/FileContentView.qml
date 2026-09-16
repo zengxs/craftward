@@ -17,14 +17,19 @@ Pane {
     signal openExternallyRequested(string path)
 
     padding: 0
+    background: Rectangle {
+        color: root.palette.base
+    }
     onDetailsChanged: if (editor)
         editor.reveal()
 
     CodeEditor {
         id: editor
         anchors.fill: parent
+        padding: 8
         visible: root.details.error.length === 0
         readOnly: false
+        showLineNumbers: true
         text: root.details.text
         function reveal() {
             Qt.callLater(() => revealLocation(root.details.startLine || 0, root.details.endLine || 0));

@@ -30,6 +30,8 @@ class ScintillaEditorBackend : public ScintillaImageItem
     Q_PROPERTY(QString text READ text WRITE setText NOTIFY textChanged)
     Q_PROPERTY(bool readOnly READ isReadOnly WRITE setReadOnly NOTIFY readOnlyChanged)
     Q_PROPERTY(bool wordWrap READ wordWrap WRITE setWordWrap NOTIFY wordWrapChanged)
+    Q_PROPERTY(bool showLineNumbers READ showLineNumbers WRITE setShowLineNumbers NOTIFY showLineNumbersChanged)
+    Q_PROPERTY(QColor lineNumberColor READ lineNumberColor WRITE setLineNumberColor NOTIFY lineNumberColorChanged)
     Q_PROPERTY(QString fontFamily READ fontFamily WRITE setFontFamily NOTIFY fontFamilyChanged)
     Q_PROPERTY(qreal fontPointSize READ fontPointSize WRITE setFontPointSize NOTIFY fontPointSizeChanged)
     Q_PROPERTY(int fontWeight READ fontWeight WRITE setFontWeight NOTIFY fontWeightChanged)
@@ -76,6 +78,12 @@ class ScintillaEditorBackend : public ScintillaImageItem
     bool wordWrap() const;
     void setWordWrap(bool wordWrap);
 
+    bool showLineNumbers() const;
+    void setShowLineNumbers(bool showLineNumbers);
+
+    QColor lineNumberColor() const;
+    void setLineNumberColor(const QColor& lineNumberColor);
+
     QString fontFamily() const;
     void setFontFamily(const QString& fontFamily);
 
@@ -107,6 +115,8 @@ class ScintillaEditorBackend : public ScintillaImageItem
     void textChanged();
     void readOnlyChanged();
     void wordWrapChanged();
+    void showLineNumbersChanged();
+    void lineNumberColorChanged();
     void fontFamilyChanged();
     void fontPointSizeChanged();
     void fontWeightChanged();
@@ -117,6 +127,7 @@ class ScintillaEditorBackend : public ScintillaImageItem
     void selectionBackgroundColorChanged();
 
   protected:
+    void updatePolish() override;
     bool paintImage(QPainter& painter, const QRect& rect) override;
     void geometryChange(const QRectF& geometry, const QRectF& oldGeometry) override;
     void itemChange(ItemChange change, const ItemChangeData& data) override;

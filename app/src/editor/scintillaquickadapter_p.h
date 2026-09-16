@@ -78,6 +78,7 @@ class ScintillaQuickAdapter final
   , public Scintilla::Internal::ScintillaBase
 {
   public:
+    static constexpr int lineNumberPadding = 8;
     explicit ScintillaQuickAdapter(ScintillaImageItem* owner);
     ~ScintillaQuickAdapter() override;
     std::function<void(const Scintilla::NotificationData&)> notification;
@@ -93,6 +94,8 @@ class ScintillaQuickAdapter final
     bool paint(QPainter& painter, const QRect& rect);
     void resize();
     void updateMetrics();
+    void resetHorizontalExtent();
+    void updateHorizontalExtent();
     void focus(bool on);
     static std::optional<Scintilla::Message> shortcutCommand(const QKeyEvent& event);
     bool key(QKeyEvent* event);
@@ -115,6 +118,13 @@ class ScintillaQuickAdapter final
   private:
     std::array<int, 5> timers{};
     QTimer idleTimer;
+    QTimer widthTimer;
+    // Scintilla only grows its observed width; current per-line widths also allow the range to shrink.
+    std::vector<int> lineWidths;
+    std::map<int, Sci::Line> measuredLineWidths;
+    Sci::Line nextWidthLine = 0;
+    Sci::Line widthEndLine = 0;
+    int lastVirtualSpaceWidth = 0;
     QElapsedTimer clock;
     bool captured = false;
     bool workQueued = false;
@@ -126,6 +136,8 @@ class ScintillaQuickAdapter final
     unsigned int timestamp() const;
     void queueUpdate();
     bool synchronizeHorizontalScroll();
+    void invalidateHorizontalExtent();
+    void invalidateLineWidths(Sci::Line first, Sci::Line last);
     void insertQString(const QString& text, Scintilla::CharacterSource source);
     void applyPreeditFormats(const QInputMethodEvent& event);
 
@@ -145,6 +157,9 @@ class ScintillaQuickAdapter final
     bool CanPaste() override;
     void ClaimSelection() override;
     void NotifyChange() override;
+    void NotifyModified(Scintilla::Internal::Document* document,
+                        Scintilla::Internal::DocModification modification,
+                        void* userData) override;
     void NotifyParent(Scintilla::NotificationData data) override;
     bool FineTickerRunning(TickReason reason) override;
     void FineTickerStart(TickReason reason, int millis, int tolerance) override;
