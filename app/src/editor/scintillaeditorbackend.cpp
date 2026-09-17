@@ -552,16 +552,12 @@ ScintillaEditorBackend::verticalSize() const
 qreal
 ScintillaEditorBackend::verticalPosition() const
 {
-    return qreal(d->editor.WndProc(Message::GetFirstVisibleLine)) /
-           (d->editor.verticalPage + d->editor.verticalMaximum);
+    return d->editor.verticalOffset() / (d->editor.verticalPage + d->editor.verticalMaximum);
 }
 void
 ScintillaEditorBackend::setVerticalPosition(qreal value)
 {
-    const int line =
-      qBound(0, qRound(value * (d->editor.verticalPage + d->editor.verticalMaximum)), d->editor.verticalMaximum);
-    d->editor.WndProc(Message::SetFirstVisibleLine, line);
-    d->scheduleUpdate();
+    d->editor.setVerticalPosition(value);
 }
 qreal
 ScintillaEditorBackend::horizontalSize() const

@@ -123,7 +123,7 @@ Window::SetPositionRelative(PRectangle rc, const Window* relativeTo)
     if (!host || !host->item || !relative || !relative->item)
         return;
     auto* container = host->item->parentItem();
-    const QPointF point = relative->item->mapToItem(container, QPointF(rc.left, rc.top));
+    const QPointF point = relative->item->mapToItem(container, relative->toItem(Point(rc.left, rc.top)));
     const qreal x = qBound(0.0, point.x(), qMax(0.0, container->width() - rc.Width()));
     const qreal y = qBound(0.0, point.y(), qMax(0.0, container->height() - rc.Height()));
     SetPosition(PRectangle(x, y, x + rc.Width(), y + rc.Height()));
@@ -147,7 +147,7 @@ void
 Window::InvalidateRectangle(PRectangle rc)
 {
     if (const auto* host = window(wid); host && host->item)
-        host->item->invalidateImage(QRectFFromPRect(rc));
+        host->item->invalidateImage(QRectFFromPRect(rc).translated(0, -host->scrollOffsetY));
 }
 void
 Window::SetCursor(Cursor cursor)
@@ -185,8 +185,8 @@ Window::GetMonitorRect(Point)
     if (!host || !host->item || !host->item->window())
         return PRectangle(0, 0, 1000, 1000);
     auto* container = host->item->window()->contentItem();
-    const QPointF origin = container->mapToItem(host->item, QPointF());
-    return PRectangle(origin.x(), origin.y(), origin.x() + container->width(), origin.y() + container->height());
+    const Point origin = host->toContent(container->mapToItem(host->item, QPointF()));
+    return PRectangle(origin.x, origin.y, origin.x + container->width(), origin.y + container->height());
 }
 
 namespace {
@@ -393,7 +393,7 @@ Menu::Show(Point point, const Window& owner)
 {
     const auto* host = window(owner.GetID());
     if (host && host->showMenu && mid)
-        host->showMenu(QPointF(point.x, point.y), static_cast<QuickMenu*>(mid)->entries);
+        host->showMenu(host->toItem(point), static_cast<QuickMenu*>(mid)->entries);
     Destroy();
 }
 

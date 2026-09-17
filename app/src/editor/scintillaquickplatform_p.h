@@ -49,8 +49,12 @@ struct QuickWindow
     QPointer<ScintillaImageItem> item;
     QImage measurementDevice{ 1, 1, QImage::Format_ARGB32_Premultiplied };
     qreal devicePixelRatio = 1;
+    // Scintilla coordinates start at the first display row, which may be partly clipped.
+    qreal scrollOffsetY = 0;
     bool owned = false;
     std::function<void(QPointF, const QVariantList&)> showMenu;
+    Point toContent(QPointF point) const { return Point(point.x(), point.y() + scrollOffsetY); }
+    QPointF toItem(Point point) const { return QPointF(point.x, point.y - scrollOffsetY); }
 };
 struct QuickMenu
 {

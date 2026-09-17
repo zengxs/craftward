@@ -314,7 +314,13 @@ SurfaceImpl::FillRectangle(PRectangle rc, Fill fill)
 void
 SurfaceImpl::FillRectangleAligned(PRectangle rc, Fill fill)
 {
+    // Avoid antialiasing aligned fills: clipping a translated row can otherwise
+    // reduce coverage along its edge.
+    QPainter* current = GetPainter();
+    const bool antialiasing = current->testRenderHint(QPainter::Antialiasing);
+    current->setRenderHint(QPainter::Antialiasing, false);
     FillRectangle(PixelAlign(rc, PixelDivisions()), fill);
+    current->setRenderHint(QPainter::Antialiasing, antialiasing);
 }
 
 void

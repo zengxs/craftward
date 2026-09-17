@@ -22,6 +22,7 @@
 #include <QQuickWindow>
 #include <QScopeGuard>
 #include <QScopedValueRollback>
+#include <QScreen>
 #include <QSignalSpy>
 #include <QTest>
 #include <QTextCharFormat>
@@ -78,6 +79,28 @@ class ScintillaQuickTest : public QObject
     void textDropDuringComposition_data();
     void textDropDuringComposition();
     void wrappingAndHorizontalScroll();
+    void verticalPixelScrolling();
+    void verticalPixelScrollBounds();
+    void verticalPixelScrollEndpoints_data();
+    void verticalPixelScrollEndpoints();
+    void zoomPreservesScrollGeometry_data();
+    void zoomPreservesScrollGeometry();
+    void escapePreservesPixelScroll_data();
+    void escapePreservesPixelScroll();
+    void copyPreservesPixelScroll_data();
+    void copyPreservesPixelScroll();
+    void verticalPixelScrollEditCommands_data();
+    void verticalPixelScrollEditCommands();
+    void verticalPixelScrollCaretCommands_data();
+    void verticalPixelScrollCaretCommands();
+    void verticalPixelScrollCaretColumns_data();
+    void verticalPixelScrollCaretColumns();
+    void verticalPixelScrollInteraction_data();
+    void verticalPixelScrollInteraction();
+    void verticalPixelScrollAutoSelection_data();
+    void verticalPixelScrollAutoSelection();
+    void verticalPixelScrollLayoutChanges();
+    void verticalPixelScrollPopups();
     void horizontalScrollInputs_data();
     void horizontalScrollInputs();
     void horizontalScrollRangeChanges();
@@ -125,6 +148,38 @@ compose(ScintillaEditorBackend& editor,
     event.setCommitString(commit, start, length);
     QCoreApplication::sendEvent(&editor, &event);
 }
+void
+pixelScroll(ScintillaEditorBackend& editor, int dy, Qt::ScrollPhase phase = Qt::ScrollUpdate)
+{
+    const QPointF position(100, 60);
+    QWheelEvent event(
+      position, editor.mapToGlobal(position), QPoint(0, -dy), QPoint(), Qt::NoButton, Qt::NoModifier, phase, false);
+    QCoreApplication::sendEvent(&editor, &event);
+}
+qreal
+verticalPixels(const ScintillaEditorBackend& editor)
+{
+    return editor.verticalPosition() * editor.height() / editor.verticalSize();
+}
+bool
+matchesRepaint(const QImage& actual, const QImage& repainted, const QString& stage)
+{
+    if (actual == repainted)
+        return true;
+    const QString output = qEnvironmentVariable("CRAFTWARD_EDITOR_TEST_IMAGE");
+    if (!output.isEmpty()) {
+        actual.save(output + QStringLiteral(".%1.png").arg(stage));
+        repainted.save(output + QStringLiteral(".%1-repainted.png").arg(stage));
+    }
+    QRect differences;
+    for (int y = 0; y < actual.height(); ++y)
+        for (int x = 0; x < actual.width(); ++x)
+            if (actual.pixel(x, y) != repainted.pixel(x, y))
+                differences = differences.united(QRect(x, y, 1, 1));
+    qWarning() << stage << "repaint mismatch" << differences << actual.pixelColor(differences.topLeft())
+               << repainted.pixelColor(differences.topLeft());
+    return false;
+}
 class PaintedEditor : public ScintillaEditorBackend
 {
   public:
@@ -132,12 +187,19 @@ class PaintedEditor : public ScintillaEditorBackend
     QList<QRect> painted;
     QImage renderImage()
     {
-        QImage image(QSize(qCeil(width()), qCeil(height())), QImage::Format_ARGB32_Premultiplied);
+        const qreal ratio = window() ? window()->effectiveDevicePixelRatio() : 1;
+        QImage image(QSize(qCeil(width() * ratio), qCeil(height() * ratio)), QImage::Format_ARGB32_Premultiplied);
+        image.setDevicePixelRatio(ratio);
+        if (window() && window()->screen()) {
+            image.setDotsPerMeterX(qRound(window()->screen()->logicalDotsPerInchX() / 0.0254));
+            image.setDotsPerMeterY(qRound(window()->screen()->logicalDotsPerInchY() / 0.0254));
+        }
         image.fill(Qt::transparent);
         QPainter painter(&image);
         painter.setRenderHint(QPainter::TextAntialiasing);
-        if (!paintImage(painter, image.rect()))
-            paintImage(painter, image.rect());
+        const QRect rect = boundingRect().toAlignedRect();
+        if (!paintImage(painter, rect))
+            paintImage(painter, rect);
         return image;
     }
     bool paintImage(QPainter& painter, const QRect& rect) override
@@ -1285,6 +1347,735 @@ ScintillaQuickTest::wrappingAndHorizontalScroll()
 }
 
 void
+ScintillaQuickTest::verticalPixelScrolling()
+{
+    QQuickWindow window;
+    window.resize(360, 180);
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(360, 180));
+    editor.setText(QStringLiteral("abcdef\n").repeated(80));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(editor.verticalSize() < 1);
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    const int half = height / 2;
+    const auto caret = editor.sendMessage(SCI_POSITIONFROMLINE, 3);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, caret);
+    const QRectF initialCaret = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    const QImage initialImage = editor.renderImage();
+    QSignalSpy changes(&editor, &ScintillaEditorBackend::scrollChanged);
+    pixelScroll(editor, half, Qt::ScrollBegin);
+    QCOMPARE(verticalPixels(editor), qreal(half));
+    QCOMPARE(editor.sendMessage(SCI_GETFIRSTVISIBLELINE), 0);
+    QCOMPARE(editor.sendMessage(SCI_POINTYFROMPOSITION, 0, 0), -half);
+    QCOMPARE(editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF().top(), initialCaret.top() - half);
+    const QImage shiftedImage = editor.renderImage();
+    const qreal displacement = half * initialImage.devicePixelRatio();
+    // Cropping is an exact translation only when the displacement covers whole physical pixels.
+    if (qFuzzyCompare(displacement, qreal(qRound(displacement)))) {
+        const int pixels = qRound(displacement);
+        QVERIFY(matchesRepaint(shiftedImage.copy(0, 0, shiftedImage.width(), shiftedImage.height() - pixels),
+                               initialImage.copy(0, pixels, initialImage.width(), initialImage.height() - pixels),
+                               QStringLiteral("translated")));
+    } else {
+        QVERIFY(shiftedImage != initialImage);
+    }
+    QTRY_VERIFY(!changes.isEmpty());
+    pixelScroll(editor, 0, Qt::ScrollEnd);
+    QCOMPARE(verticalPixels(editor), qreal(half));
+    pixelScroll(editor, 1, Qt::ScrollMomentum);
+    QCOMPARE(verticalPixels(editor), qreal(half + 1));
+    pixelScroll(editor, height, Qt::ScrollMomentum);
+    QCOMPARE(verticalPixels(editor), qreal(height + half + 1));
+    QCOMPARE(editor.sendMessage(SCI_GETFIRSTVISIBLELINE), 1);
+    pixelScroll(editor, -height - 1);
+    QCOMPARE(verticalPixels(editor), qreal(half));
+
+    editor.sendMessage(SCI_LINESCROLL, 0, 2);
+    QCOMPARE(verticalPixels(editor), qreal(2 * height + half));
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 2);
+    QCOMPARE(verticalPixels(editor), qreal(2 * height));
+    const qreal fractional = 2 * height + 0.375 * height;
+    editor.setVerticalPosition(fractional / (81 * height));
+    QCOMPARE(verticalPixels(editor), fractional);
+    QCOMPARE(editor.sendMessage(SCI_GETFIRSTVISIBLELINE), 2);
+    QCOMPARE(editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF().top(), 3 * height - fractional);
+    editor.setVerticalPosition(qreal(2 * height) / (81 * height));
+    QCOMPARE(editor.sendMessage(SCI_GETFIRSTVISIBLELINE), 2);
+    QCOMPARE(verticalPixels(editor), qreal(2 * height));
+    pixelScroll(editor, half);
+
+    // Keyboard navigation must reveal a caret in the clipped first row.
+    editor.sendMessage(SCI_SETEMPTYSELECTION, editor.sendMessage(SCI_POSITIONFROMLINE, 2));
+    key(editor, Qt::Key_Right);
+    QCOMPARE(verticalPixels(editor), qreal(2 * height));
+    pixelScroll(editor, half);
+    editor.sendMessage(SCI_SCROLLCARET);
+    QCOMPARE(verticalPixels(editor), qreal(2 * height));
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollBounds()
+{
+    QQuickWindow window;
+    window.resize(360, 183);
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(360, 183));
+    editor.setText(QStringLiteral("line\n").repeated(40));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(editor.verticalSize() < 1);
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    const qreal maximum = 41 * height - editor.height();
+    pixelScroll(editor, 100000);
+    QCOMPARE(verticalPixels(editor), maximum);
+    QCOMPARE(editor.sendMessage(SCI_POINTYFROMPOSITION, 0, editor.sendMessage(SCI_GETLENGTH)) + height,
+             editor.height());
+    pixelScroll(editor, -1);
+    QCOMPARE(verticalPixels(editor), maximum - 1);
+    editor.setVerticalPosition(1);
+    QCOMPARE(verticalPixels(editor), maximum);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 10000);
+    QCOMPARE(verticalPixels(editor), maximum);
+    pixelScroll(editor, -100000);
+    QCOMPARE(verticalPixels(editor), 0);
+    pixelScroll(editor, 1);
+    QCOMPARE(verticalPixels(editor), qreal(1));
+    editor.sendMessage(SCI_LINESCROLL, 0, -1);
+    QCOMPARE(verticalPixels(editor), 0);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, editor.sendMessage(SCI_POSITIONFROMLINE, 3));
+    pixelScroll(editor, 1);
+    editor.sendMessage(SCI_LINESCROLLUP);
+    QCOMPARE(verticalPixels(editor), 0);
+    pixelScroll(editor, height / 2);
+    editor.sendMessage(SCI_LINESCROLLDOWN);
+    QCOMPARE(verticalPixels(editor), qreal(height + height / 2));
+
+    editor.sendMessage(SCI_SETENDATLASTLINE, 0);
+    editor.setVerticalPosition(1);
+    QCOMPARE(verticalPixels(editor), qreal(40 * height));
+    editor.sendMessage(SCI_SETENDATLASTLINE, 1);
+    QCOMPARE(verticalPixels(editor), maximum);
+    editor.setHeight(editor.height() + height + 3);
+    QCOMPARE(verticalPixels(editor), maximum - height - 3);
+    editor.setText(QStringLiteral("short"));
+    QCOMPARE(editor.verticalSize(), 1);
+    QCOMPARE(verticalPixels(editor), 0);
+    pixelScroll(editor, 100);
+    QCOMPARE(verticalPixels(editor), 0);
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollEndpoints_data()
+{
+    QTest::addColumn<bool>("end");
+    QTest::addColumn<bool>("endAtLastLine");
+    QTest::addColumn<QString>("caretLocation");
+    for (const bool end : { false, true })
+        for (const bool endAtLastLine : { false, true })
+            for (const auto* caret : { "first-row", "last-row", "offscreen" }) {
+                const auto name =
+                  QStringLiteral("%1-%2-%3")
+                    .arg(end ? "end" : "start", endAtLastLine ? "bottom-aligned" : "last-row-top", caret);
+                QTest::newRow(qPrintable(name)) << end << endAtLastLine << QString::fromLatin1(caret);
+            }
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollEndpoints()
+{
+    QFETCH(bool, end);
+    QFETCH(bool, endAtLastLine);
+    QFETCH(QString, caretLocation);
+    QQuickWindow window;
+    window.resize(360, 180);
+    ScintillaEditorBackend editor(window.contentItem());
+    editor.setSize(QSizeF(360, 180));
+    editor.setText(QStringLiteral("abcdef\n").repeated(80));
+    editor.sendMessage(SCI_SETENDATLASTLINE, endAtLastLine);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(editor.verticalSize() < 1);
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    // A partial page makes the lower pixel limit differ from an integral row.
+    editor.setHeight(8.5 * height);
+    const qreal maximum = 81 * height - (endAtLastLine ? editor.height() : height);
+    const qreal target = end ? maximum : 0;
+    const int firstRow = qFloor(target / height);
+    const int lastRow = qMin(80, qCeil((target + editor.height()) / height) - 1);
+    const int caretRow = caretLocation == QStringLiteral("first-row")  ? firstRow
+                         : caretLocation == QStringLiteral("last-row") ? lastRow
+                                                                       : 40;
+    const auto caret = editor.sendMessage(SCI_POSITIONFROMLINE, caretRow);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, caret);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 20);
+    pixelScroll(editor, height / 2);
+    QCOMPARE(verticalPixels(editor), qreal(20 * height + height / 2));
+
+    const auto command = end ? SCI_SCROLLTOEND : SCI_SCROLLTOSTART;
+    editor.sendMessage(command);
+    QCOMPARE(verticalPixels(editor), target);
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), caret);
+    QCOMPARE(editor.sendMessage(SCI_GETANCHOR), caret);
+    // Queued layout work and a repeated command must keep the endpoint stable.
+    QCoreApplication::processEvents();
+    editor.sendMessage(command);
+    QCOMPARE(verticalPixels(editor), target);
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), caret);
+    editor.setVerticalPosition(end ? 1 : 0);
+    QCOMPARE(verticalPixels(editor), target);
+}
+
+void
+ScintillaQuickTest::zoomPreservesScrollGeometry_data()
+{
+    QTest::addColumn<int>("command");
+    QTest::addColumn<bool>("lineNumbers");
+    QTest::addColumn<bool>("clippedCaret");
+    for (const int command : { SCI_ZOOMIN, SCI_ZOOMOUT, SCI_SETZOOM })
+        for (const bool lineNumbers : { false, true })
+            for (const bool clippedCaret : { false, true }) {
+                const auto name = QStringLiteral("%1-%2-%3")
+                                    .arg(command)
+                                    .arg(lineNumbers ? "numbered" : "plain", clippedCaret ? "clipped" : "offscreen");
+                QTest::newRow(qPrintable(name)) << command << lineNumbers << clippedCaret;
+            }
+}
+
+void
+ScintillaQuickTest::zoomPreservesScrollGeometry()
+{
+    QFETCH(int, command);
+    QFETCH(bool, lineNumbers);
+    QFETCH(bool, clippedCaret);
+    QQuickWindow window;
+    window.resize(360, 180);
+    ScintillaEditorBackend editor(window.contentItem());
+    editor.setSize(QSizeF(360, 180));
+    editor.setShowLineNumbers(lineNumbers);
+    const QByteArray widest(200, 'W');
+    editor.setText(QStringLiteral("short\n").repeated(100) + QString::fromLatin1(widest));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const int originalHeight = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    const auto originalWidth =
+      editor.sendMessage(SCI_TEXTWIDTH, STYLE_DEFAULT, reinterpret_cast<qintptr>(widest.constData()));
+    // Wait for the offscreen line to be cached before changing its font metrics.
+    QTRY_VERIFY(editor.sendMessage(SCI_GETSCROLLWIDTH) >= originalWidth);
+    QTRY_VERIFY(editor.sendMessage(SCI_GETSCROLLWIDTH) < originalWidth + 2 * originalHeight);
+    const auto caret = editor.sendMessage(SCI_POSITIONFROMLINE, clippedCaret ? 20 : 80);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, caret);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 20);
+    pixelScroll(editor, originalHeight / 2);
+    const qreal fraction = qreal(originalHeight / 2) / originalHeight;
+    const int requestedZoom = command == SCI_ZOOMOUT ? -1 : 1;
+
+    for (const int zoom : { requestedZoom, 0 }) {
+        const int step = zoom == 0 ? (command == SCI_ZOOMIN ? SCI_ZOOMOUT : SCI_ZOOMIN) : command;
+        editor.sendMessage(command == SCI_SETZOOM ? SCI_SETZOOM : step, zoom);
+        QCOMPARE(editor.sendMessage(SCI_GETZOOM), zoom);
+        const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+        const auto textWidth =
+          editor.sendMessage(SCI_TEXTWIDTH, STYLE_DEFAULT, reinterpret_cast<qintptr>(widest.constData()));
+        QVERIFY(zoom == 0 || textWidth != originalWidth);
+        // The extent consists of the widest text plus a small caret gap.
+        QTRY_VERIFY(editor.sendMessage(SCI_GETSCROLLWIDTH) >= textWidth);
+        QTRY_VERIFY(editor.sendMessage(SCI_GETSCROLLWIDTH) < textWidth + 2 * height);
+        QCOMPARE(editor.sendMessage(SCI_GETFIRSTVISIBLELINE), 20);
+        QCOMPARE(verticalPixels(editor), (20 + fraction) * height);
+        QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), caret);
+        QCOMPARE(editor.sendMessage(SCI_GETANCHOR), caret);
+    }
+}
+
+void
+ScintillaQuickTest::escapePreservesPixelScroll_data()
+{
+    QTest::addColumn<QString>("mode");
+    QTest::addColumn<bool>("bottom");
+    for (const auto* mode : { "none", "completion", "calltip", "multiple-selections" })
+        for (const bool bottom : { false, true })
+            QTest::newRow(QByteArray(mode) + (bottom ? "-bottom" : "-top")) << QString::fromLatin1(mode) << bottom;
+}
+
+void
+ScintillaQuickTest::escapePreservesPixelScroll()
+{
+    QFETCH(QString, mode);
+    QFETCH(bool, bottom);
+    QQuickWindow window;
+    window.resize(360, 240);
+    ScintillaEditorBackend editor(window.contentItem());
+    editor.setSize(QSizeF(360, 240));
+    const QString text = QStringLiteral("function\n").repeated(80);
+    editor.setText(text);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(editor.verticalSize() < 1);
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    editor.setHeight(10 * height);
+    const auto caret = editor.sendMessage(SCI_POSITIONFROMLINE, bottom ? 30 : 20) + 3;
+    editor.sendMessage(SCI_SETEMPTYSELECTION, caret);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 20);
+    pixelScroll(editor, height / 2);
+    const qreal initial = verticalPixels(editor);
+    const auto rectangle = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    QVERIFY(bottom ? rectangle.bottom() > editor.height() : rectangle.top() < 0);
+
+    if (mode == QStringLiteral("completion")) {
+        const QByteArray words("function functionality");
+        editor.sendMessage(SCI_AUTOCSHOW, 3, reinterpret_cast<qintptr>(words.constData()));
+        QVERIFY(editor.sendMessage(SCI_AUTOCACTIVE));
+    } else if (mode == QStringLiteral("calltip")) {
+        const QByteArray tip("function(argument)");
+        editor.sendMessage(SCI_CALLTIPSHOW, caret, reinterpret_cast<qintptr>(tip.constData()));
+        QVERIFY(editor.sendMessage(SCI_CALLTIPACTIVE));
+    } else if (mode == QStringLiteral("multiple-selections")) {
+        const auto extra = editor.sendMessage(SCI_POSITIONFROMLINE, 50);
+        editor.sendMessage(SCI_ADDSELECTION, extra, extra);
+        editor.sendMessage(SCI_SETMAINSELECTION, 0);
+        QCOMPARE(editor.sendMessage(SCI_GETSELECTIONS), 2);
+    }
+    QCOMPARE(verticalPixels(editor), initial);
+
+    key(editor, Qt::Key_Escape);
+    QVERIFY(!editor.sendMessage(SCI_AUTOCACTIVE));
+    QVERIFY(!editor.sendMessage(SCI_CALLTIPACTIVE));
+    QCOMPARE(editor.sendMessage(SCI_GETSELECTIONS), 1);
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), caret);
+    QCOMPARE(editor.sendMessage(SCI_GETANCHOR), caret);
+    QCOMPARE(editor.text(), text);
+    QCOMPARE(verticalPixels(editor), initial);
+    QCoreApplication::processEvents();
+    QCOMPARE(verticalPixels(editor), initial);
+}
+
+void
+ScintillaQuickTest::copyPreservesPixelScroll_data()
+{
+    QTest::addColumn<QString>("command");
+    QTest::addColumn<bool>("bottom");
+    for (const auto* command : { "copy-selection", "copy-line", "copy-line-empty-selection" })
+        for (const bool bottom : { false, true })
+            QTest::newRow(QByteArray(command) + (bottom ? "-bottom" : "-top"))
+              << QString::fromLatin1(command) << bottom;
+}
+
+void
+ScintillaQuickTest::copyPreservesPixelScroll()
+{
+    QFETCH(QString, command);
+    QFETCH(bool, bottom);
+    QQuickWindow window;
+    window.resize(360, 240);
+    ScintillaEditorBackend editor(window.contentItem());
+    editor.setSize(QSizeF(360, 240));
+    const QString text = QStringLiteral("function\n").repeated(80);
+    editor.setText(text);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(editor.verticalSize() < 1);
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    editor.setHeight(10 * height);
+    const auto caret = editor.sendMessage(SCI_POSITIONFROMLINE, bottom ? 30 : 20) + 3;
+    const auto anchor = command == QStringLiteral("copy-line-empty-selection") ? caret : caret - 2;
+    editor.sendMessage(SCI_SETSEL, anchor, caret);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 20);
+    pixelScroll(editor, height / 2);
+    const qreal initial = verticalPixels(editor);
+    const auto rectangle = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    QVERIFY(bottom ? rectangle.bottom() > editor.height() : rectangle.top() < 0);
+
+    QGuiApplication::clipboard()->setText(QStringLiteral("previous clipboard contents"));
+    const bool selectionOnly = command == QStringLiteral("copy-selection");
+    key(editor,
+        selectionOnly ? Qt::Key_C : Qt::Key_T,
+        {},
+        Qt::ControlModifier | (selectionOnly ? Qt::NoModifier : Qt::ShiftModifier));
+    QCOMPARE(QGuiApplication::clipboard()->text(), selectionOnly ? QStringLiteral("un") : QStringLiteral("function\n"));
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), caret);
+    QCOMPARE(editor.sendMessage(SCI_GETANCHOR), anchor);
+    QCOMPARE(editor.text(), text);
+    QCOMPARE(verticalPixels(editor), initial);
+    QCoreApplication::processEvents();
+    QCOMPARE(verticalPixels(editor), initial);
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollEditCommands_data()
+{
+    QTest::addColumn<QString>("command");
+    QTest::addColumn<bool>("bottom");
+    for (const auto* command : { "menu-delete", "replace-selection", "keyboard-delete" }) {
+        for (const bool bottom : { false, true })
+            QTest::newRow(QByteArray(command) + (bottom ? "-bottom" : "-top"))
+              << QString::fromLatin1(command) << bottom;
+    }
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollEditCommands()
+{
+    QFETCH(QString, command);
+    QFETCH(bool, bottom);
+    QQuickWindow window;
+    window.resize(360, 180);
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(360, 180));
+    editor.setText(QStringLiteral("abcdefghij\n").repeated(80));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    editor.setHeight(10 * height);
+    const auto start = editor.sendMessage(SCI_POSITIONFROMLINE, bottom ? 10 : 0) + 2;
+    editor.sendMessage(SCI_SETSEL, start, start + 2);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 0);
+    pixelScroll(editor, height / 2);
+    const QRectF clipped = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    QVERIFY(bottom ? clipped.bottom() > editor.height() : clipped.top() < 0);
+
+    const QString replacement = command == QStringLiteral("replace-selection") ? QStringLiteral("X") : QString();
+    QString expected = editor.text();
+    expected.replace(start, 2, replacement);
+    if (command == QStringLiteral("menu-delete"))
+        editor.deleteSelection();
+    else if (command == QStringLiteral("replace-selection")) {
+        const QByteArray bytes = replacement.toUtf8();
+        editor.sendMessage(SCI_REPLACESEL, 0, reinterpret_cast<qintptr>(bytes.constData()));
+    } else
+        key(editor, Qt::Key_Delete);
+
+    QCOMPARE(editor.text(), expected);
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), start + replacement.size());
+    const QRectF caret = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    QVERIFY(caret.top() >= 0);
+    QVERIFY(caret.bottom() <= editor.height());
+    editor.undo();
+    QCOMPARE(editor.text(), QStringLiteral("abcdefghij\n").repeated(80));
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollCaretCommands_data()
+{
+    QTest::addColumn<bool>("wrapped");
+    QTest::addColumn<bool>("above");
+    QTest::addColumn<bool>("downwards");
+    QTest::addColumn<qreal>("fraction");
+    QTest::addColumn<qreal>("viewportRows");
+    for (const bool wrapped : { false, true }) {
+        for (const bool above : { false, true }) {
+            for (const bool downwards : { false, true }) {
+                for (const qreal fraction : { 0.5, 0.75 })
+                    QTest::newRow(QByteArray(wrapped ? "wrapped-" : "plain-") + (above ? "above-" : "below-") +
+                                  (downwards ? "down-" : "up-") + QByteArray::number(fraction))
+                      << wrapped << above << downwards << fraction << qreal(10);
+            }
+        }
+    }
+    QTest::newRow("less-than-one-row") << false << true << true << qreal(0.5) << qreal(0.4);
+    QTest::newRow("two-partial-rows") << false << false << false << qreal(0.5) << qreal(1.25);
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollCaretCommands()
+{
+    QFETCH(bool, wrapped);
+    QFETCH(bool, above);
+    QFETCH(bool, downwards);
+    QFETCH(qreal, fraction);
+    QFETCH(qreal, viewportRows);
+    QQuickWindow window;
+    window.resize(360, 180);
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(360, 180));
+    editor.setWordWrap(wrapped);
+    editor.setText(QStringLiteral("alpha beta gamma delta epsilon zeta eta theta iota kappa lambda\n").repeated(80));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    if (wrapped)
+        QVERIFY(editor.sendMessage(SCI_WRAPCOUNT, 0) > 1);
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    editor.setHeight(viewportRows * height);
+    editor.renderImage();
+    const auto outside = above ? 0 : editor.sendMessage(SCI_GETLENGTH);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, outside);
+    editor.sendMessage(SCI_CHOOSECARETX);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 20);
+    pixelScroll(editor, int(fraction * height));
+    const qreal initial = verticalPixels(editor);
+    editor.sendMessage(downwards ? SCI_LINESCROLLDOWN : SCI_LINESCROLLUP);
+    const qreal expected = initial + (downwards ? height : -height);
+    QCOMPARE(verticalPixels(editor), expected);
+    auto caret = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    if (viewportRows >= 2) {
+        QVERIFY(caret.top() >= 0);
+        QVERIFY(caret.bottom() <= editor.height());
+    } else
+        QVERIFY(caret.intersects(editor.boundingRect()));
+
+    // Passive selection changes and explicit caret repositioning keep the viewport fixed.
+    editor.sendMessage(SCI_SETEMPTYSELECTION, outside);
+    QCOMPARE(verticalPixels(editor), expected);
+    editor.sendMessage(SCI_MOVECARETINSIDEVIEW);
+    QCOMPARE(verticalPixels(editor), expected);
+    caret = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    if (viewportRows >= 2) {
+        QVERIFY(caret.top() >= 0);
+        QVERIFY(caret.bottom() <= editor.height());
+    } else
+        QVERIFY(caret.intersects(editor.boundingRect()));
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollCaretColumns_data()
+{
+    QTest::addColumn<bool>("wrapped");
+    QTest::newRow("horizontal-caret-policy") << false;
+    QTest::newRow("short-wrapped-row") << true;
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollCaretColumns()
+{
+    QFETCH(bool, wrapped);
+    QQuickWindow window;
+    window.resize(360, 180);
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(360, 180));
+    editor.setWordWrap(wrapped);
+    editor.setText((QStringLiteral("prefix ") + QStringLiteral("x").repeated(120) + '\n').repeated(80));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    editor.setHeight(10 * height);
+    editor.renderImage();
+    const auto outside = editor.sendMessage(SCI_POSITIONFROMLINE, 60) + 57;
+    editor.sendMessage(SCI_SETEMPTYSELECTION, outside);
+    editor.sendMessage(SCI_CHOOSECARETX);
+    // Put the short first row of this paragraph at the last fully visible row after scrolling.
+    const auto lastRow = editor.sendMessage(SCI_VISIBLEFROMDOCLINE, 10);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, lastRow - 8);
+    pixelScroll(editor, height / 2);
+    const qreal expected = verticalPixels(editor) - height;
+    editor.sendMessage(SCI_LINESCROLLUP);
+    QCOMPARE(verticalPixels(editor), expected);
+    QCOMPARE(editor.sendMessage(SCI_GETXOFFSET), 0);
+    auto caret = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    QCOMPARE(caret.top(), 9 * height - height / 2);
+    QVERIFY(caret.bottom() <= editor.height());
+
+    editor.sendMessage(SCI_SETEMPTYSELECTION, outside);
+    editor.sendMessage(SCI_MOVECARETINSIDEVIEW);
+    QCOMPARE(verticalPixels(editor), expected);
+    caret = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    QCOMPARE(caret.top(), 9 * height - height / 2);
+    QVERIFY(caret.left() >= 0);
+    QVERIFY(caret.right() <= editor.width());
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollInteraction_data()
+{
+    QTest::addColumn<bool>("wrapped");
+    QTest::newRow("document-rows") << false;
+    QTest::newRow("wrapped-display-rows") << true;
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollInteraction()
+{
+    QFETCH(bool, wrapped);
+    QQuickWindow window;
+    window.resize(360, 260);
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(360, 260));
+    editor.setShowLineNumbers(true);
+    editor.setWordWrap(wrapped);
+    editor.setText(QStringLiteral("alpha beta gamma delta epsilon zeta eta theta iota kappa lambda\n").repeated(50));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    const int half = height / 2;
+    const int x = editor.sendMessage(SCI_POINTXFROMPOSITION, 0, 0) + 18;
+    const int anchorY = 2 * height + height / 4;
+    const int caretY = 5 * height + height / 4;
+    const auto anchor = editor.sendMessage(SCI_POSITIONFROMPOINT, x, anchorY);
+    const auto caret = editor.sendMessage(SCI_POSITIONFROMPOINT, x, caretY);
+    QVERIFY(anchor < caret);
+    pixelScroll(editor, half);
+    QCOMPARE(editor.sendMessage(SCI_POSITIONFROMPOINT, x, anchorY - half), anchor);
+    QCOMPARE(editor.sendMessage(SCI_POSITIONFROMPOINTCLOSE, x, -1), -1);
+    const auto mouse = [&](QEvent::Type type, int y, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        const QPointF point(x, y);
+        QMouseEvent event(type, point, editor.mapToGlobal(point), button, buttons, Qt::NoModifier);
+        QCoreApplication::sendEvent(&editor, &event);
+    };
+    mouse(QEvent::MouseButtonPress, anchorY - half, Qt::LeftButton, Qt::LeftButton);
+    mouse(QEvent::MouseMove, caretY - half, Qt::NoButton, Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, caretY - half, Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(editor.sendMessage(SCI_GETANCHOR), anchor);
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), caret);
+    QCOMPARE(verticalPixels(editor), qreal(half));
+    QCOMPARE(editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF().top(), 5 * height - half);
+    QCOMPARE(editor.inputMethodQuery(Qt::ImAnchorRectangle).toRectF().top(), 2 * height - half);
+    compose(editor, QString::fromUtf8("中"));
+    QCOMPARE(editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF().top(), 2 * height - half);
+    compose(editor, {});
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), caret);
+    QCOMPARE(verticalPixels(editor), qreal(half));
+
+    QMimeData mime;
+    mime.setText(QStringLiteral("DROP"));
+    const QPoint dropPoint(x, anchorY - half);
+    QDragEnterEvent enter(dropPoint, Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&editor, &enter);
+    QDropEvent drop(dropPoint, Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&editor, &drop);
+    QVERIFY(drop.isAccepted());
+    QCOMPARE(editor.text().indexOf(QStringLiteral("DROP")), anchor);
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollAutoSelection_data()
+{
+    QTest::addColumn<bool>("upwards");
+    QTest::newRow("above-partial-first-row") << true;
+    QTest::newRow("below-partial-last-row") << false;
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollAutoSelection()
+{
+    QFETCH(bool, upwards);
+    QQuickWindow window;
+    window.resize(360, 183);
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(360, 183));
+    editor.setText(QStringLiteral("abcdefghij\n").repeated(100));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    const int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 20);
+    pixelScroll(editor, height / 2);
+    const qreal initial = verticalPixels(editor);
+    const int x = editor.sendMessage(SCI_POINTXFROMPOSITION, 0, 0) + 10;
+    const auto mouse = [&](QEvent::Type type, int y, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        const QPointF point(x, y);
+        QMouseEvent event(type, point, editor.mapToGlobal(point), button, buttons, Qt::NoModifier);
+        QCoreApplication::sendEvent(&editor, &event);
+    };
+    const auto anchor = editor.sendMessage(SCI_POSITIONFROMPOINT, x, 3 * height);
+    mouse(QEvent::MouseButtonPress, 3 * height, Qt::LeftButton, Qt::LeftButton);
+    const int outside = upwards ? -1 : editor.height() + 1;
+    mouse(QEvent::MouseMove, outside, Qt::NoButton, Qt::LeftButton);
+    // No further mouse move: the scroll timer must retain the physical pointer position.
+    QTRY_VERIFY_WITH_TIMEOUT(
+      upwards ? verticalPixels(editor) < initial - height : verticalPixels(editor) > initial + height, 1500);
+    const auto caret = editor.sendMessage(SCI_POSITIONFROMPOINT, x, outside);
+    mouse(QEvent::MouseButtonRelease, outside, Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(editor.sendMessage(SCI_GETANCHOR), anchor);
+    QCOMPARE(editor.sendMessage(SCI_GETCURRENTPOS), caret);
+    const QRectF rectangle = editor.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    QVERIFY(rectangle.top() >= 0);
+    QVERIFY(rectangle.bottom() <= editor.height());
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollLayoutChanges()
+{
+    QQuickWindow window;
+    window.resize(360, 180);
+    PaintedEditor editor(window.contentItem());
+    editor.setSize(QSizeF(360, 180));
+    editor.setText(QStringLiteral("a line with enough words to wrap across several display rows ").repeated(120));
+    editor.setWordWrap(true);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(editor.sendMessage(SCI_WRAPCOUNT, 0) > 10);
+    int height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    pixelScroll(editor, 2 * height + height / 2);
+    QCOMPARE(editor.sendMessage(SCI_GETFIRSTVISIBLELINE), 2);
+    const qreal fraction = qreal(height / 2) / height;
+    editor.setFontPointSize(editor.fontPointSize() + 5);
+    editor.renderImage();
+    height = editor.sendMessage(SCI_TEXTHEIGHT, 0);
+    QCOMPARE(verticalPixels(editor) / height - editor.sendMessage(SCI_GETFIRSTVISIBLELINE), fraction);
+    editor.setWidth(240);
+    editor.renderImage();
+    QCOMPARE(verticalPixels(editor) / height - editor.sendMessage(SCI_GETFIRSTVISIBLELINE), fraction);
+    editor.setWordWrap(false);
+    editor.renderImage();
+    QCOMPARE(verticalPixels(editor), 0);
+    QCOMPARE(editor.verticalSize(), 1);
+
+    editor.setText(QStringLiteral("folded line\n").repeated(80));
+    editor.sendMessage(SCI_SETFOLDLEVEL, 0, SC_FOLDLEVELBASE | SC_FOLDLEVELHEADERFLAG);
+    for (int line = 1; line <= 70; ++line)
+        editor.sendMessage(SCI_SETFOLDLEVEL, line, SC_FOLDLEVELBASE + 1);
+    editor.setVerticalPosition(1);
+    editor.sendMessage(SCI_FOLDLINE, 0, SC_FOLDACTION_CONTRACT);
+    editor.renderImage();
+    const qreal maximum = qMax(0.0, 11 * height - editor.height());
+    QCOMPARE(verticalPixels(editor), maximum);
+    editor.sendMessage(SCI_FOLDLINE, 0, SC_FOLDACTION_EXPAND);
+    editor.renderImage();
+    QVERIFY(editor.verticalSize() < 0.2);
+}
+
+void
+ScintillaQuickTest::verticalPixelScrollPopups()
+{
+    QQuickWindow window;
+    window.resize(420, 420);
+    PaintedEditor editor(window.contentItem());
+    editor.setPosition(QPointF(20, 20));
+    editor.setSize(QSizeF(360, 360));
+    editor.setText(QStringLiteral("function\n").repeated(80));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    const int half = editor.sendMessage(SCI_TEXTHEIGHT, 0) / 2;
+    const auto caret = editor.sendMessage(SCI_POSITIONFROMLINE, 2) + 3;
+    editor.sendMessage(SCI_SETEMPTYSELECTION, caret);
+    const auto popupTop = [&] {
+        for (const auto* item : window.contentItem()->childItems())
+            if (item != &editor && item->isVisible())
+                return item->y();
+        return qreal(-1);
+    };
+    const QByteArray tip("function(argument)");
+    editor.sendMessage(SCI_CALLTIPSHOW, caret, reinterpret_cast<qintptr>(tip.constData()));
+    const qreal originalTip = popupTop();
+    QVERIFY(originalTip >= 0);
+    pixelScroll(editor, half);
+    QVERIFY(!editor.sendMessage(SCI_CALLTIPACTIVE));
+    editor.sendMessage(SCI_CALLTIPSHOW, caret, reinterpret_cast<qintptr>(tip.constData()));
+    QCOMPARE(popupTop(), originalTip - half);
+    editor.sendMessage(SCI_CALLTIPCANCEL);
+    editor.sendMessage(SCI_SETFIRSTVISIBLELINE, 0);
+    const QByteArray words("function functionality");
+    editor.sendMessage(SCI_AUTOCSHOW, 3, reinterpret_cast<qintptr>(words.constData()));
+    const qreal originalCompletion = popupTop();
+    QVERIFY(originalCompletion >= 0);
+    pixelScroll(editor, half);
+    QVERIFY(!editor.sendMessage(SCI_AUTOCACTIVE));
+    editor.sendMessage(SCI_AUTOCSHOW, 3, reinterpret_cast<qintptr>(words.constData()));
+    QCOMPARE(popupTop(), originalCompletion - half);
+    editor.sendMessage(SCI_AUTOCCANCEL);
+    editor.sendMessage(SCI_SETEMPTYSELECTION, 3);
+    editor.sendMessage(SCI_AUTOCSHOW, 3, reinterpret_cast<qintptr>(words.constData()));
+    key(editor, Qt::Key_Down);
+    QVERIFY(editor.sendMessage(SCI_AUTOCACTIVE));
+    QCOMPARE(editor.sendMessage(SCI_AUTOCGETCURRENT), 1);
+    QCOMPARE(verticalPixels(editor), qreal(half));
+}
+
+void
 ScintillaQuickTest::horizontalScrollInputs_data()
 {
     QTest::addColumn<QString>("input");
@@ -2053,18 +2844,28 @@ void
 ScintillaQuickTest::partialPaintAndScrollReuse_data()
 {
     QTest::addColumn<bool>("showLineNumbers");
-    QTest::newRow("text-only") << false;
-    QTest::newRow("line-numbers") << true;
+    QTest::addColumn<QString>("scrollMode");
+    QTest::addColumn<QSizeF>("viewport");
+    for (const bool numbers : { false, true }) {
+        for (const char* mode : { "lines", "pixels", "pixel-aligned", "fractional" }) {
+            for (const QSizeF size : { QSizeF(360, 180), QSizeF(361, 183.5) })
+                QTest::newRow(QByteArray(numbers ? "line-numbers-" : "text-only-") + mode + '-' +
+                              QByteArray::number(size.height()))
+                  << numbers << QString::fromLatin1(mode) << size;
+        }
+    }
 }
 
 void
 ScintillaQuickTest::partialPaintAndScrollReuse()
 {
     QFETCH(bool, showLineNumbers);
+    QFETCH(QString, scrollMode);
+    QFETCH(QSizeF, viewport);
     QQuickWindow window;
-    window.resize(360, 180);
+    window.resize(qCeil(viewport.width()), qCeil(viewport.height()));
     PaintedEditor editor(window.contentItem());
-    editor.setSize(QSizeF(360, 180));
+    editor.setSize(viewport);
     editor.setReadOnly(true);
     editor.setShowLineNumbers(showLineNumbers);
     QString lines;
@@ -2078,32 +2879,45 @@ ScintillaQuickTest::partialPaintAndScrollReuse()
     editor.painted.clear();
     editor.sendMessage(SCI_SETSEL, 0, 4);
     QTRY_VERIFY(!editor.painted.isEmpty());
-    QVERIFY(
-      std::any_of(editor.painted.begin(), editor.painted.end(), [](const QRect& rect) { return rect.height() < 180; }));
+    QVERIFY(std::any_of(editor.painted.begin(), editor.painted.end(), [&](const QRect& rect) {
+        return rect.height() < qCeil(viewport.height());
+    }));
     window.grabWindow();
     editor.painted.clear();
-    editor.sendMessage(SCI_LINESCROLL, 0, 2);
+    if (scrollMode == QStringLiteral("lines"))
+        editor.sendMessage(SCI_LINESCROLL, 0, 2);
+    else if (scrollMode == QStringLiteral("pixels"))
+        pixelScroll(editor, editor.sendMessage(SCI_TEXTHEIGHT, 0) / 2);
+    else if (scrollMode == QStringLiteral("pixel-aligned"))
+        pixelScroll(editor, 4);
+    else
+        editor.setVerticalPosition(2.375 * editor.sendMessage(SCI_TEXTHEIGHT, 0) * editor.verticalSize() /
+                                   editor.height());
     QTRY_VERIFY(!editor.painted.isEmpty());
     const QImage scrolled = window.grabWindow();
     editor.painted.clear();
     editor.invalidateImage();
     QTRY_VERIFY(!editor.painted.isEmpty());
     const QImage repainted = window.grabWindow();
-    if (repainted != scrolled) {
-        const QString output = qEnvironmentVariable("CRAFTWARD_EDITOR_TEST_IMAGE");
-        if (!output.isEmpty()) {
-            scrolled.save(output + QStringLiteral(".scrolled.png"));
-            repainted.save(output + QStringLiteral(".repainted.png"));
-        }
-        QRect differences;
-        for (int y = 0; y < repainted.height(); ++y)
-            for (int x = 0; x < repainted.width(); ++x)
-                if (repainted.pixel(x, y) != scrolled.pixel(x, y))
-                    differences = differences.united(QRect(x, y, 1, 1));
-        qWarning() << "Scroll repaint mismatch" << differences << "line height"
-                   << editor.sendMessage(SCI_TEXTHEIGHT, 0);
-    }
-    QCOMPARE(repainted, scrolled);
+    QVERIFY(matchesRepaint(scrolled, repainted, QStringLiteral("scrolled")));
+    const auto selection = editor.sendMessage(SCI_POSITIONFROMLINE, 4);
+    editor.painted.clear();
+    editor.sendMessage(SCI_SETSEL, selection, selection + 4);
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    const QImage selected = window.grabWindow();
+    editor.painted.clear();
+    editor.invalidateImage();
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    const QImage selectionRepainted = window.grabWindow();
+    QVERIFY(matchesRepaint(selected, selectionRepainted, QStringLiteral("selected")));
+    editor.painted.clear();
+    pixelScroll(editor, -4);
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    const QImage reversed = window.grabWindow();
+    editor.painted.clear();
+    editor.invalidateImage();
+    QTRY_VERIFY(!editor.painted.isEmpty());
+    QVERIFY(matchesRepaint(reversed, window.grabWindow(), QStringLiteral("reversed")));
     editor.setVerticalPosition(1 - editor.verticalSize());
     QTRY_VERIFY(editor.verticalPosition() > 0.5);
 }

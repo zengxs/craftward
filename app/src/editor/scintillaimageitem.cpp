@@ -41,12 +41,16 @@ ScintillaImageItem::invalidateImage()
 }
 
 void
-ScintillaImageItem::scrollImage(int dy)
+ScintillaImageItem::scrollImage(qreal dy)
 {
     const qreal ratio = m_image.devicePixelRatio();
-    const int pixels = qRound(dy * ratio);
-    if (m_image.isNull() || !m_dirty.isEmpty() || !qFuzzyCompare(qreal(pixels), dy * ratio) ||
-        qAbs(pixels) >= m_image.height()) {
+    const qreal displacement = dy * ratio;
+    if (m_image.isNull() || !m_dirty.isEmpty() || qAbs(displacement) >= m_image.height()) {
+        invalidateImage();
+        return;
+    }
+    const int pixels = qRound(displacement);
+    if (!qFuzzyCompare(qreal(pixels), displacement)) {
         invalidateImage();
         return;
     }

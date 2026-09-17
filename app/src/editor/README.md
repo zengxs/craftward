@@ -34,6 +34,8 @@ number of physical pixels. Other scrolls repaint the viewport. Dirty regions
 are cleared before drawing so antialiasing does not accumulate on cached
 pixels at fractional scales. Abandoned paints caused by wrapping or styling
 are retried over the full viewport before publication.
+Aligned background fills avoid antialiasing so a clipped first row does not
+acquire a translucent border; text retains its antialiasing.
 
 The current presentation path creates and uploads a complete texture for each
 changed image. It does not perform partial GPU uploads. Unchanged frames reuse
@@ -68,9 +70,35 @@ Opened-file views allow temporary edits in memory. The file-opening API reads
 from disk and provides no save or write-back operation.
 
 The adapter uses UTF-8 documents. Minimaps, shared-document preview policy,
-language servers, and debugger UI belong to subsequent ADE features. Trackpad deltas
-currently scroll whole Scintilla display lines; there is no pixel-smooth text
-scrolling layer.
+language servers, and debugger UI belong to subsequent ADE features.
+
+Vertical scrolling combines Scintilla's first display row with an offset within
+that row. Trackpad pixel deltas move immediately, including momentum events;
+ending a gesture preserves the offset. Scrollbars expose pixel-based position
+and size. Relative line scrolling preserves the offset, while an explicit
+`SCI_SETFIRSTVISIBLELINE` aligns the requested row with the top of the viewport.
+`SCI_SCROLLTOSTART` and `SCI_SCROLLTOEND` reach the exact pixel limits without
+moving the caret or scrolling back to reveal it.
+With the default end-at-last-line policy, the bottom limit aligns the last row's
+bottom with the viewport instead of exposing extra blank space.
+
+The adapter shifts the client rectangle and paint area into Scintilla coordinates
+and translates drawing back into item coordinates. Input hit testing, damage,
+IME rectangles, coordinate messages, and popup placement share this offset;
+the first and last partial rows are painted by Scintilla. Caret navigation and
+editing commands, including menu deletion and selection replacement, reveal
+clipped caret rows. Selection autoscroll also reveals clipped rows. Line-scroll
+commands and `SCI_MOVECARETINSIDEVIEW` instead move an offscreen caret into a
+fully visible display row without changing the target pixel offset. If the
+viewport contains only partial rows, they use the row at its centre.
+Completion lists and call tips close when the viewport scrolls.
+Cancelling completion, call tips, or additional selections preserves the pixel offset.
+Copying selected text or whole lines also preserves the viewport and selection.
+Wrapping, folding, and viewport changes constrain the position to the current
+display-row extent. Font and zoom changes preserve
+the fraction of the first display row hidden above the viewport. Zoom commands
+leave the caret in place and allow the message dispatcher to invalidate cached
+line widths before refreshing font metrics.
 
 The adapter applies the same horizontal scroll limits to wheel input,
 scrollbars, and Scintilla messages. Position and range callbacks derive the
@@ -171,8 +199,16 @@ IME replacement and cancellation, completion and call tips, text drops,
 wrapping, horizontal input bounds and range changes, range expansion during
 caret navigation, virtual-space extents across appearance and selection changes
 (including offscreen carets and anchors),
-the public QML control, scene clipping and composition,
-partial painting, and scroll-image equivalence.
+the public QML control, scene clipping and composition, partial painting, and
+scroll-image equivalence. Pixel-scroll regressions cover half-row stops,
+momentum, scrollbar and line-message transitions, viewport bounds, hit testing,
+selection autoscroll, IME and popup coordinates, wrapping, folding, and font
+changes. They also cover editing commands at clipped rows, line scrolling with
+offscreen carets, and caret placement in short wrapped rows and small viewports.
+Absolute scroll commands are checked at both endpoints and under both end-of-file
+scroll policies. Zoom commands and explicit zoom setters are checked for stable
+row fractions and updated offscreen line widths, with line numbers enabled or disabled.
+Image comparisons also check selection damage after a partial-row scroll.
 Highlighting regressions also cover theme and font changes, tentative IME edits,
 rapid document replacement, obsolete errors, and rendered token colors. Rust
 tests exercise replay, checkpoint relocation, mixed UTF-8 edits, and rejected

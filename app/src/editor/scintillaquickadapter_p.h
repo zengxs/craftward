@@ -87,9 +87,8 @@ class ScintillaQuickAdapter final
     std::function<void(qsizetype, qsizetype, QByteArray)> textModified;
     std::function<void(bool)> compositionChanged;
     Scintilla::Internal::QuickWindow host;
-    int verticalMaximum = 0, verticalPage = 1;
+    qreal verticalMaximum = 0, verticalPage = 1;
     int horizontalMaximum = 0, horizontalPage = 1;
-    qreal wheelRemainder = 0;
 
     Scintilla::sptr_t WndProc(Scintilla::Message message,
                               Scintilla::uptr_t wParam = 0,
@@ -108,6 +107,8 @@ class ScintillaQuickAdapter final
     void leave();
     void releaseMouse();
     void wheel(QWheelEvent* event);
+    qreal verticalOffset() const;
+    void setVerticalPosition(qreal position);
     void setHorizontalPosition(qreal position);
     void inputMethod(QInputMethodEvent* event);
     QVariant inputQuery(Qt::InputMethodQuery query);
@@ -137,8 +138,17 @@ class ScintillaQuickAdapter final
     int compositionCursor = 0;
     QString compositionText;
     std::string compositionSelection;
+    int scrollLineHeight = 1;
     unsigned int timestamp() const;
+    Scintilla::Internal::Point contentPoint(QPointF point);
     void queueUpdate();
+    bool synchronizeVerticalScroll();
+    void setVerticalOffset(qreal position);
+    bool moveVerticalOffset(qreal position, bool reuseImage);
+    void finishVerticalScroll();
+    void moveCaretInsideViewport(bool scrollHorizontally);
+    void revealPosition(Scintilla::Internal::SelectionPosition position);
+    void finishSelectionScroll();
     bool synchronizeHorizontalScroll();
     void invalidateHorizontalExtent();
     void invalidateLineWidths(Sci::Line first, Sci::Line last);
@@ -150,6 +160,8 @@ class ScintillaQuickAdapter final
     std::string EncodedFromUTF8(std::string_view text) const override;
     std::unique_ptr<Scintilla::Internal::CaseFolder> CaseFolderForEncoding() override;
     std::string CaseMapString(const std::string& text, CaseMapping mapping) override;
+    Scintilla::Internal::PRectangle GetClientRectangle() const override;
+    int KeyCommand(Scintilla::Message message) override;
     void ScrollText(Sci::Line delta) override;
     void SetVerticalScrollPos() override;
     void SetHorizontalScrollPos() override;

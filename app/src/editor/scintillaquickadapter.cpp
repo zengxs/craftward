@@ -66,11 +66,6 @@ modifiers(Qt::KeyboardModifiers value)
         flags |= SCMOD_META;
     return static_cast<KeyMod>(flags);
 }
-Point
-point(QPointF value)
-{
-    return Point(value.x(), value.y());
-}
 }
 
 ScintillaQuickAdapter::ScintillaQuickAdapter(ScintillaImageItem* owner)
@@ -160,15 +155,76 @@ ScintillaQuickAdapter::WndProc(Message message, uptr_t wParam, sptr_t lParam)
             host.item->forceActiveFocus();
             return 0;
         }
+        switch (message) {
+            case Message::SetFirstVisibleLine:
+                RefreshStyleData();
+                setVerticalOffset(qreal(static_cast<sptr_t>(wParam)) * vs.lineHeight);
+                return 0;
+            case Message::LineScroll:
+                RefreshStyleData();
+                setVerticalOffset(verticalOffset() + qreal(lParam) * vs.lineHeight);
+                HorizontalScrollTo(xOffset + static_cast<int>(static_cast<int>(wParam) * vs.spaceWidth));
+                return 1;
+            case Message::PointYFromPosition: {
+                if (lParam < 0)
+                    return 0;
+                const Point point = LocationFromPosition(lParam);
+                return static_cast<sptr_t>(std::floor(host.toItem(point).y()));
+            }
+            case Message::PositionFromPoint:
+            case Message::PositionFromPointClose:
+            case Message::CharPositionFromPoint:
+            case Message::CharPositionFromPointClose: {
+                const bool close =
+                  message == Message::PositionFromPointClose || message == Message::CharPositionFromPointClose;
+                const bool character =
+                  message == Message::CharPositionFromPoint || message == Message::CharPositionFromPointClose;
+                return PositionFromLocation(
+                  contentPoint(QPointF(static_cast<sptr_t>(wParam), lParam)), close, character);
+            }
+            case Message::SelectionFromPoint:
+                return SelectionFromPoint(contentPoint(QPointF(static_cast<sptr_t>(wParam), lParam)));
+            case Message::MoveCaretInsideView:
+                moveCaretInsideViewport(true);
+                return 0;
+            case Message::ScrollVertical:
+                RefreshStyleData();
+                setVerticalOffset(qreal(topLine) * vs.lineHeight);
+                break;
+            default:
+                break;
+        }
         const bool stylesWereValid = stylesValid;
         const auto result = ScintillaBase::WndProc(message, wParam, lParam);
         if ((stylesWereValid && !stylesValid) || message == Message::SetScrollWidthTracking ||
             message == Message::SetTabWidth || message == Message::SetCodePage || message == Message::SetWrapMode)
             invalidateHorizontalExtent();
         if (message == Message::SetDocPointer) {
+            setVerticalOffset(0);
             resetHorizontalExtent();
             if (documentChanged)
                 documentChanged();
+        }
+        // Commands that reveal the caret must also expose a clipped part of its row.
+        // Passive selection setters intentionally leave the viewport unchanged.
+        switch (message) {
+            case Message::ScrollCaret:
+            case Message::GotoPos:
+            case Message::GotoLine:
+            case Message::SetSel:
+            case Message::Paste:
+            case Message::Cut:
+            case Message::Clear:
+            case Message::ReplaceSel:
+            case Message::Undo:
+            case Message::Redo:
+                revealPosition(sel.RangeMain().caret);
+                break;
+            case Message::ScrollRange:
+                revealPosition(SelectionPosition(wParam));
+                break;
+            default:
+                break;
         }
         // Some selection messages set the pending notification without queuing idle work or a repaint.
         if (FlagSet(needUpdateUI, Update::Selection))
@@ -187,13 +243,26 @@ ScintillaQuickAdapter::WndProc(Message message, uptr_t wParam, sptr_t lParam)
 bool
 ScintillaQuickAdapter::paint(QPainter& painter, const QRect& rect)
 {
+    RefreshStyleData();
+    synchronizeVerticalScroll();
+    const qreal offset = host.scrollOffsetY;
+    painter.save();
+    painter.translate(0, -offset);
     rcPaint = PRectFromQRect(rect);
+    rcPaint.Move(0, offset);
     paintState = PaintState::painting;
     paintingAllText = rcPaint.Contains(GetClientRectangle());
     AutoSurface surface(painter.device(), this);
-    Paint(surface, rcPaint);
-    const bool complete = paintState != PaintState::abandoned;
+    // A row bordering the dirty area can still contribute antialiased pixels
+    // after translation. Draw its edge too, retaining the caller's damage clip.
+    PRectangle area = rcPaint;
+    const qreal edge = 1.0 / painter.device()->devicePixelRatioF();
+    area.top -= edge;
+    area.bottom += edge;
+    Paint(surface, area);
+    const bool complete = paintState != PaintState::abandoned && offset == host.scrollOffsetY;
     paintState = PaintState::notPainting;
+    painter.restore();
     queueUpdate();
     return complete;
 }
@@ -201,11 +270,12 @@ ScintillaQuickAdapter::paint(QPainter& painter, const QRect& rect)
 qsizetype
 ScintillaQuickAdapter::visibleTextEnd()
 {
+    RefreshStyleData();
+    WrapLines(WrapScope::wsVisible);
+    synchronizeVerticalScroll();
     const PRectangle viewport = GetClientRectangle();
     if (viewport.Width() <= 0 || viewport.Height() <= 0)
         return pdoc->Length();
-    RefreshStyleData();
-    WrapLines(WrapScope::wsVisible);
     // Include the character at the lower-right edge, including a partial row.
     // Hit testing uses the current styles, wrapping, and horizontal offset.
     const Sci::Position position = PositionFromLocation(Point(viewport.right, viewport.bottom), false, true);
@@ -438,6 +508,7 @@ ScintillaQuickAdapter::key(QKeyEvent* event)
         (event->text().front().isPrint() || event->text().front().isHighSurrogate()) &&
         !(event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier))) {
         insertQString(event->text(), CharacterSource::DirectInput);
+        revealPosition(sel.RangeMain().caret);
         consumed = true;
     }
     queueUpdate();
@@ -447,28 +518,31 @@ ScintillaQuickAdapter::key(QKeyEvent* event)
 void
 ScintillaQuickAdapter::mouse(QMouseEvent* event)
 {
-    const Point pt = point(event->position());
     const KeyMod mods = modifiers(event->modifiers());
     if (event->type() == QEvent::MouseMove) {
-        ButtonMoveWithModifiers(pt, timestamp(), mods);
+        ButtonMoveWithModifiers(contentPoint(event->position()), timestamp(), mods);
     } else if (event->button() == Qt::LeftButton) {
         if (event->type() == QEvent::MouseButtonRelease)
-            ButtonUpWithModifiers(pt, timestamp(), mods);
+            ButtonUpWithModifiers(contentPoint(event->position()), timestamp(), mods);
         else {
             cancelComposition();
-            ButtonDownWithModifiers(pt, timestamp(), mods);
+            ButtonDownWithModifiers(contentPoint(event->position()), timestamp(), mods);
         }
     } else if (event->button() == Qt::RightButton && event->type() == QEvent::MouseButtonPress) {
         cancelComposition();
-        RightButtonDownWithModifiers(pt, timestamp(), mods);
-        ContextMenu(pt);
+        RightButtonDownWithModifiers(contentPoint(event->position()), timestamp(), mods);
+        ContextMenu(contentPoint(event->position()));
     }
+    if (event->button() == Qt::LeftButton)
+        revealPosition(sel.RangeMain().caret);
+    else
+        finishSelectionScroll();
     queueUpdate();
 }
 void
 ScintillaQuickAdapter::hover(QPointF position, Qt::KeyboardModifiers mods)
 {
-    ButtonMoveWithModifiers(point(position), timestamp(), modifiers(mods));
+    ButtonMoveWithModifiers(contentPoint(position), timestamp(), modifiers(mods));
 }
 void
 ScintillaQuickAdapter::leave()
@@ -484,28 +558,218 @@ ScintillaQuickAdapter::releaseMouse()
 void
 ScintillaQuickAdapter::wheel(QWheelEvent* event)
 {
+    RefreshStyleData();
+    synchronizeVerticalScroll();
     const QPoint pixels = event->pixelDelta();
     if (!pixels.isNull()) {
-        wheelRemainder -= pixels.y();
-        const int lines = int(wheelRemainder / qMax(1, vs.lineHeight));
-        wheelRemainder -= lines * vs.lineHeight;
-        ScrollTo(topLine + lines);
+        setVerticalOffset(verticalOffset() - pixels.y());
         if (!Wrapping())
             HorizontalScrollTo(xOffset - pixels.x());
     } else {
         const QPoint delta = event->angleDelta();
-        const int lines = -delta.y() * QGuiApplication::styleHints()->wheelScrollLines() / 120;
+        const qreal lines = -qreal(delta.y()) * QGuiApplication::styleHints()->wheelScrollLines() / 120;
         if (event->modifiers() & Qt::ShiftModifier) {
             if (!Wrapping())
-                HorizontalScrollTo(xOffset + lines * int(vs.aveCharWidth));
+                HorizontalScrollTo(xOffset + qRound(lines * vs.aveCharWidth));
         } else {
-            ScrollTo(topLine + lines);
+            setVerticalOffset(verticalOffset() + lines * vs.lineHeight);
             if (!Wrapping())
                 HorizontalScrollTo(xOffset - delta.x() * int(vs.aveCharWidth) / 120);
         }
     }
     event->accept();
     queueUpdate();
+}
+
+PRectangle
+ScintillaQuickAdapter::GetClientRectangle() const
+{
+    PRectangle rect = Editor::GetClientRectangle();
+    rect.Move(0, host.scrollOffsetY);
+    return rect;
+}
+
+Point
+ScintillaQuickAdapter::contentPoint(QPointF point)
+{
+    RefreshStyleData();
+    return host.toContent(point);
+}
+
+qreal
+ScintillaQuickAdapter::verticalOffset() const
+{
+    return qreal(topLine) * qMax(1, vs.lineHeight) + host.scrollOffsetY;
+}
+
+bool
+ScintillaQuickAdapter::moveVerticalOffset(qreal position, bool reuseImage)
+{
+    qreal next = qBound(0.0, position, verticalMaximum);
+    const int height = qMax(1, vs.lineHeight);
+    const qreal aligned = std::round(next / height) * height;
+    if (qFuzzyCompare(next, aligned))
+        next = qMin(aligned, verticalMaximum);
+    const auto line = static_cast<Sci::Line>(std::floor(next / height));
+    const qreal offset = next - qreal(line) * height;
+    if (line == topLine && qFuzzyIsNull(offset - host.scrollOffsetY))
+        return false;
+    const qreal previous = verticalOffset();
+    // Timed selection dragging reuses these points without another Qt mouse event.
+    if (ptMouseLast.x != -1 || ptMouseLast.y != -1)
+        ptMouseLast.y += offset - host.scrollOffsetY;
+    lastClick.y += offset - host.scrollOffsetY;
+    host.scrollOffsetY = offset;
+    SetTopLine(line);
+    ContainerNeedsUpdate(Update::VScroll);
+    if (paintState != PaintState::notPainting)
+        paintState = PaintState::abandoned;
+    if (reuseImage)
+        host.item->scrollImage(previous - next);
+    else
+        host.item->invalidateImage();
+    return true;
+}
+
+bool
+ScintillaQuickAdapter::synchronizeVerticalScroll()
+{
+    const int height = qMax(1, vs.lineHeight);
+    const qreal page = qMax(1.0, Editor::GetClientRectangle().Height());
+    const qreal maximum = qMax(0.0, qreal(pcs->LinesDisplayed()) * height - (endAtLastLine ? page : height));
+    const bool changed = page != verticalPage || maximum != verticalMaximum || height != scrollLineHeight;
+    verticalPage = page;
+    verticalMaximum = maximum;
+    // Preserve the top display row and the fraction of it hidden by a font/zoom change.
+    const qreal position = qreal(topLine) * height + host.scrollOffsetY * height / scrollLineHeight;
+    scrollLineHeight = height;
+    const bool moved = moveVerticalOffset(position, false);
+    if (moved)
+        finishVerticalScroll();
+    else if (changed && scrollChanged)
+        scrollChanged();
+    return changed || moved;
+}
+
+void
+ScintillaQuickAdapter::finishVerticalScroll()
+{
+    // Popups refer to a document position; dismiss them when their viewport moves.
+    AutoCompleteCancel();
+    ct.CallTipCancel();
+    if (scrollChanged)
+        scrollChanged();
+    queueUpdate();
+}
+
+void
+ScintillaQuickAdapter::setVerticalOffset(qreal position)
+{
+    if (!std::isfinite(position))
+        return;
+    RefreshStyleData();
+    synchronizeVerticalScroll();
+    if (moveVerticalOffset(position, true)) {
+        StyleAreaBounded(GetClientRectangle(), true);
+        Editor::SetVerticalScrollPos();
+        finishVerticalScroll();
+    }
+}
+
+void
+ScintillaQuickAdapter::setVerticalPosition(qreal position)
+{
+    if (!std::isfinite(position))
+        return;
+    RefreshStyleData();
+    synchronizeVerticalScroll();
+    setVerticalOffset(qBound(0.0, position, 1.0) * (verticalMaximum + verticalPage));
+}
+
+void
+ScintillaQuickAdapter::moveCaretInsideViewport(bool scrollHorizontally)
+{
+    RefreshStyleData();
+    synchronizeVerticalScroll();
+    const PRectangle viewport = GetClientRectangle();
+    const qreal height = vs.lineHeight;
+    qreal firstRowY = std::ceil(viewport.top / height) * height;
+    qreal lastRowY = (std::floor(viewport.bottom / height) - 1) * height;
+    if (lastRowY < firstRowY) {
+        // A very short viewport may contain only partial rows. Keep its position
+        // and use the row at its centre instead of trying to reveal a whole row.
+        firstRowY = lastRowY = std::floor((viewport.top + viewport.bottom) / (2 * height)) * height;
+    }
+    const Point caret = PointMainCaret();
+    const qreal y = qBound(firstRowY, caret.y, lastRowY);
+    if (y != caret.y) {
+        SelectionPosition position =
+          SPositionFromLocation(Point(lastXChosen - xOffset, y), false, false, UserVirtualSpace());
+        // The end of a wrapped row belongs to the next row for caret placement.
+        if (Wrapping() && position.Position() > 0 && LocationFromPosition(position).y > y)
+            position = SelectionPosition(pdoc->MovePositionOutsideChar(position.Position() - 1, -1));
+        MovePositionTo(position, Selection::SelTypes::none, false);
+        if (scrollHorizontally)
+            EnsureCaretVisible(true, false, true);
+    }
+}
+
+void
+ScintillaQuickAdapter::revealPosition(SelectionPosition position)
+{
+    RefreshStyleData();
+    synchronizeVerticalScroll();
+    const qreal y = LocationFromPosition(position).y - host.scrollOffsetY;
+    // The core handles distant positions and caret policies. Complete its row-based
+    // scrolling only when the target row is still clipped at a viewport edge.
+    if (y < 0 && y + vs.lineHeight > 0)
+        setVerticalOffset(verticalOffset() + y);
+    else if (y >= 0 && y < verticalPage && y + vs.lineHeight > verticalPage)
+        setVerticalOffset(verticalOffset() + y + qMin(qreal(vs.lineHeight), verticalPage) - verticalPage);
+}
+
+int
+ScintillaQuickAdapter::KeyCommand(Message message)
+{
+    if (message == Message::LineScrollUp || message == Message::LineScrollDown) {
+        RefreshStyleData();
+        setVerticalOffset(verticalOffset() + (message == Message::LineScrollUp ? -vs.lineHeight : vs.lineHeight));
+        moveCaretInsideViewport(false);
+        return 0;
+    }
+    const SelectionPosition previous = sel.RangeMain().caret;
+    const int result = ScintillaBase::KeyCommand(message);
+    switch (message) {
+        case Message::ScrollToStart:
+        case Message::ScrollToEnd:
+            // Absolute viewport commands use pixel endpoints and leave the caret in place.
+            RefreshStyleData();
+            synchronizeVerticalScroll();
+            setVerticalOffset(message == Message::ScrollToStart ? 0 : verticalMaximum);
+            break;
+        case Message::Cancel:
+        case Message::LineCopy:
+            // Cancelling modes and copying preserve the viewport even when the caret row is clipped.
+            break;
+        case Message::ZoomIn:
+        case Message::ZoomOut:
+            // WndProc must observe the invalid styles before refreshing font metrics.
+            // The refresh preserves the viewport's row fraction without revealing the caret.
+            break;
+        default:
+            if (!ac.Active() || sel.RangeMain().caret != previous)
+                revealPosition(sel.RangeMain().caret);
+            break;
+    }
+    return result;
+}
+
+void
+ScintillaQuickAdapter::finishSelectionScroll()
+{
+    const qreal y = host.toItem(ptMouseLast).y();
+    if (HaveMouseCapture() && (y < 0 || y >= verticalPage))
+        revealPosition(posDrag.IsValid() ? posDrag : sel.RangeMain().caret);
 }
 
 bool
@@ -651,6 +915,7 @@ ScintillaQuickAdapter::inputMethod(QInputMethodEvent* event)
         EnsureCaretVisible();
     }
     ShowCaretAtCurrentPosition();
+    revealPosition(sel.RangeMain().caret);
     queueUpdate();
     event->accept();
 }
@@ -666,7 +931,7 @@ ScintillaQuickAdapter::inputQuery(Qt::InputMethodQuery query)
     if (query == Qt::ImCursorRectangle || query == Qt::ImAnchorRectangle) {
         const auto pt =
           LocationFromPosition(query == Qt::ImAnchorRectangle ? sel.RangeMain().anchor.Position() : position);
-        return QRectF(pt.x, pt.y, qMax(1, vs.caret.width), qMax(1, vs.lineHeight));
+        return QRectF(host.toItem(pt), QSizeF(qMax(1, vs.caret.width), qMax(1, vs.lineHeight)));
     }
     if (query == Qt::ImCurrentSelection)
         return selectionText();
@@ -743,14 +1008,16 @@ ScintillaQuickAdapter::CaseMapString(const std::string& text, CaseMapping mappin
 void
 ScintillaQuickAdapter::ScrollText(Sci::Line delta)
 {
-    host.item->scrollImage(delta * vs.lineHeight);
+    const qreal previous = verticalOffset() + qreal(delta) * vs.lineHeight;
+    synchronizeVerticalScroll();
+    host.item->scrollImage(previous - verticalOffset());
 }
 void
 ScintillaQuickAdapter::SetVerticalScrollPos()
 {
     Editor::SetVerticalScrollPos();
-    if (scrollChanged)
-        scrollChanged();
+    synchronizeVerticalScroll();
+    finishVerticalScroll();
 }
 void
 ScintillaQuickAdapter::setHorizontalPosition(qreal position)
@@ -788,14 +1055,11 @@ ScintillaQuickAdapter::synchronizeHorizontalScroll()
     return changed;
 }
 bool
-ScintillaQuickAdapter::ModifyScrollBars(Sci::Line maximum, Sci::Line page)
+ScintillaQuickAdapter::ModifyScrollBars(Sci::Line, Sci::Line)
 {
-    const int vPage = qMax<Sci::Line>(1, page);
-    const int vMax = qMax<Sci::Line>(0, maximum - vPage + 1);
+    const bool verticalChanged = synchronizeVerticalScroll();
     const bool horizontalChanged = synchronizeHorizontalScroll();
-    const bool changed = vPage != verticalPage || vMax != verticalMaximum || horizontalChanged;
-    verticalPage = vPage;
-    verticalMaximum = vMax;
+    const bool changed = verticalChanged || horizontalChanged;
     if (changed && scrollChanged)
         scrollChanged();
     return changed;
@@ -894,6 +1158,9 @@ ScintillaQuickAdapter::NotifyParent(NotificationData data)
     // Recompute selection extents after the core finishes dispatching the notification.
     if (data.nmhdr.code == Notification::UpdateUI && FlagSet(data.updated, Update::Selection) && trackLineWidth)
         widthTimer.start(0);
+    if ((data.nmhdr.code == Notification::DwellStart || data.nmhdr.code == Notification::DwellEnd) &&
+        (data.x != -1 || data.y != -1))
+        data.y = std::floor(data.y - host.scrollOffsetY);
     if (notification)
         notification(data);
 }
@@ -937,6 +1204,8 @@ ScintillaQuickAdapter::timerEvent(QTimerEvent* event)
     for (size_t i = 0; i < timers.size(); ++i)
         if (timers[i] == event->timerId()) {
             TickFor(static_cast<TickReason>(i));
+            if (static_cast<TickReason>(i) == TickReason::scroll)
+                finishSelectionScroll();
             queueUpdate();
             break;
         }
@@ -988,7 +1257,7 @@ ScintillaQuickAdapter::StartDrag()
 void
 ScintillaQuickAdapter::dragMove(QPointF position)
 {
-    SetDragPosition(SPositionFromLocation(point(position), false, false, UserVirtualSpace()));
+    SetDragPosition(SPositionFromLocation(contentPoint(position), false, false, UserVirtualSpace()));
 }
 void
 ScintillaQuickAdapter::dragLeave()
@@ -1012,7 +1281,7 @@ ScintillaQuickAdapter::drop(QPointF position, const QMimeData* mime, bool move)
         cancelComposition();
     }
     const auto bytes = mime->text().toUtf8();
-    DropAt(SPositionFromLocation(point(position), false, false, UserVirtualSpace()),
+    DropAt(SPositionFromLocation(contentPoint(position), false, false, UserVirtualSpace()),
            std::string_view(bytes.constData(), bytes.size()),
            move,
            mime->hasFormat(rectangularMime));
@@ -1029,7 +1298,7 @@ ScintillaQuickAdapter::CreateCallTipWindow(PRectangle rect)
               ct.PaintCT(surface);
           },
           [this](QPointF pt, bool) {
-              ct.MouseClick(point(pt));
+              ct.MouseClick(PointFromQPointF(pt));
               CallTipClick();
           });
     }

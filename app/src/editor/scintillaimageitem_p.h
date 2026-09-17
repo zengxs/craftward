@@ -21,7 +21,7 @@ class ScintillaImageItem : public QQuickItem
     explicit ScintillaImageItem(QQuickItem* parent = nullptr);
     void invalidateImage(const QRectF& rect);
     void invalidateImage();
-    void scrollImage(int dy);
+    void scrollImage(qreal dy);
 
   protected:
     virtual bool paintImage(QPainter& painter, const QRect& rect) = 0;
