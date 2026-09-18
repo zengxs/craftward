@@ -8,6 +8,8 @@ qt_add_qml_module(CraftwardComponents
         "${PROJECT_SOURCE_DIR}/src/components/applicationfiles.h"
         "${PROJECT_SOURCE_DIR}/src/components/projectfilesmodel.cpp"
         "${PROJECT_SOURCE_DIR}/src/components/projectfilesmodel.h"
+        "${PROJECT_SOURCE_DIR}/src/components/popupanchortoggle.cpp"
+        "${PROJECT_SOURCE_DIR}/src/components/popupanchortoggle.h"
         "${PROJECT_SOURCE_DIR}/src/components/popuppositioner.cpp"
         "${PROJECT_SOURCE_DIR}/src/components/popuppositioner.h"
         "${PROJECT_SOURCE_DIR}/src/components/macos/typography.mm"
@@ -36,6 +38,7 @@ qt_add_qml_module(CraftwardComponents
         PanelTab.qml
         PrimaryButton.qml
         WindowMoveHandler.qml
+        WindowPopover.qml
 )
 
 target_include_directories(CraftwardComponents

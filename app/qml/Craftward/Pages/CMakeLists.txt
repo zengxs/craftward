@@ -22,8 +22,10 @@ qt_add_qml_module(CraftwardPages
         CodexHistoryActionState.qml
         CodexHistoryLayoutState.qml
         CodexHistoryPage.qml
+        CodexImagePreview.qml
         CodexInteractionCard.qml
         CodexMessageActions.qml
+        CodexMessageAttachments.qml
         CodexMessageActionState.qml
         CodexModelSelector.qml
         CodexReasoningEffortSelector.qml
@@ -34,6 +36,8 @@ qt_add_qml_module(CraftwardPages
         CodexTimelineViewport.qml
         CodexTurnControlState.qml
         FileContentView.qml
+        ImageContentView.qml
+        ImageViewState.qml
         ProjectFilesPane.qml
         SettingsGeneralPage.qml
         TerminalPanel.qml

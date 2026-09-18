@@ -3,6 +3,74 @@
 <TS version="2.1" language="en" sourcelanguage="en">
 <context>
     <name></name>
+    <message id="craftward.image.previous">
+        <source>Previous image</source>
+        <translation>Previous image</translation>
+    </message>
+    <message id="craftward.image.next">
+        <source>Next image</source>
+        <translation>Next image</translation>
+    </message>
+    <message id="craftward.image.position">
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message id="craftward.image.accessible_position">
+        <source>Image %1 of %2</source>
+        <translation>Image %1 of %2</translation>
+    </message>
+    <message id="craftward.image.open_tab">
+        <source>Open in Tab</source>
+        <translation>Open in Tab</translation>
+    </message>
+    <message id="craftward.image.number">
+        <source>Image %1</source>
+        <translation>Image %1</translation>
+    </message>
+    <message id="craftward.image.zoom_out">
+        <source>Zoom out</source>
+        <translation>Zoom out</translation>
+    </message>
+    <message id="craftward.image.zoom_in">
+        <source>Zoom in</source>
+        <translation>Zoom in</translation>
+    </message>
+    <message id="craftward.image.actual_size">
+        <source>Actual size</source>
+        <translation>Actual size</translation>
+    </message>
+    <message id="craftward.image.fit">
+        <source>Fit</source>
+        <translation>Fit</translation>
+    </message>
+    <message id="craftward.attachment.previous">
+        <source>Previous attachments</source>
+        <translation>Previous attachments</translation>
+    </message>
+    <message id="craftward.attachment.next">
+        <source>Next attachments</source>
+        <translation>Next attachments</translation>
+    </message>
+    <message id="craftward.attachment.count" numerus="yes">
+        <source>%n attachment(s)</source>
+        <translation><numerusform>%n attachment</numerusform><numerusform>%n attachments</numerusform></translation>
+    </message>
+    <message id="craftward.codex.attachment.image">
+        <source>Image</source>
+        <translation>Image</translation>
+    </message>
+    <message id="craftward.codex.attachment.pasted_text">
+        <source>Pasted text</source>
+        <translation>Pasted text</translation>
+    </message>
+    <message id="craftward.codex.attachment.close">
+        <source>Close</source>
+        <translation>Close</translation>
+    </message>
+    <message id="craftward.codex.attachment.preview_unavailable">
+        <source>Image preview unavailable</source>
+        <translation>Image preview unavailable</translation>
+    </message>
     <message id="craftward.file.open_failed">
         <source>Could not open this file with the default application.</source>
         <translation>Could not open this file with the default application.</translation>

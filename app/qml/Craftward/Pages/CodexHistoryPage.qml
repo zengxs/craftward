@@ -339,7 +339,7 @@ Page {
 
             WorkbenchContentMenu {
                 id: contentMenu
-                fileActive: workspaceState.activeTab !== null
+                fileActive: workspaceState.activeTab !== null && workspaceState.activeTab.kind !== "image"
                 hasConversation: root.conversation.threadId.length > 0
                 archived: root.controller.showingArchived
                 renameAllowed: renameDialog.renameAllowed
@@ -381,7 +381,7 @@ Page {
                 IconButton {
                     icon.source: "qrc:///icons/hugeicons/folder-02.svg"
                     toolTipText: /*% "Show in File List" */ qsTrId("craftward.file.reveal")
-                    visible: workspaceState.activeTab !== null && !workspaceState.activeTab.external
+                    visible: workspaceState.activeTab !== null && workspaceState.activeTab.kind !== "image" && !workspaceState.activeTab.external
                     onClicked: {
                         workspaceState.filesExpanded = true;
                         if (!layoutState.filesVisible)
@@ -393,7 +393,7 @@ Page {
                     id: contentMenuButton
                     icon.source: "qrc:///icons/hugeicons/more-horizontal-circle-02.svg"
                     toolTipText: /*% "More Actions" */ qsTrId("craftward.actions.more")
-                    visible: workspaceState.activeTab !== null
+                    visible: workspaceState.activeTab !== null && workspaceState.activeTab.kind !== "image"
                     onClicked: contentMenu.popup(contentMenuButton, 0, contentMenuButton.height)
                 }
             }
@@ -435,15 +435,13 @@ Page {
                         timelineRenderBenchmarkEnabled: root.timelineRenderBenchmarkEnabled
                         timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
                         onFileLocationRequested: (file, start, end) => root.openFile(file, start, end)
+                        onOpenImageRequested: image => workspaceState.openImage(image)
                     }
                     Loader {
                         anchors.fill: parent
                         active: workspaceState.activeTab !== null
                         visible: active
-                        sourceComponent: FileContentView {
-                            file: workspaceState.activeTab
-                            onOpenExternallyRequested: path => root.fileLocationRequested(path, 0, 0)
-                        }
+                        sourceComponent: workspaceState.activeTab && workspaceState.activeTab.kind === "image" ? imageTabComponent : fileTabComponent
                     }
                 }
                 Loader {
@@ -483,6 +481,21 @@ Page {
                 onFileRequested: path => root.openFile(path)
                 onOpenFileRequested: root.chooseFile()
             }
+        }
+    }
+
+    Component {
+        id: imageTabComponent
+        ImageContentView {
+            resource: workspaceState.activeTab ? workspaceState.activeTab.resource : null
+            viewState: workspaceState.activeTab ? (workspaceState.activeTab.viewState ?? null) : null
+        }
+    }
+    Component {
+        id: fileTabComponent
+        FileContentView {
+            file: workspaceState.activeTab
+            onOpenExternallyRequested: path => root.fileLocationRequested(path, 0, 0)
         }
     }
 

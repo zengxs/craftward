@@ -16,6 +16,7 @@ Control {
     required property var timelineModel
     property var selectionHost: null
     property var annotationHandler: null
+    property var imagePreviewHandler: null
     property int sourceRow: -1
     property int dataRevision: -1
     required property bool turnExpanded
@@ -46,7 +47,8 @@ Control {
     readonly property bool firstBlockInMessage: root.firstBlockInEntry
     readonly property bool lastBlockInMessage: root.lastBlockInEntry
     readonly property int annotationCount: Number(root.value("annotationCount") ?? 0)
-    readonly property bool hasMessageBody: !root.annotationCount || root.textValue("displayText").trim().length > 0
+    readonly property var attachments: root.fromUser ? (root.value("attachments") ?? []) : []
+    readonly property bool hasMessageBody: (!root.annotationCount && !root.attachments.length) || root.textValue("displayText").trim().length > 0
     readonly property real semanticBlockSpacing: {
         if (!root.semanticBlock || root.lastBlockInEntry)
             return 0;
@@ -59,16 +61,22 @@ Control {
     signal toggleTurnRequested(string turnId)
     signal forkRequested(string turnId)
     signal fileLocationRequested(string file, int start, int end)
+    signal openImageRequested(var image)
 
     function handleAnnotation(action, item, hit) {
         if (root && root.annotationHandler)
             root.annotationHandler(root.sourceEntryId, action, item, hit);
     }
 
-    onEntryIdChanged: if (root.annotationHandler)
-        root.annotationHandler("", "invalidate", root, ({}))
-    onVisibleChanged: if (!visible && root.annotationHandler)
-        root.annotationHandler("", "invalidate", root, ({}))
+    function invalidatePreviews() {
+        if (annotationHandler)
+            annotationHandler("", "invalidate", root, ({}));
+        if (imagePreviewHandler)
+            imagePreviewHandler("invalidate", root);
+    }
+    onEntryIdChanged: invalidatePreviews()
+    onVisibleChanged: if (!visible)
+        invalidatePreviews()
 
     function prepareItemForLayout(item) {
         if (!item)
@@ -198,7 +206,7 @@ Control {
             TextMetrics {
                 id: userTextMetrics
 
-                text: root.fromUser ? root.longestLine(root.textValue("displayText") || root.textValue("text")) : ""
+                text: root.fromUser ? root.longestLine(root.textValue("displayText")) : ""
                 font: root.font
             }
 
@@ -206,8 +214,8 @@ Control {
                 id: messageContent
 
                 x: root.fromUser ? messageRoot.width - width : 0
-                width: messageRoot.messageWidth
-                height: annotationChip.height + (annotationChip.visible && root.hasMessageBody ? 8 : 0) + messageBody.height + messageActions.implicitHeight + (messageActions.available ? 2 : 0)
+                width: root.attachments.length ? messageRoot.userMaximumWidth : messageRoot.messageWidth
+                height: messageBody.y + messageBody.height + messageActions.implicitHeight + (messageActions.available ? 2 : 0)
 
                 HoverHandler {
                     id: messageHover
@@ -226,10 +234,23 @@ Control {
                     showForkActions: root.showForkActions
                 }
 
+                CodexMessageAttachments {
+                    id: attachmentCards
+                    objectName: "codexMessageAttachments"
+                    width: parent.width
+                    visible: root.attachments.length > 0 && root.firstBlockInEntry
+                    height: visible ? implicitHeight : 0
+                    attachments: visible ? root.attachments : []
+                    previewHandler: root.imagePreviewHandler
+                    onOpenImageRequested: image => root.openImageRequested(image)
+                    onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
+                }
+
                 AbstractButton {
                     id: annotationChip
                     objectName: "codexAnnotationChip"
                     x: parent.width - width
+                    y: attachmentCards.height + (attachmentCards.visible && visible ? 8 : 0)
                     visible: root.annotationCount > 0 && root.firstBlockInEntry
                     height: visible ? implicitHeight : 0
                     text: /*% "%n annotation(s)" */ qsTrId("craftward.codex.annotations.count", root.annotationCount)
@@ -282,8 +303,9 @@ Control {
                 Item {
                     id: messageBody
 
-                    width: parent.width
-                    y: annotationChip.height + (annotationChip.visible && root.hasMessageBody ? 8 : 0)
+                    x: root.fromUser ? parent.width - width : 0
+                    width: messageRoot.messageWidth
+                    y: annotationChip.y + annotationChip.height + ((annotationChip.visible || attachmentCards.visible) && root.hasMessageBody ? 8 : 0)
                     visible: root.hasMessageBody
                     height: visible ? messageRenderer.implicitHeight + messageRoot.messageTopPadding + messageRoot.messageBottomPadding : 0
 

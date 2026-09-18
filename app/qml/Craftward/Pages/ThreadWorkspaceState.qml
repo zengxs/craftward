@@ -11,6 +11,10 @@ QtObject {
     property int activeIndex: 0
     property var sessions: ({})
     property bool filesExpanded: true
+    property int nextImageNumber: 1
+    property Component imageStateFactory: Component {
+        ImageViewState {}
+    }
     readonly property var activeTab: activeIndex > 0 && activeIndex <= tabs.length ? tabs[activeIndex - 1] : null
 
     function selectThread(id) {
@@ -42,14 +46,42 @@ QtObject {
         }
     }
 
+    function openImage(image) {
+        const id = image.resourceId;
+        if (!id)
+            return;
+        const index = tabs.findIndex(tab => tab.id === id);
+        if (index >= 0) {
+            activeIndex = index + 1;
+            return;
+        }
+        const title = /*% "Image %1" */ qsTrId("craftward.image.number").arg(nextImageNumber++);
+        openTab({
+            id: id,
+            kind: "image",
+            title: title,
+            location: title,
+            path: image.path || "",
+            external: false,
+            resource: {
+                id: id,
+                url: image.url
+            },
+            viewState: imageStateFactory.createObject(root)
+        });
+    }
+
     function closeTab(index) {
         if (index <= 0 || index > tabs.length)
             return;
         const updated = tabs.slice();
+        const closed = updated[index - 1];
         updated.splice(index - 1, 1);
         tabs = updated;
         if (activeIndex >= index)
             activeIndex = Math.max(0, activeIndex - 1);
+        if (closed.kind === "image")
+            closed.viewState.destroy();
     }
 
     function moveTab(from, to) {

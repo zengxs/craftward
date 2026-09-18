@@ -83,8 +83,8 @@ Pane {
             required property var modelData
             width: implicitWidth
             text: modelData.title
-            toolTipText: modelData.path || ""
-            iconSource: "qrc:///icons/hugeicons/file-02.svg"
+            toolTipText: modelData.kind === "image" ? modelData.title : (modelData.path || "")
+            iconSource: modelData.kind === "image" ? "qrc:///icons/hugeicons/image-02.svg" : "qrc:///icons/hugeicons/file-02.svg"
             badgeText: modelData.external ? /*% "External" */ qsTrId("craftward.file.external") : ""
             closeToolTipText: /*% "Close Tab" */ qsTrId("craftward.tab.close")
             selected: root.selectedIndex === index + 1

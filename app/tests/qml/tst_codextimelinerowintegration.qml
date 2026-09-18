@@ -18,6 +18,13 @@ Item {
     property bool forkEnabled: true
     property bool showForkActions: true
     property string lastForkedTurnId
+    property var lastFileLocation: null
+    property var lastOpenedImage: null
+
+    Pages.CodexImagePreview {
+        id: imagePreview
+        onOpenImageRequested: image => suite.lastOpenedImage = image
+    }
 
     ListModel {
         id: fakeTimelineModel
@@ -44,6 +51,9 @@ Item {
 
         function valueAt(sourceRow, roleName) {
             const row = rows[sourceRow];
+            // Match the fresh QVariantList returned by the C++ model on each read.
+            if (row && roleName === "attachments" && row.attachments)
+                return row.attachments.map(item => Object.assign({}, item));
             return row ? row[roleName] : undefined;
         }
 
@@ -62,6 +72,8 @@ Item {
 
         Pages.CodexTimelineRow {
             timelineModel: fakeTimelineModel
+            imagePreviewHandler: imagePreview.handle
+            onOpenImageRequested: image => suite.lastOpenedImage = image
             turnExpanded: false
             hasRunningEvidence: suite.hasRunningEvidence
             activityShimmerEnabled: suite.activityShimmerEnabled
@@ -69,6 +81,11 @@ Item {
             showForkActions: suite.showForkActions
             wallClockUnixMilliseconds: 0
             onForkRequested: turnId => suite.lastForkedTurnId = turnId
+            onFileLocationRequested: (file, start, end) => suite.lastFileLocation = ({
+                        file,
+                        start,
+                        end
+                    })
         }
     }
 
@@ -128,6 +145,7 @@ Item {
         }
 
         function destroyViewport() {
+            imagePreview.dismiss();
             if (!suite.viewport)
                 return;
             suite.viewport.destroy();
@@ -142,6 +160,8 @@ Item {
             suite.forkEnabled = true;
             suite.showForkActions = true;
             suite.lastForkedTurnId = "";
+            suite.lastFileLocation = null;
+            suite.lastOpenedImage = null;
         }
 
         function cleanup() {
@@ -206,6 +226,344 @@ Item {
                     firstBlockInEntry: false
                 })]);
             verify(!findChild(row, "codexAnnotationChip").visible);
+        }
+
+        function test_fileOnlyMessageOpensFileAndCopiesWithoutAnEmptyBubble() {
+            const copyText = "Pasted excerpt: /missing/pasted-text.txt:2-4";
+            const row = createViewport([messageRow({
+                    fromUser: true,
+                    finalAnswer: false,
+                    text: copyText,
+                    displayText: "",
+                    semanticBlock: false,
+                    attachments: [
+                        {
+                            label: "Pasted excerpt",
+                            path: "/missing/pasted-text.txt",
+                            image: false,
+                            pasted: true,
+                            startLine: 2,
+                            endLine: 4
+                        }
+                    ]
+                })]);
+            const attachments = findChild(row, "codexMessageAttachments");
+            verify(attachments.visible);
+            verify(attachments.height > 0);
+            verify(!findChild(row, "codexUserMessageSurface").visible);
+            const card = findChild(attachments, "codexAttachmentCard");
+            mouseClick(card);
+            compare(suite.lastFileLocation.file, "/missing/pasted-text.txt");
+            compare(suite.lastFileLocation.start, 2);
+            compare(suite.lastFileLocation.end, 4);
+            findChild(row, "codexMessageActions").copyRequested();
+            compare(ApplicationClipboard.lastCopiedText, copyText);
+        }
+
+        function test_imagePreviewAndAnnotationsShareTheFirstSegment() {
+            const input = messageRow({
+                fromUser: true,
+                finalAnswer: false,
+                displayText: "Compare these",
+                annotationCount: 1,
+                attachments: [
+                    {
+                        label: "Design sketch",
+                        path: "/work/design.png",
+                        image: true,
+                        url: Qt.resolvedUrl("fixtures/attachment-small.png")
+                    }
+                ]
+            });
+            let row = createViewport([input]);
+            const attachments = findChild(row, "codexMessageAttachments");
+            const thumbnail = findChild(attachments, "codexAttachmentThumbnail");
+            tryCompare(thumbnail, "status", Image.Ready);
+            tryCompare(findChild(attachments, "codexAttachmentCard"), "height", 90);
+            tryCompare(attachments, "height", 90);
+            row.prepareForLayout();
+            verify(waitForPolish(suite.viewport));
+            const chip = findChild(row, "codexAnnotationChip");
+            const surface = findChild(row, "codexUserMessageSurface");
+            verify(chip.visible && surface.visible);
+            verify(chip.mapToItem(row, 0, 0).y > attachments.mapToItem(row, 0, attachments.height).y);
+            verify(surface.mapToItem(row, 0, 0).y > chip.mapToItem(row, 0, chip.height).y);
+            const height = row.implicitHeight;
+            const card = findChild(attachments, "codexAttachmentCard");
+            const preview = imagePreview;
+            mouseMove(card, card.width / 2, card.height / 2);
+            wait(550);
+            verify(!preview.visible);
+            mouseClick(card);
+            tryCompare(preview, "opened", true);
+            tryCompare(findChild(preview, "codexAttachmentFullImage"), "status", Image.Ready);
+            compare(row.implicitHeight, height);
+            keyClick(Qt.Key_Escape);
+            tryCompare(preview, "visible", false);
+            mouseClick(card);
+            tryCompare(preview, "opened", true);
+            mouseClick(preview.contentItem, 1, preview.height + 20);
+            tryCompare(preview, "visible", false);
+
+            row = createViewport([Object.assign({}, input, {
+                    firstBlockInEntry: false
+                })]);
+            verify(!findChild(row, "codexMessageAttachments").visible);
+            verify(!findChild(row, "codexAnnotationChip").visible);
+        }
+
+        function test_thumbnailFitsInsideAFixedSquare_data() {
+            return [
+                {
+                    tag: "small",
+                    width: 90,
+                    height: 90 * 48 / 130
+                },
+                {
+                    tag: "landscape",
+                    width: 90,
+                    height: 60
+                },
+                {
+                    tag: "portrait",
+                    width: 30,
+                    height: 90
+                },
+                {
+                    tag: "panorama",
+                    width: 90,
+                    height: 1.8
+                }
+            ];
+        }
+
+        function test_thumbnailFitsInsideAFixedSquare(data) {
+            const row = createViewport([messageRow({
+                    fromUser: true,
+                    finalAnswer: false,
+                    displayText: "A short request",
+                    attachments: [
+                        {
+                            label: data.tag + ".png",
+                            path: "/test/" + data.tag + ".png",
+                            image: true,
+                            url: Qt.resolvedUrl("fixtures/attachment-" + data.tag + ".png")
+                        }
+                    ]
+                })]);
+            const card = findChild(row, "codexAttachmentCard");
+            const thumbnail = findChild(card, "codexAttachmentThumbnail");
+            compare(card.width, 90);
+            compare(card.height, 90);
+            tryCompare(thumbnail, "status", Image.Ready);
+            tryVerify(() => Math.abs(thumbnail.width - data.width) < 1 && Math.abs(thumbnail.height - data.height) < 1);
+            verify(Math.abs(thumbnail.x - (90 - thumbnail.width) / 2) < 1);
+            verify(Math.abs(thumbnail.y - (90 - thumbnail.height) / 2) < 1);
+            tryCompare(findChild(row, "codexMessageAttachments"), "height", card.height);
+            verify(!findChild(card, "codexAttachmentFileLabel").visible);
+            tryVerify(() => {
+                // Sample the presented viewport, including ancestor layering.
+                const image = grabImage(suite.viewport);
+                const center = card.mapToItem(suite.viewport, card.width / 2, card.height / 2);
+                const centerX = Math.floor(center.x * image.width / suite.viewport.width);
+                const centerY = Math.floor(center.y * image.height / suite.viewport.height);
+                return image.blue(centerX, centerY) > image.red(centerX, centerY) + 50;
+            }, 5000, "The thumbnail must render the blue fixture, not just its frame.");
+            const surface = findChild(row, "codexUserMessageSurface");
+            verify(surface.width < 240);
+            tryVerify(() => surface.mapToItem(row, 0, 0).y > card.mapToItem(row, 0, card.height).y);
+        }
+
+        function test_loadedImagesScrollWithoutRecreationOrChangingOrder() {
+            const row = createViewport([messageRow({
+                    fromUser: true,
+                    finalAnswer: false,
+                    displayText: "",
+                    semanticBlock: false,
+                    attachments: ["landscape", "small", "portrait", "panorama"].map(tag => ({
+                                label: tag,
+                                path: "",
+                                image: true,
+                                url: Qt.resolvedUrl("fixtures/attachment-" + tag + ".png")
+                            }))
+                })]);
+            const attachments = findChild(row, "codexMessageAttachments");
+            const first = findChild(attachments, "codexAttachmentCard");
+            const cards = first.parent.children.filter(item => item.objectName === "codexAttachmentCard");
+            compare(cards.length, 4);
+            for (const card of cards) {
+                tryCompare(findChild(card, "codexAttachmentThumbnail"), "status", Image.Ready);
+                compare(card.width, 90);
+                compare(card.height, 90);
+            }
+            tryCompare(attachments, "height", 90);
+            for (let index = 1; index < cards.length; ++index) {
+                compare(cards[index].y, cards[0].y);
+                compare(cards[index].x, cards[index - 1].x + 98);
+            }
+            attachments.width = 188;
+            tryCompare(attachments, "height", 120);
+            const strip = findChild(attachments, "codexAttachmentStrip");
+            compare(strip.contentX, 0);
+            compare(cards[0].y, cards[3].y);
+            mouseClick(findChild(attachments, "attachmentScrollNext"));
+            tryVerify(() => strip.contentX > 0);
+            mouseClick(findChild(attachments, "attachmentScrollNext"));
+            compare(strip.contentX, strip.contentWidth - strip.width);
+            verify(!findChild(attachments, "attachmentScrollNext").enabled);
+            const scrolledPosition = strip.contentX;
+            ++fakeTimelineModel.revision;
+            wait(0);
+            compare(strip.contentX, scrolledPosition);
+            compare(findChild(attachments, "codexAttachmentCard"), first);
+            cards[3].forceActiveFocus();
+            suite.Window.window.requestActivate();
+            tryVerify(() => cards[3].activeFocus);
+            keyClick(Qt.Key_Left);
+            keyClick(Qt.Key_Left);
+            keyClick(Qt.Key_Left);
+            tryCompare(strip, "contentX", 0);
+            compare(findChild(attachments, "codexAttachmentCard"), first);
+            compare(cards[0].width, 90);
+        }
+
+        function test_missingImageKeepsItsCardAndReportsUnavailablePreview() {
+            const row = createViewport([messageRow({
+                    fromUser: true,
+                    finalAnswer: false,
+                    displayText: "",
+                    semanticBlock: false,
+                    attachments: [
+                        {
+                            label: "Missing image",
+                            path: "/missing/image.png",
+                            url: "file:///missing/image.png",
+                            image: true
+                        }
+                    ]
+                })]);
+            const attachments = findChild(row, "codexMessageAttachments");
+            const thumbnail = findChild(attachments, "codexAttachmentThumbnail");
+            tryCompare(thumbnail, "status", Image.Error);
+            const card = findChild(attachments, "codexAttachmentCard");
+            verify(card.visible);
+            compare(card.width, 90);
+            compare(card.height, 90);
+            mouseClick(card);
+            const preview = imagePreview;
+            tryCompare(preview, "opened", true);
+            tryCompare(findChild(preview, "codexAttachmentFullImage"), "status", Image.Error);
+            preview.close();
+        }
+
+        function test_previewSwitchesImagesAndOnlyExplicitlyOpensATab() {
+            const row = createViewport([messageRow({
+                    fromUser: true,
+                    displayText: "Compare",
+                    attachments: ["landscape", "portrait"].map(tag => ({
+                                image: true,
+                                label: tag,
+                                resourceId: "image:" + tag,
+                                url: Qt.resolvedUrl("fixtures/attachment-" + tag + ".png")
+                            }))
+                })]);
+            const first = findChild(row, "codexAttachmentCard");
+            const cards = first.parent.children.filter(item => item.objectName === "codexAttachmentCard");
+            mouseClick(first);
+            tryCompare(imagePreview, "opened", true);
+            mouseClick(first);
+            tryCompare(imagePreview, "visible", false);
+            mouseClick(first);
+            tryCompare(imagePreview, "opened", true);
+            compare(suite.lastOpenedImage, null);
+            mouseClick(findChild(imagePreview, "imagePreviewNext"));
+            compare(imagePreview.currentImage.resourceId, "image:portrait");
+            compare(suite.lastOpenedImage, null);
+            mouseClick(cards[0]);
+            tryCompare(imagePreview, "visible", false);
+            mouseClick(cards[1]);
+            tryCompare(imagePreview, "opened", true);
+            tryCompare(imagePreview, "currentIndex", 1);
+            mouseClick(findChild(imagePreview, "imagePreviewOpenTab"));
+            tryCompare(imagePreview, "visible", false);
+            compare(suite.lastOpenedImage.resourceId, "image:portrait");
+            mouseClick(first);
+            tryCompare(imagePreview, "opened", true);
+            first.parent.x += 1;
+            tryCompare(imagePreview, "visible", false);
+        }
+
+        function test_previewStaysOpenAcrossUnrelatedTimelineUpdates_data() {
+            return [
+                {
+                    tag: "single",
+                    images: ["landscape"]
+                },
+                {
+                    tag: "selected-second",
+                    images: ["landscape", "portrait"]
+                }
+            ];
+        }
+
+        function test_previewStaysOpenAcrossUnrelatedTimelineUpdates(data) {
+            const row = createViewport([messageRow({
+                    fromUser: true,
+                    displayText: "Compare",
+                    attachments: data.images.map(tag => ({
+                                image: true,
+                                label: tag,
+                                resourceId: "image:" + tag,
+                                url: Qt.resolvedUrl("fixtures/attachment-" + tag + ".png")
+                            }))
+                })]);
+            const card = findChild(row, "codexAttachmentCard");
+            tryCompare(findChild(card, "codexAttachmentThumbnail"), "status", Image.Ready);
+            row.prepareForLayout();
+            verify(waitForPolish(suite.viewport));
+            mouseClick(card);
+            tryCompare(imagePreview, "opened", true);
+            if (data.images.length > 1)
+                mouseClick(findChild(imagePreview, "imagePreviewNext"));
+            const expectedResource = "image:" + data.images[data.images.length - 1];
+            compare(imagePreview.currentImage.resourceId, expectedResource);
+
+            ++fakeTimelineModel.revision;
+            verify(waitForPolish(suite.viewport));
+            wait(50);
+
+            verify(imagePreview.opened, "An unchanged attachment list must not dismiss the preview on a timeline revision.");
+            compare(imagePreview.currentImage.resourceId, expectedResource);
+            compare(findChild(row, "codexAttachmentCard"), card);
+        }
+
+        function test_changedAttachmentInvalidatesTheOpenPreview() {
+            const input = messageRow({
+                fromUser: true,
+                displayText: "Compare",
+                attachments: [
+                    {
+                        image: true,
+                        label: "Image",
+                        url: Qt.resolvedUrl("fixtures/attachment-landscape.png")
+                    }
+                ]
+            });
+            const row = createViewport([input]);
+            const card = findChild(row, "codexAttachmentCard");
+            tryCompare(findChild(card, "codexAttachmentThumbnail"), "status", Image.Ready);
+            row.prepareForLayout();
+            verify(waitForPolish(suite.viewport));
+            mouseClick(card);
+            tryCompare(imagePreview, "opened", true);
+
+            input.attachments[0].url = Qt.resolvedUrl("fixtures/attachment-portrait.png");
+            ++fakeTimelineModel.revision;
+
+            tryCompare(imagePreview, "visible", false);
+            const replacement = findChild(row, "codexAttachmentCard");
+            verify(replacement !== card);
+            tryCompare(findChild(replacement, "codexAttachmentThumbnail"), "status", Image.Ready);
         }
 
         function test_listContinuationUsesItsItemSpacing() {

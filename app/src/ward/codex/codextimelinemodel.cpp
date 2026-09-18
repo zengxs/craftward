@@ -3,7 +3,10 @@
 
 #include "ward/codex/codextimelinemodel.h"
 
+#include <QFileInfo>
+#include <QMimeDatabase>
 #include <QStringList>
+#include <QUrl>
 #include <QVariantMap>
 #include <QtTranslation>
 
@@ -27,7 +30,7 @@ displayMessageText(const CodexMessage& message)
 }
 
 QString
-annotatedMessageCopyText(const ward::codex::v1::AnnotatedUserMessage& message)
+userMessageCopyText(const ward::codex::v1::UserMessagePresentation& message)
 {
     QStringList parts;
     for (const auto& annotation : message.annotations()) {
@@ -36,9 +39,56 @@ annotatedMessageCopyText(const ward::codex::v1::AnnotatedUserMessage& message)
             text += QStringLiteral("\n\n") + annotation.comment();
         parts.append(std::move(text));
     }
+    for (const auto& attachment : message.attachments()) {
+        QString target = attachment.hasLocalPath() ? attachment.localPath() : attachment.imageUrl();
+        if (target.startsWith(QStringLiteral("data:")))
+            target = QStringLiteral("[image]");
+        if (attachment.hasStartLine()) {
+            target += QStringLiteral(":%1").arg(attachment.startLine());
+            if (attachment.hasEndLine() && attachment.endLine() != attachment.startLine())
+                target += QStringLiteral("-%1").arg(attachment.endLine());
+        }
+        parts.append(attachment.label().isEmpty() ? target : attachment.label() + QStringLiteral(": ") + target);
+    }
     if (!message.body().trimmed().isEmpty())
         parts.append(message.body());
     return parts.join(QStringLiteral("\n\n"));
+}
+
+QVariantList
+messageAttachments(const ward::codex::v1::UserMessagePresentation& message)
+{
+    using Source = ward::codex::v1::UserMessageAttachmentSourceGadget::UserMessageAttachmentSource;
+    QVariantList result;
+    const QMimeDatabase mimeDatabase;
+    for (const auto& attachment : message.attachments()) {
+        const QString path = attachment.hasLocalPath() ? attachment.localPath() : QString();
+        const QUrl url = attachment.hasLocalPath() ? QUrl::fromLocalFile(path) : QUrl(attachment.imageUrl());
+        const auto sources = attachment.sources();
+        const bool image =
+          attachment.hasImageUrl() || sources.contains(Source::USER_MESSAGE_ATTACHMENT_SOURCE_IMAGE_INPUT) ||
+          mimeDatabase.mimeTypeForFile(path, QMimeDatabase::MatchExtension).name().startsWith(QStringLiteral("image/"));
+        QString label = attachment.label();
+        if (label.isEmpty() && url.scheme() != QStringLiteral("data"))
+            label = attachment.hasLocalPath() ? QFileInfo(path).fileName() : url.fileName();
+        if (label.isEmpty())
+            label = /*% "Image" */ qtTrId("craftward.codex.attachment.image");
+        QVariantList sourceValues;
+        for (const auto source : sources)
+            sourceValues.append(static_cast<int>(source));
+        result.append(QVariantMap{
+          { QStringLiteral("label"), label },
+          { QStringLiteral("path"), path },
+          { QStringLiteral("url"), url },
+          { QStringLiteral("image"), image },
+          { QStringLiteral("resourceId"), attachment.resourceId() },
+          { QStringLiteral("pasted"), sources.contains(Source::USER_MESSAGE_ATTACHMENT_SOURCE_PASTED_FILE) },
+          { QStringLiteral("sources"), sourceValues },
+          { QStringLiteral("startLine"), attachment.hasStartLine() ? attachment.startLine() : 0 },
+          { QStringLiteral("endLine"), attachment.hasEndLine() ? attachment.endLine() : 0 },
+        });
+    }
+    return result;
 }
 }
 
@@ -51,7 +101,7 @@ void
 CodexTimelineModel::retranslate()
 {
     if (!rows_.isEmpty())
-        emit dataChanged(index(0), index(rows_.size() - 1), { ActivityLabelRole, ActivityItemsRole });
+        emit dataChanged(index(0), index(rows_.size() - 1), { ActivityLabelRole, ActivityItemsRole, AttachmentsRole });
 }
 
 int
@@ -105,9 +155,13 @@ CodexTimelineModel::data(const QModelIndex& index, int role) const
         case DisplayTextRole:
             return row.displayText;
         case AnnotationCountRole:
-            return row.userInputNumber > 0 && row.message.hasAnnotatedUserMessage()
-                     ? row.message.annotatedUserMessage().annotations().size()
+            return row.userInputNumber > 0 && row.message.hasUserMessagePresentation()
+                     ? row.message.userMessagePresentation().annotations().size()
                      : 0;
+        case AttachmentsRole:
+            return row.userInputNumber > 0 && row.message.hasUserMessagePresentation()
+                     ? messageAttachments(row.message.userMessagePresentation())
+                     : QVariantList();
         case MarkupDocumentRole:
             return row.activityGroup ? QVariant()
                                      : QVariant::fromValue(static_cast<QObject*>(ensureMarkupDocument(row)));
@@ -168,6 +222,7 @@ CodexTimelineModel::roleNames() const
         { RawTextRole, "rawText" },
         { DisplayTextRole, "displayText" },
         { AnnotationCountRole, "annotationCount" },
+        { AttachmentsRole, "attachments" },
     };
 }
 
@@ -187,10 +242,9 @@ CodexTimelineModel::buildRows(QList<CodexTimelineItem> timeline,
             const QString entryId = QStringLiteral("message:%1:%2").arg(item.turnId(), sourceId);
             using MessageRole = ward::codex::v1::MessageRoleGadget::MessageRole;
             const bool user = message.role() == MessageRole::MESSAGE_ROLE_USER;
-            const bool annotated =
-              user && message.hasAnnotatedUserMessage() && !message.annotatedUserMessage().annotations().isEmpty();
-            const QString text = annotated ? message.annotatedUserMessage().body() : displayMessageText(message);
-            const QString copy = annotated ? annotatedMessageCopyText(message.annotatedUserMessage()) : text;
+            const bool presented = user && message.hasUserMessagePresentation();
+            const QString text = presented ? message.userMessagePresentation().body() : displayMessageText(message);
+            const QString copy = presented ? userMessageCopyText(message.userMessagePresentation()) : text;
             rows.append(TimelineRow{
               .entryId = entryId,
               .turnId = item.turnId(),
@@ -560,7 +614,7 @@ MarkupDocumentModel*
 CodexTimelineModel::ensureMarkupDocument(const TimelineRow& row) const
 {
     if (row.activityGroup ||
-        (row.userInputNumber > 0 && row.message.hasAnnotatedUserMessage() && row.displayText.trimmed().isEmpty()))
+        (row.userInputNumber > 0 && row.message.hasUserMessagePresentation() && row.displayText.trimmed().isEmpty()))
         return nullptr;
     if (!row.markupDocument) {
         row.markupDocument = std::make_shared<MarkupDocumentModel>(const_cast<CodexTimelineModel*>(this));
@@ -615,7 +669,7 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline,
     for (qsizetype index = 0; index < commonPrefix; ++index) {
         if (rows[index].activityGroup)
             continue;
-        if (rows[index].userInputNumber > 0 && rows[index].message.hasAnnotatedUserMessage() &&
+        if (rows[index].userInputNumber > 0 && rows[index].message.hasUserMessagePresentation() &&
             rows[index].displayText.trimmed().isEmpty())
             continue;
         rows[index].markupDocument = rows_[index].markupDocument;
@@ -651,6 +705,7 @@ CodexTimelineModel::reconcileTimeline(QList<CodexTimelineItem> timeline,
                            RawTextRole,
                            DisplayTextRole,
                            AnnotationCountRole,
+                           AttachmentsRole,
                            MarkupDocumentRole,
                            ActivityLabelRole,
                            ActivityCountRole,
@@ -693,9 +748,9 @@ CodexTimelineModel::responseAnnotations(const QString& entryId, quint32 referenc
     QVariantList result;
     QSet<QString> seen;
     auto append = [&](const TimelineRow& row) {
-        if (row.userInputNumber == 0 || row.turnId != origin->turnId || !row.message.hasAnnotatedUserMessage())
+        if (row.userInputNumber == 0 || row.turnId != origin->turnId || !row.message.hasUserMessagePresentation())
             return;
-        for (const auto& annotation : row.message.annotatedUserMessage().annotations()) {
+        for (const auto& annotation : row.message.userMessagePresentation().annotations()) {
             if (referenceIndex && annotation.index() != referenceIndex)
                 continue;
             const QString key = row.entryId + QLatin1Char('/') + QString::number(annotation.index());

@@ -3,13 +3,16 @@
 
 #include "codexthreadfiltermodel.h"
 #include "filetreefixture.h"
+#include "popupanchortoggle.h"
 #include "popuppositioner.h"
 #include "projectfilesmodel.h"
 
 #include <QAnimationDriver>
 #include <QCursor>
 #include <QGuiApplication>
+#include <QMouseEvent>
 #include <QQmlEngine>
+#include <QQuickWindow>
 #include <QtQuickTest/quicktest.h>
 
 class AnimationClock : public QAnimationDriver
@@ -76,6 +79,18 @@ class NativePointer : public QObject
         QCursor::setPos(item->mapToGlobal(position).toPoint());
     }
     Q_INVOKABLE void restore(const QPoint& position) { QCursor::setPos(position); }
+    Q_INVOKABLE bool pressAccepted(QQuickItem* item, const QPointF& position)
+    {
+        QMouseEvent event(QEvent::MouseButtonPress,
+                          item->mapToScene(position),
+                          item->mapToGlobal(position),
+                          Qt::LeftButton,
+                          Qt::LeftButton,
+                          Qt::NoModifier);
+        event.setAccepted(false);
+        QCoreApplication::sendEvent(item->window(), &event);
+        return event.isAccepted();
+    }
 };
 
 class QmlTestSetup : public QObject
@@ -89,6 +104,7 @@ class QmlTestSetup : public QObject
         qmlRegisterType<NativePointer>("Craftward.TestSupport", 1, 0, "NativePointer");
         qmlRegisterType<FileTreeFixture>("Craftward.TestSupport", 1, 0, "FileTreeFixture");
         qmlRegisterType<ProjectFilesModel>("Craftward.Components", 1, 0, "ProjectFilesModel");
+        qmlRegisterType<PopupAnchorToggle>("Craftward.Components", 1, 0, "PopupAnchorToggle");
         qmlRegisterType<CodexThreadFilterModel>("Craftward.Codex", 1, 0, "CodexThreadFilterModel");
         qmlRegisterSingletonType<PopupPositioner>(
           "Craftward.Components", 1, 0, "PopupPositioner", [](QQmlEngine*, QJSEngine*) -> QObject* {

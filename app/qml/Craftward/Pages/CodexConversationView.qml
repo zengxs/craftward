@@ -21,6 +21,7 @@ Control {
     property string timelineRenderBenchmarkThreadId: ""
     readonly property string timelineMotionDiagnosticsText: timelineView.motionDiagnosticsText
     signal fileLocationRequested(string file, int start, int end)
+    signal openImageRequested(var image)
 
     ColumnLayout {
         anchors {
@@ -105,6 +106,7 @@ Control {
                 timelineRenderBenchmarkThreadId: root.timelineRenderBenchmarkThreadId
                 onForkRequested: turnId => root.controller.forkSelectedThread(turnId)
                 onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
+                onOpenImageRequested: image => root.openImageRequested(image)
             }
 
             CodexComposer {

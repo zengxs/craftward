@@ -34,6 +34,6 @@ pub use model::{
     UserInput,
 };
 pub use user_message::{
-    AnnotatedUserMessage, ResponseAnnotation, ResponseAnnotationSource,
-    parse_annotated_user_message,
+    ResponseAnnotation, ResponseAnnotationSource, UserMessageEnvelope, UserMessageFile,
+    parse_user_message_envelope,
 };

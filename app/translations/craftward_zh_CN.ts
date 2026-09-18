@@ -3,6 +3,74 @@
 <TS version="2.1" language="zh_CN" sourcelanguage="en">
 <context>
     <name></name>
+    <message id="craftward.image.previous">
+        <source>Previous image</source>
+        <translation>上一张图片</translation>
+    </message>
+    <message id="craftward.image.next">
+        <source>Next image</source>
+        <translation>下一张图片</translation>
+    </message>
+    <message id="craftward.image.position">
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message id="craftward.image.accessible_position">
+        <source>Image %1 of %2</source>
+        <translation>第 %1 张图片，共 %2 张</translation>
+    </message>
+    <message id="craftward.image.open_tab">
+        <source>Open in Tab</source>
+        <translation>在标签页打开</translation>
+    </message>
+    <message id="craftward.image.number">
+        <source>Image %1</source>
+        <translation>图片 %1</translation>
+    </message>
+    <message id="craftward.image.zoom_out">
+        <source>Zoom out</source>
+        <translation>缩小</translation>
+    </message>
+    <message id="craftward.image.zoom_in">
+        <source>Zoom in</source>
+        <translation>放大</translation>
+    </message>
+    <message id="craftward.image.actual_size">
+        <source>Actual size</source>
+        <translation>原始大小</translation>
+    </message>
+    <message id="craftward.image.fit">
+        <source>Fit</source>
+        <translation>适应窗口</translation>
+    </message>
+    <message id="craftward.attachment.previous">
+        <source>Previous attachments</source>
+        <translation>前面的附件</translation>
+    </message>
+    <message id="craftward.attachment.next">
+        <source>Next attachments</source>
+        <translation>后面的附件</translation>
+    </message>
+    <message id="craftward.attachment.count" numerus="yes">
+        <source>%n attachment(s)</source>
+        <translation><numerusform>%n 个附件</numerusform></translation>
+    </message>
+    <message id="craftward.codex.attachment.image">
+        <source>Image</source>
+        <translation>图片</translation>
+    </message>
+    <message id="craftward.codex.attachment.pasted_text">
+        <source>Pasted text</source>
+        <translation>粘贴的文本</translation>
+    </message>
+    <message id="craftward.codex.attachment.close">
+        <source>Close</source>
+        <translation>关闭</translation>
+    </message>
+    <message id="craftward.codex.attachment.preview_unavailable">
+        <source>Image preview unavailable</source>
+        <translation>无法预览图片</translation>
+    </message>
     <message id="craftward.file.open_failed">
         <source>Could not open this file with the default application.</source>
         <translation>无法使用默认应用打开此文件。</translation>

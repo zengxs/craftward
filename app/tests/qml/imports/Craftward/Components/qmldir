@@ -10,5 +10,6 @@ MenuComboBox 1.0 MenuComboBox.qml
 OverlayScrollBar 1.0 OverlayScrollBar.qml
 PanelActionButton 1.0 ../../../../../qml/Craftward/Components/PanelActionButton.qml
 PanelTab 1.0 ../../../../../qml/Craftward/Components/PanelTab.qml
+WindowPopover 1.0 ../../../../../qml/Craftward/Components/WindowPopover.qml
 singleton Typography 1.0 Typography.qml
 MarkupSelectionHost 1.0 MarkupSelectionHost.qml

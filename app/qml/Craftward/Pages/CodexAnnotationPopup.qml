@@ -11,7 +11,7 @@ import QtQml.Models
 import Craftward.Design
 import Craftward.Components
 
-Popup {
+WindowPopover {
     id: root
 
     property var resolveAnnotations: null
@@ -37,19 +37,11 @@ Popup {
     readonly property string heading: referenceIndex === 0 ? /*% "%n annotation(s)" */ qsTrId("craftward.codex.annotations.count", candidates.length) : hasAmbiguousReference ? /*% "Annotation %1 · %2 possible sources" */ qsTrId("craftward.codex.annotations.ambiguous").arg(referenceIndex).arg(candidates.length) : /*% "Annotation %1" */ qsTrId("craftward.codex.annotations.number").arg(referenceIndex)
 
     objectName: "codexAnnotationPopup"
-    parent: Overlay.overlay
     width: fittedWidth
     height: preferredHeight
-    padding: 18
     focus: pinned
     modal: false
-    popupType: Popup.Window
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    background: Rectangle {
-        radius: 16
-        color: Theme.dark ? TailwindColors.zinc900 : TailwindColors.zinc50
-        border.width: 0
-    }
 
     function dismiss() {
         hoverTimer.stop();
@@ -148,13 +140,7 @@ Popup {
         placementTimer.restart()
     onPreferredWidthChanged: if (visible)
         placementTimer.restart()
-    onAboutToShow: {
-        const popupWindow = contentItem.Window.window;
-        // Qt disables system shadows for QML popups; this panel uses the native shadow.
-        if (popupWindow && popupWindow !== anchorWindow)
-            popupWindow.flags &= ~Qt.NoDropShadowWindowHint;
-        place();
-    }
+    onAboutToShow: place()
     onOpened: placementTimer.restart()
 
     contentItem: Item {

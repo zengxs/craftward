@@ -55,6 +55,7 @@ class CodexTimelineModel : public QAbstractListModel
         RawTextRole,
         DisplayTextRole,
         AnnotationCountRole,
+        AttachmentsRole,
     };
 
     explicit CodexTimelineModel(QObject* parent = nullptr);

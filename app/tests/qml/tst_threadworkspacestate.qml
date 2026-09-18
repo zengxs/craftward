@@ -84,4 +84,39 @@ TestCase {
         compare(workspace.threadId, "thread-a");
         compare(workspace.activeIndex, 0);
     }
+
+    function test_imagesKeepTheirResourceAndViewStateWhenReopened() {
+        workspace.selectThread("thread-a");
+        const first = {
+            resourceId: "image:first",
+            url: "file:///first.png"
+        };
+        workspace.openImage(first);
+        const state = workspace.activeTab.viewState;
+        const resource = workspace.activeTab.resource;
+        state.fit = false;
+        state.zoom = 2;
+        state.centerY = 0.8;
+        workspace.openImage({
+            resourceId: "image:second",
+            url: "file:///second.png"
+        });
+        verify(workspace.activeTab.viewState !== state);
+        compare(workspace.activeTab.viewState.fit, true);
+        workspace.openImage({
+            resourceId: first.resourceId,
+            url: "file:///./first.png"
+        });
+        compare(workspace.tabs.length, 2);
+        compare(workspace.activeTab.resource, resource);
+        compare(workspace.activeTab.viewState, state);
+        compare(state.zoom, 2);
+        compare(state.centerY, 0.8);
+        workspace.selectThread("thread-b");
+        workspace.selectThread("thread-a");
+        compare(workspace.activeTab.viewState, state);
+        workspace.closeTab(2);
+        compare(workspace.activeTab.resource.url, "file:///first.png");
+        compare(state.zoom, 2);
+    }
 }

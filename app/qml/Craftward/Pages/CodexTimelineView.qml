@@ -25,6 +25,7 @@ Control {
 
     signal forkRequested(string turnId)
     signal fileLocationRequested(string file, int start, int end)
+    signal openImageRequested(var image)
 
     function toggleTurn(turnId) {
         const anchor = timelineViewport.captureVisibleAnchor();
@@ -108,6 +109,7 @@ Control {
         CodexTimelineRow {
             selectionHost: timelineViewport.selectionHost
             annotationHandler: annotationPopup.handle
+            imagePreviewHandler: imagePreview.handle
             width: parent ? parent.width : 0
             timelineModel: root.activeTimelineModel
             turnExpanded: {
@@ -123,6 +125,7 @@ Control {
             onToggleTurnRequested: turnId => root.toggleTurn(turnId)
             onForkRequested: turnId => root.forkRequested(turnId)
             onFileLocationRequested: (file, start, end) => root.fileLocationRequested(file, start, end)
+            onOpenImageRequested: image => root.openImageRequested(image)
         }
     }
 
@@ -132,10 +135,24 @@ Control {
         resolveAnnotations: (entryId, index) => root.controller ? root.controller.timeline.responseAnnotations(entryId, index) : []
     }
 
+    CodexImagePreview {
+        id: imagePreview
+        font: root.font
+        onAboutToShow: annotationPopup.dismiss()
+        onOpenImageRequested: image => root.openImageRequested(image)
+    }
+    Connections {
+        target: annotationPopup
+        function onAboutToShow() {
+            imagePreview.dismiss();
+        }
+    }
+
     Connections {
         target: timelineViewport.selectionHost.viewport
         function onContentYChanged() {
             annotationPopup.dismiss();
+            imagePreview.dismiss();
         }
     }
 
@@ -143,9 +160,11 @@ Control {
         target: root.controller ? root.controller.timeline : null
         function onModelReset() {
             annotationPopup.dismiss();
+            imagePreview.dismiss();
         }
         function onRowsRemoved() {
             annotationPopup.dismiss();
+            imagePreview.dismiss();
         }
         function onDataChanged() {
             if (annotationPopup.visible)
@@ -153,16 +172,21 @@ Control {
         }
     }
 
+    function dismissPreviews() {
+        annotationPopup.dismiss();
+        imagePreview.dismiss();
+    }
     onVisibleChanged: if (!visible)
-        annotationPopup.dismiss()
-    onWidthChanged: annotationPopup.dismiss()
-    onHeightChanged: annotationPopup.dismiss()
+        dismissPreviews()
+    onWidthChanged: dismissPreviews()
+    onHeightChanged: dismissPreviews()
 
     Connections {
         target: root.controller
 
         function onSelectionChanged() {
             annotationPopup.dismiss();
+            imagePreview.dismiss();
             presentationModel.clearExpandedTurns();
             timelineViewport.resetForNewContent();
         }

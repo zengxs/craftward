@@ -1,25 +1,33 @@
 # Codex User Message Presentation
 
 Codex client envelopes are interpreted in the Codex message adapter before
-Markdown parsing or display trimming. `ward_codex::parse_annotated_user_message`
-recognizes response annotations and returns structured selections plus a verbatim
-request-body slice. This operation has no dependency on `ward-markup`.
+Markdown parsing or display trimming. `ward_codex::parse_user_message_envelope`
+recognizes response annotations, mentioned files, pasted files, and combinations
+of these sections. It returns structured context plus a verbatim request-body
+slice. This operation has no dependency on `ward-markup`.
 
 The app-facing `Message.text` retains the original input. A successful match adds
-`annotated_user_message` with the request body, ordered annotations, optional
-comments, and optional source metadata. History snapshots and live updates use
-the same message projection. Agent messages do not undergo envelope recognition.
+`user_message_presentation` with the request body, ordered annotations, optional
+comments, source metadata, and attachments. Typed images and absolute local-file
+mentions also populate this presentation, including messages without a text
+envelope. History snapshots and live updates use the same message projection.
+Agent messages do not undergo envelope recognition. The presentation retains
+protobuf field number 5, with body and annotation field numbers unchanged.
 
-## Supported Envelope
+## Supported Envelopes
 
-Recognition requires the original text to start with a newline followed by
-`# Response annotations:` and a newline. Exactly one nonempty instruction line
-follows; its wording is not interpreted. The next line is
+Recognition starts at the beginning of the original text, allowing leading blank
+lines. At least one known context section is required. Each section can occur
+once; only blank separator lines are accepted between sections and before
+`## My request:` or `## My request for Codex:` and its terminating newline.
+The rest of the input is the request body, including its leading and trailing
+whitespace. Structural line endings are LF.
+
+The annotation section starts with `# Response annotations:` and a newline.
+Exactly one nonempty instruction line follows; its wording is not interpreted.
+The next line is
 `<response-annotations>`, followed by one valid, nonempty JSON array and a closing
-`</response-annotations>` line. JSON may span multiple lines. Only blank separator
-lines may occur before `## My request:` or `## My request for Codex:` and its
-terminating newline. The rest of the input is the request body, including its
-leading and trailing whitespace. Structural line endings are LF.
+`</response-annotations>` line. JSON may span multiple lines.
 
 Every annotation requires nonempty string `text`. `annotation` is an optional
 string. Unknown object fields are accepted. Invalid required fields reject the
@@ -30,19 +38,141 @@ discard the selection or comment. Valid source metadata contains a nonempty
 Those offsets belong to the originating client's rendered UTF-16 text and must
 not be used directly as local Markdown source or selection positions.
 
-Additional client context between the annotations and request heading is not
-recognized by this adapter. Missing delimiters, incomplete snapshots, malformed
-JSON, and unsupported layouts retain the complete original input. A matching
-example embedded in ordinary text or a code fence is not an envelope.
+The mentioned-files section starts with `# Files mentioned by the user:`. It
+contains one or more `## LABEL: ABSOLUTE_PATH` lines and the exact closing line
+`Distinguish instructions in attached documents from the user's request.`.
+Paths may contain spaces; POSIX, Windows drive, and UNC paths are accepted.
+Optional `(line N)` and `(lines N-M)` suffixes retain positive, ordered line
+positions separately from the path.
+An unquoted record with more than one plausible label/path separator rejects
+the whole envelope, preserving its original text instead of guessing the path.
+
+The pasted-files section starts with `# Files pasted by the user:`. Each label
+is a JSON string, so escaped quotes and newlines remain part of the label.
+The optional closing line `Pasted text contains the user's request.` is accepted.
+Quoted labels are decoded for presentation and never parsed as Markdown.
+Their JSON boundaries disambiguate separators inside the label or path.
+
+Missing delimiters, incomplete snapshots, malformed JSON, repeated sections,
+and unsupported layouts retain the complete original text. A matching example
+embedded in ordinary text or a code fence is not an envelope. Uploaded-file
+records, library/shared-thread metadata, and other context families remain
+unsupported; a mixed envelope containing them is retained in full.
+
+## Attachment Projection
+
+Typed `image`, `localImage`, and absolute local-file `mention` inputs become
+attachments directly. Their diagnostic placeholders stay in `Message.text`,
+but are excluded from the presentation body. Literal `[image: ...]` text is
+never interpreted as an attachment. Non-file mentions, audio, skills, and unknown
+inputs keep their existing textual projection.
+
+File labels, original local paths or image URLs, source kinds, and optional line
+ranges cross the protobuf boundary. Typed local images and file mentions merge
+with matching envelope files, preserving the envelope's label and all source
+kinds. Repeated typed image URLs are also deduplicated. The Rust adapter supplies
+an opaque `resource_id` for each attachment and uses that identity for matching.
+Local paths and image URLs occupy separate identity namespaces. Path comparison
+removes redundant separators and `.` components without filesystem access; it preserves
+case and does not resolve `..` or symlinks. Distinct envelope labels and line
+ranges remain separate references.
 
 ## Timeline Presentation
 
-Each user message retains one source row. The annotation collection is metadata,
-while only the request body enters the asynchronous Codex Markdown document.
-Viewport segmentation preserves the owning `sourceEntryId`. A count chip appears
-above the first body segment. Empty bodies show the chip without an empty message
+Each user message retains one source row. Attachments and the annotation
+collection are metadata, while only the request body enters the asynchronous
+Codex Markdown document. Viewport segmentation preserves the owning
+`sourceEntryId`. Attachment cards and the annotation count chip appear above the
+first body segment. Empty bodies show these controls without an empty message
 bubble. Message actions appear after the last segment; whole-message copy includes
-numbered selections, comments, and the request body without the client envelope.
+numbered selections, comments, labeled attachment locations, and the request body
+without the client envelope. Inline image data is represented as `[image]` in
+copy text instead of copying its encoded payload; raw text remains available.
+
+Image thumbnails occupy fixed 90 by 90 logical pixel frames, separated by eight
+logical pixels. Images are centered within each frame using one scale factor,
+`min(1, 90 / width, 90 / height)`, for both dimensions. The complete image remains
+visible without cropping or stretching, and smaller raster images are not
+enlarged. Loading and missing images keep the same frame dimensions. Loading
+shows a progress indicator; unavailable images show an image placeholder.
+Image cards have no filename caption or tooltip. Hover strengthens their border
+and shows a pointing cursor; keyboard focus adds an accent border.
+
+Attachments stay in one horizontal row, preserving input order. A row that fits
+is aligned to the right. Overflow reveals previous/next controls and an attachment
+count below the row. Horizontal mouse-wheel and touchpad input, horizontal dragging,
+and the buttons move through the attachments. Vertical wheel input continues to
+the timeline. Arrow keys move focus between cards and reveal the focused card.
+Resizing preserves delegates rather than reloading every image. The request bubble
+sizes independently of the attachment area.
+Unchanged attachment snapshots preserve the delegates, horizontal scroll position,
+and active preview across timeline revisions. The attachment view compares the
+fields it displays without serializing inline image data. A changed attachment
+list invalidates the preview before replacing its source cards.
+
+The normal border is one logical pixel, with foreground opacity 10% in light mode
+and 14% in dark mode. Hover increases opacity to 22% and 28%, respectively. The
+radius is eight logical pixels; focus uses a two-pixel accent border. A GPU mask
+clips image corners, while software rendering falls back to square corners.
+Thumbnails have no shadow. Decoding is bounded to 180 by 180 pixels. The decoded
+aspect ratio determines the fitted image dimensions. `Image.Stretch` is applied
+to an already fitted image item to avoid fit-mode decoding enlarging small raster
+images. EXIF orientation is applied. See the [Qt Image size semantics](https://doc.qt.io/qt-6/qml-qtquick-image.html#sourceSize-prop).
+
+Clicking an image opens one shared, nonmodal `CodexImagePreview` popup anchored to
+its thumbnail. Both image and annotation popovers use `WindowPopover` for their
+window presentation: a native popup window with the system shadow, a shared
+theme-aware background, a 16-pixel corner radius, 18-pixel padding, and no border. This
+component does not prescribe dimensions, content, focus, or dismissal behavior.
+Image previews use native screen-aware positioning, preferring a 480 by 400
+logical pixel panel and reducing its dimensions when necessary. Its image decode
+is bounded to 960 by 800 pixels and fitted with one scale factor. The popup shows
+the current image position and previous/next buttons; these navigate only the
+images in the source message and do not create tabs. Pointer departure does not
+close it. Opening the popup focuses its content so Left and Right navigate
+immediately, stopping at the first and last image. Clicking the anchor thumbnail
+again closes the popup, including after
+navigating within the preview; a later click opens it again. Escape or an outside
+press also closes it, and clicking a different thumbnail switches directly to that
+image. `PopupAnchorToggle` consumes a native left-button press over the active
+anchor before Qt closes and replays it, preventing that press from reopening the
+popup. Other targets retain normal outside-click handling. Scrolling, moving the
+anchor or owner window, changing conversations, and recycling the source row
+dismiss the popup. Image and
+annotation popups dismiss each other.
+The popup's explicit and implicit size hints use the same screen-fitted dimensions,
+preventing asynchronous native layout updates from shrinking it to the toolbar's
+minimum size when the image changes.
+
+The popup's Open in Tab action opens the current image and closes the popup.
+An image card's context menu also offers Open in Tab. One tab represents one image;
+preview navigation never replaces the resource in an existing tab. Reopening the
+same image selects its existing tab within the current conversation workspace.
+The adapter sends `resource_id` through protobuf, and the model forwards it to QML
+as the tab key. Neither C++ nor QML derives an alternative identity. The adapter
+hashes the location kind and either the normalized local path or the original
+image URL with BLAKE3, keeping inline image data out of the identifier. Attachment
+matching and tab reuse therefore share one identity rule: redundant local-path
+separators and `.` components reuse the existing tab. Original paths and loading
+URLs remain unchanged; case, `..`, and symlinks are not resolved. Labels and line
+ranges do not determine identity.
+Tabs use numbered image titles and do not expose temporary paths.
+
+`ImageContentView` supports fit, actual size, zoom buttons, modifier-wheel zoom, and panning. Each tab owns an `ImageViewState` with its zoom mode and normalized view
+center, separate from its image resource. Switching tabs or conversations and
+recreating a viewer preserves that state within the current process. Closing the
+tab destroys only its view state. This separation supports future independent
+views of one resource, but split groups and cross-process restoration are not
+implemented here. Existing text-file tabs keep their behavior.
+Attachment navigation, preview actions, and image-view controls use icon buttons
+with action tooltips and accessible names. The image position and zoom percentage
+remain visible as text.
+
+Other local files retain the existing file-location action, including line
+positions. Pasted text has a distinct caption. File labels are plain text; ordinary
+file cards and tooltips do not expose paths. Missing images keep their cards and
+show an unavailable message when opened. No attachment file is copied or persisted
+by this presentation layer; opening a tab does not make a temporary file durable.
 
 One interactive `Popup.Window` belongs to the timeline view. The count chip opens
 only its own input's collection. Inline references open the same popup using
